@@ -51,7 +51,8 @@ starter-eis-temporal  时点查询支持（SQL 模板 → MyBatis/Spring Data �
 |--------------|------------------|------|
 | `extensions/accounting` | `ims-finance` | 凭证过账/关账；借贷平衡与期间锁定为硬校验 |
 | `extensions/inventory` | `ims-inventory`（或并入相关业务域） | 出入库/库存余额；非负不变量 |
-| `extensions/approval` | `ims-approval` | 审批申请/决定；禁止自审 |
+| `extensions/approval` | `ims-approval` | 审批申请/决定/区块；禁止自审；区块属主权限与重提重确认 |
+| `extensions/hr` | `ims-hr`（人事主数据） | 组织/岗位/员工/任职/供给；属性权威属主（ADR-0004） |
 | `cases/procurement` | `ims-procurement`（试点） | 组合三扩展的端到端系统，直接对齐 `scenarios/procure-to-pay.yaml` |
 
 **应用侧纪律**：

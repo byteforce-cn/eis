@@ -7,8 +7,8 @@
 - [ ] **工具增强**：`migration-generator` 支持索引/约束 diff；`contract-checker`
       增加 AsyncAPI 全量 schema 校验与 OpenAPI lint 集成；
 - [ ] **审计增强**：链头锚定参考方案（按期签名并发布链头 hash）、审计导出/归档格式；
-- [ ] **扩展扩充**：`extensions/hr`（人员/组织）、`extensions/asset`（资产）以
-      社区贡献方式引入（见 CONTRIBUTING）；
+- [x] **扩展扩充**：`extensions/hr`（人员/组织/任职/供给）已引入 v1.0.0（含可执行用例与 V201 迁移）；
+      `extensions/asset`（资产）待社区贡献（见 CONTRIBUTING）；
 - [ ] **PostgreSQL 集成测试扩展**：时序索引建议验证、分区表模板（非契约、性能域）。
 
 ## 生态落地（seedj / server）

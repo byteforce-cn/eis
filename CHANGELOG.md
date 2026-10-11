@@ -2,6 +2,24 @@
 
 本项目版本语义遵循 [00-freeze/version-policy.md](00-freeze/version-policy.md)（SemVer）。
 
+## [Unreleased] — 2026-10-11（开放 issue 修复）
+
+### 修复
+
+- `tools/contract-checker`：拦截与 PostgreSQL 保留字冲突的对象字段名（issue #1）；
+- `tools/lib/kernel.py`：扩展命令处理器注册机制（`extensions/*/handlers.py`），内核不再按扩展硬编码（issue #2）。
+
+### 新增
+
+- `extensions/hr` 1.0.0：人力资源域扩展（组织/岗位/员工/任职/供给任务，含 V201 迁移，issue #5）；
+- `extensions/approval` 1.0.1：区块级流转（分派/条件参与/打回重确认/撤回，MINOR，issue #4）；
+- 授权属性协议：`04-authz-contract/attributes.api.yaml`、`attribute.rules.yaml`（ATR-001..007）与 ADR-0004（issue #3）。
+
+### 变更
+
+- `tools/e2e-runner`：`object-field`/`object-count` 断言支持 `${...}` 令牌；`kind: authz` 支持属性快照与条件断言；
+- 用例 85/85（新增 32 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
+
 ## [1.0.0] — 2026-10-08（开源首发）
 
 ### 冻结
