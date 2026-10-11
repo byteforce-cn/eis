@@ -18,7 +18,8 @@
 
 1. 扩展自身用例（`extensions/{id}/tests/*.test.yaml`）全部通过；
 2. 引用完整性通过（`contract-checker` 的清单/组合检查）；
-3. 不修改核心语义（仅 `allOf` 扩展）。
+3. 不修改核心语义（仅 `allOf` 扩展）；
+4. 读取面权限已在 `manifest.permissions` 声明（ADR-0006），实现按声明接入 `/check`，不自造权限标识。
 
 ## 声明模板
 
@@ -28,8 +29,9 @@
 ## EIS 合规
 
 - 合规等级：**L3**（数据 / 操作 / 授权 / 审计），核心契约版本 `1.0.0`
-- 验证记录：e2e-runner 汇总 `用例 91/91`（填入运行日期，`<实现提交 SHA>`）
-- 扩展：accounting 1.0.0、approval 1.0.1、hr 1.0.0（扩展级合规；授权属性按 ATR-001..007）
+- 验证记录：e2e-runner 汇总 `用例 99/99`（填入运行日期，`<实现提交 SHA>`）
+- 扩展：accounting 1.0.0、approval 1.0.1、hr 1.0.0（扩展级合规；授权属性按 ATR-001..008，
+  读取面按 ADR-0006 使用扩展声明的 `manifest.permissions`）
 ```
 
 ## 自验命令
