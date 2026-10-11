@@ -1,0 +1,9 @@
+rule:
+  id: iam.username_unique
+  name: 全局用户名唯一
+  statement: 同一个 username 至多对应一个 UserAccount
+  applies_to: [operations/user-create.openapi.yaml]
+  on_violation:
+    enforcement: prevent
+    error_code: IAM-409-001
+    error_message: 用户名已存在

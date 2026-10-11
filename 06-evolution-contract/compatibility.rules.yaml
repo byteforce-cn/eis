@@ -1,0 +1,47 @@
+# compatibility.rules.yaml — 兼容性规则（Spec v1.0.0，冻结）
+# 用途：tools/compatibility-checker 的判定权威；ADR 兼容性分析必须引用本表
+# 版本号语义见 00-freeze/version-policy.md
+version: "1.0.0"
+
+compatibility:
+  # 数据契约
+  data:
+    - rule: "字段删除"
+      level: "MAJOR"
+      requires: ["migration", "dual_write", "rollback"]
+    - rule: "字段类型变更"
+      level: "MAJOR"
+      requires: ["migration", "dual_write", "rollback"]
+    - rule: "可选字段新增"
+      level: "MINOR"
+      requires: []
+    - rule: "必填字段新增"
+      level: "MAJOR"
+      requires: ["migration", "backfill", "dual_write"]
+
+  # 操作契约
+  operation:
+    - rule: "API 删除"
+      level: "MAJOR"
+      requires: ["deprecation_window", "migration_guide"]
+    - rule: "API 新增"
+      level: "MINOR"
+      requires: []
+    - rule: "参数类型变更"
+      level: "MAJOR"
+      requires: ["migration", "dual_write"]
+    - rule: "可选参数新增"
+      level: "MINOR"
+      requires: []
+
+  # 事件契约
+  event:
+    - rule: "事件类型删除"
+      level: "MAJOR"
+      requires: ["deprecation_window", "consumer_migration"]
+    - rule: "事件字段新增"
+      level: "MINOR"
+      requires: []
+    - rule: "事件字段删除"
+      level: "MAJOR"
+      requires: ["consumer_migration"]

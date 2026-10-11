@@ -1,0 +1,35 @@
+# event.asyncapi.yaml — EIS 事件订阅契约（Spec v1.0.0，冻结）
+# 元结构：通道地址 "events.{eventType}"；事件负载必须符合 eis://core/event/v1
+asyncapi: 3.0.0
+info:
+  title: EIS Event API
+  version: 1.0.0
+  description: |
+    事件发布/订阅契约。事件是不可变更的事实：
+    - 通道命名：events.{eventType}（如 events.accounting.voucher.posted）
+    - 消费端必须按 idempotency_key 去重
+    - 事件顺序不保证；顺序语义由 sequence/occurred_at 表达（审计链见 05-audit-contract）
+
+channels:
+  eventMessages:
+    address: "events.{eventType}"
+    messages:
+      event:
+        $ref: '#/components/messages/Event'
+
+operations:
+  subscribeToEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/eventMessages'
+    messages:
+      - $ref: '#/channels/eventMessages/messages/event'
+
+components:
+  messages:
+    Event:
+      name: Event
+      title: EIS 事件
+      contentType: application/json
+      payload:
+        $ref: '../01-data-contract/event.schema.json'

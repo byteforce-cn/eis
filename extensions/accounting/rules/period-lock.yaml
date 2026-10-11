@@ -1,0 +1,21 @@
+# rules/period-lock.yaml — 期间锁定（accounting v1.0.0）
+rule:
+  id: "accounting.period_lock"
+  name: "期间锁定"
+  statement: "post_date 所在的会计期间必须处于开启状态（不在 locked_periods 中）"
+  applies_to:
+    - "operations/post-voucher.openapi.yaml"
+    - "operations/close-period.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "ACC-409-001"
+    error_message: "会计期间 {period} 已锁定"
+  state:
+    locked_periods: "由关账操作（accounting.period.close）写入；存储于 accounting.Period 对象"
+  tests:
+    - name: "开启期间过账必须通过"
+      input: "post_date=2026-10-15，期间 2026-10 开启"
+      expect: "accepted"
+    - name: "锁定期间过账必须拒绝"
+      input: "post_date=2026-09-15，期间 2026-09 已关闭"
+      expect: "rejected code=ACC-409-001"

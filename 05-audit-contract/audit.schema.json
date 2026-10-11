@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://core/audit/v1",
+  "title": "AuditEntry",
+  "description": "审计条目：哈希链式追加日志。hash/prev_hash 的规范化与验证规则见 hash-chain.spec.md。",
+  "type": "object",
+  "required": ["id", "sequence", "timestamp", "actor", "action", "resource", "payload", "hash", "prev_hash"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "单调递增序列号（从 1 开始，连续无缺口）"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "记录时间（UTC 微秒）"
+    },
+    "actor": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "action": {
+      "type": "string",
+      "description": "操作类型，如 \"voucher.create\""
+    },
+    "resource": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "id": {
+          "type": ["string", "null"],
+          "format": "uuid"
+        }
+      }
+    },
+    "payload": {
+      "type": "object"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "本条记录的哈希（SHA-256，小写 hex）"
+    },
+    "prev_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "前一条记录的哈希（创世为 64 个 0）"
+    },
+    "signature": {
+      "type": ["string", "null"],
+      "description": "可选的 CA 签名（v1 不参与链验证）"
+    }
+  }
+}

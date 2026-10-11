@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/accounting/object/voucher/v1",
+  "title": "Voucher",
+  "description": "会计凭证：借贷分录集合。过账前必须满足借贷平衡（rules/double-entry.yaml）。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["number", "voucher_date", "status", "lines"],
+      "properties": {
+        "number": {
+          "type": "string",
+          "description": "凭证号，如 \"记-2026-10-0001\""
+        },
+        "voucher_date": {
+          "type": "string",
+          "format": "date",
+          "description": "业务日期（决定会计期间）"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "posted", "reversed"],
+          "description": "状态：草稿 / 已过账 / 已红冲"
+        },
+        "summary": {
+          "type": "string",
+          "description": "摘要"
+        },
+        "lines": {
+          "type": "array",
+          "minItems": 2,
+          "description": "分录行；不变量：sum(debit) == sum(credit)（按币种分组）",
+          "items": {
+            "type": "object",
+            "required": ["account_code", "currency"],
+            "properties": {
+              "account_code": {
+                "type": "string",
+                "pattern": "^[0-9]{4,8}$"
+              },
+              "debit": {
+                "type": "string",
+                "pattern": "^\\d+(\\.\\d{1,2})?$",
+                "description": "借方金额（十进制字符串）"
+              },
+              "credit": {
+                "type": "string",
+                "pattern": "^\\d+(\\.\\d{1,2})?$",
+                "description": "贷方金额（十进制字符串）"
+              },
+              "currency": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              },
+              "memo": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

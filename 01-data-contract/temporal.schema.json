@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://core/temporal/v1",
+  "title": "TemporalComponents",
+  "description": "双时间轴组件库（冻结）：业务时间（valid_from/valid_to）与系统时间（recorded_at/superseded_at）。区间语义为半开区间 [from, to)；NULL 表示直到无穷；时间一律 UTC 微秒。所有业务对象 Schema 通过 $ref 引用本组件。",
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC 时间戳，微秒精度（精确到 6 位小数），无时区歧义"
+    },
+    "nullableTimestamp": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "可空 UTC 时间戳；NULL 具有语义（见具体字段）"
+    },
+    "validRange": {
+      "type": "object",
+      "required": ["valid_from"],
+      "properties": {
+        "valid_from": {
+          "$ref": "#/$defs/timestamp",
+          "description": "业务生效时间（区间左闭端点）"
+        },
+        "valid_to": {
+          "$ref": "#/$defs/nullableTimestamp",
+          "description": "业务失效时间（区间右开端点）；NULL 表示当前有效"
+        }
+      },
+      "description": "业务时间区间：半开 [valid_from, valid_to)。约束：valid_to IS NULL OR valid_to > valid_from"
+    },
+    "recordRange": {
+      "type": "object",
+      "required": ["recorded_at"],
+      "properties": {
+        "recorded_at": {
+          "$ref": "#/$defs/timestamp",
+          "description": "系统记录时间（区间左闭端点）"
+        },
+        "superseded_at": {
+          "$ref": "#/$defs/nullableTimestamp",
+          "description": "系统替代时间（区间右开端点）；NULL 表示当前记录"
+        }
+      },
+      "description": "系统时间区间：半开 [recorded_at, superseded_at)。系统时间轴 append-only：superseded_at 一经写入不得修改。约束：superseded_at IS NULL OR superseded_at > recorded_at"
+    },
+    "bitemporal": {
+      "type": "object",
+      "required": ["valid_from", "recorded_at"],
+      "properties": {
+        "valid_from": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "valid_to": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "recorded_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "superseded_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        }
+      },
+      "description": "双时间轴完整字段组（业务对象必备，冻结）"
+    }
+  }
+}

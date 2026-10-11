@@ -1,0 +1,61 @@
+# 授权契约验证用例（Spec v1.0.0）— 可执行版
+# 运行：tools/e2e-runner 04-authz-contract/tests/authz-contract.test.yaml
+# 夹具：04-authz-contract/tests/fixtures.yaml（时点 / 代理 / SoD）
+suite: authz-contract
+tests:
+  - name: "角色解析必须支持时点查询（生效前拒绝）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures.yaml
+    op: check
+    principal: away
+    permission: purchase.request.approve
+    as_of: "2026-09-30T12:00:00Z"
+    expect_allowed: false
+    expect_code: NO_PERMISSION
+
+  - name: "代理必须可解析（代理期内可行权）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures.yaml
+    op: resolve
+    principal: agent
+    as_of: "2026-10-15T12:00:00Z"
+    expect_roles_contains: [approver]
+    expect_permissions_contains: [purchase.request.approve]
+
+  - name: "代理期外必须拒绝"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures.yaml
+    op: check
+    principal: agent
+    permission: purchase.request.approve
+    as_of: "2026-11-15T12:00:00Z"
+    expect_allowed: false
+    expect_code: NO_PERMISSION
+
+  - name: "SoD 必须可检测冲突（prevent 级 → 拒绝）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures.yaml
+    op: check
+    principal: both
+    permission: purchase.request.approve
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: false
+    expect_code: SOD-001
+
+  - name: "SoD 冲突清单必须可枚举"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures.yaml
+    op: sod-check
+    principal: both
+    as_of: "2026-10-15T12:00:00Z"
+    expect_conflicts_contains: [SOD-001]
+
+  - name: "权限检查必须返回原因（reason ≠ 空）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures.yaml
+    op: check
+    principal: both
+    permission: purchase.request.create
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: false
+    expect_code: SOD-001

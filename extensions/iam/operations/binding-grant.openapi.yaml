@@ -1,0 +1,34 @@
+openapi: 3.1.0
+info:
+  title: IAM - 授予角色
+  version: 1.0.0
+paths:
+  /commands/iam.binding.grant:
+    post:
+      operationId: bindingGrant
+      summary: 授予角色并执行 SoD 预检
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Command'
+      responses:
+        '202': {description: 已接受}
+        '400': {description: 参数非法}
+        '409': {description: IAM-409-001 活动绑定冲突}
+components:
+  schemas:
+    Command:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type: {type: string, const: iam.binding.grant}
+        payload:
+          type: object
+          required: [principal, role_id, scope]
+          properties:
+            principal: {type: string, format: uuid}
+            role_id: {type: string, format: uuid}
+            scope: {type: object}
+        idempotency_key: {type: string, minLength: 1}

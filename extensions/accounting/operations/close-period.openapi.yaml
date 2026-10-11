@@ -1,0 +1,56 @@
+# operations/close-period.openapi.yaml — 关账（accounting v1.0.0）
+# 遵循核心命令 API 元结构：02-operation-contract/command.openapi.yaml
+openapi: 3.1.0
+info:
+  title: 会计域 — 关账
+  version: 1.0.0
+  description: |
+    命令 accounting.period.close：关闭会计期间。
+    校验：
+    - 期间内无未过账（draft）凭证；否则拒绝 ACC-400-002
+    - 期间未关闭；重复关闭 → ACC-409-002
+    关闭后该期间进入 locked_periods，过账将被 period_lock 规则阻止。
+
+paths:
+  /commands/accounting.period.close:
+    post:
+      operationId: closePeriod
+      summary: 关闭会计期间
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClosePeriodCommand'
+      responses:
+        '202':
+          description: 已接受
+        '400':
+          description: ACC-400-002 存在未过账凭证
+        '409':
+          description: ACC-409-002 期间已关闭 / EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    ClosePeriodCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: accounting.period.close
+        payload:
+          type: object
+          required: [period]
+          properties:
+            period:
+              type: string
+              pattern: '^\d{4}-\d{2}$'
+              description: 会计期间，如 "2026-10"
+        idempotency_key:
+          type: string
+        targets:
+          type: array
+          items:
+            type: string
+            format: uuid

@@ -1,0 +1,131 @@
+# time-travel.api.yaml — EIS 时间旅行 API 契约（Spec v1.0.0，冻结）
+# 双时间轴语义见 temporal.rules.yaml；与 query.openapi.yaml 的关系：
+# query API 面向当前视图（未显式给时点），本 API 面向任意时点与版本历史
+openapi: 3.1.0
+info:
+  title: EIS Time-Travel API
+  version: 1.0.0
+  description: |
+    任意业务时间 × 任意系统时间的版本查询：
+    - 传入 valid_at 未传 recorded_at：业务时点视图（当前系统认知）
+    - 传入 recorded_at 未传 valid_at：系统时点视图（历史认知的快照）
+    - 两者均传：双时间轴精确查询
+    时间参数为 UTC（RFC 3339）；区间语义为半开区间 [from, to)
+
+paths:
+  /time-travel/objects/{objectType}/{id}:
+    get:
+      summary: 双时间轴时点查询（至多单一版本）
+      operationId: getObjectVersion
+      parameters:
+        - name: objectType
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: valid_at
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: 业务时间切点（对应 valid_from/valid_to）
+        - name: recorded_at
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: 系统时间切点（对应 recorded_at/superseded_at）
+      responses:
+        '200':
+          description: 查询成功（至多一个版本）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectVersion'
+        '404':
+          description: 该时点无版本命中
+
+  /time-travel/objects/{objectType}/{id}/history:
+    get:
+      summary: 版本历史
+      operationId: getObjectHistory
+      parameters:
+        - name: objectType
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: timeline
+          in: query
+          schema:
+            type: string
+            enum: [valid, recorded, both]
+            default: both
+          description: 时间轴选择：业务时间轴 / 系统时间轴 / 双轴合并
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionList'
+
+components:
+  schemas:
+    ObjectVersion:
+      type: object
+      required: [object_type, id, version, valid_from, recorded_at, data]
+      properties:
+        object_type:
+          type: string
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        valid_from:
+          type: string
+          format: date-time
+        valid_to:
+          type: [string, 'null']
+          format: date-time
+        recorded_at:
+          type: string
+          format: date-time
+        superseded_at:
+          type: [string, 'null']
+          format: date-time
+        data:
+          type: object
+
+    VersionList:
+      type: object
+      required: [versions]
+      properties:
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ObjectVersion'

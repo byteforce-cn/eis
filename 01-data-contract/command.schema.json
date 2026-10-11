@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://core/command/v1",
+  "title": "Command",
+  "description": "写操作的意图。提交后进入 pending，经规则处理后变为 accepted 或 rejected。",
+  "type": "object",
+  "required": ["id", "type", "issued_at", "issuer", "payload", "idempotency_key", "status"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.]*$"
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "issuer": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "payload": {
+      "type": "object"
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "accepted", "rejected"]
+    },
+    "rejection_reason": {
+      "type": ["string", "null"]
+    }
+  }
+}

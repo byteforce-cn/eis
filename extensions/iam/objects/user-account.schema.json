@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/iam/object/user-account/v1",
+  "title": "UserAccount",
+  "description": "IAM 人员账户。内置 root 账户通过 built_in 标记保护。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["username", "display_name", "status", "built_in"],
+      "properties": {
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._@-]+$"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "disabled", "locked"]
+        },
+        "org_code": {
+          "type": ["string", "null"]
+        },
+        "contact": {
+          "type": ["object", "null"]
+        },
+        "built_in": {
+          "type": "boolean"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+# 生成物与临时文件
+build/
+*.pyc
+__pycache__/
+.venv/
+venv/
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+
+# 本地环境
+.env

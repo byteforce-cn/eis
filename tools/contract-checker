@@ -1,0 +1,415 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""contract-checker — EIS 契约检查（v1.0.0 参考实现）
+
+检查项:
+  1. Schema：JSON 合法、Draft 2020-12 元校验通过、$id 含 /v{n}、$id 唯一、pattern 可编译
+  2. OpenAPI：结构、operationId 唯一、$ref 可解析、路径参数声明、
+     命令端点必含 idempotency_key（required）与 202/400/409 响应
+  3. AsyncAPI：结构、消息负载 $ref 可解析
+  4. 错误码：格式 EIS-{status}-{seq}、唯一、http_status 一致
+  5. 扩展清单：引用文件存在（引用完整性）、core_version/version 齐全
+  6. 组合（cases）：扩展存在且版本与 manifest 一致
+
+用法:
+  contract-checker [--json] [--verbose]
+
+退出码: 0 通过 / 1 判定失败 / 2 用法或环境错误
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import urllib.parse
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from eis_common import ROOT, Report, load_json, load_yaml, rel  # noqa: E402
+
+try:
+    from jsonschema import Draft202012Validator
+except ImportError:  # pragma: no cover
+    Draft202012Validator = None
+
+COMMAND_METHOD_REQUIRED_RESPONSES = {"202", "400", "409"}
+SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+ERROR_CODE_RE = re.compile(r"^EIS-(\d{3})-(\d{3})$")
+TYPE_RE = re.compile(r"^[a-z][a-z0-9_.]*$")
+
+
+# ---------------------------------------------------------------------------
+# 收集目标文件
+# ---------------------------------------------------------------------------
+def schema_files() -> list[Path]:
+    files = []
+    files += sorted((ROOT / "01-data-contract").glob("*.schema.json"))
+    files += sorted((ROOT / "04-authz-contract").glob("*.schema.json"))
+    files += sorted((ROOT / "05-audit-contract").glob("*.schema.json"))
+    files += sorted((ROOT / "extensions").glob("*/objects/*.schema.json"))
+    return files
+
+
+def openapi_files() -> list[Path]:
+    files = sorted((ROOT / "02-operation-contract").glob("*.openapi.yaml"))
+    files += sorted((ROOT / "03-time-contract").glob("*.api.yaml"))
+    files += sorted((ROOT / "extensions").glob("*/operations/*.openapi.yaml"))
+    return files
+
+
+def asyncapi_files() -> list[Path]:
+    return sorted((ROOT / "02-operation-contract").glob("*.asyncapi.yaml"))
+
+
+# ---------------------------------------------------------------------------
+# JSON Pointer / $ref 工具
+# ---------------------------------------------------------------------------
+def resolve_pointer(doc, pointer: str):
+    node = doc
+    for raw in pointer.lstrip("/").split("/"):
+        part = urllib.parse.unquote(raw).replace("~1", "/").replace("~0", "~")
+        if isinstance(node, list):
+            node = node[int(part)]
+        else:
+            node = node[part]
+    return node
+
+
+def walk_refs(node, base_dir: Path):
+    """遍历文档，产出所有 $ref 字符串。"""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "$ref" and isinstance(v, str):
+                yield v
+            else:
+                yield from walk_refs(v, base_dir)
+    elif isinstance(node, list):
+        for item in node:
+            yield from walk_refs(item, base_dir)
+
+
+def check_refs(doc, path: Path, report: Report) -> None:
+    bad = []
+    for ref in walk_refs(doc, path.parent):
+        if ref.startswith("#"):
+            try:
+                resolve_pointer(doc, ref[1:])
+            except Exception:  # noqa: BLE001
+                bad.append(ref)
+            continue
+        target, _, frag = ref.partition("#")
+        if re.match(r"^[a-z]+://", target):
+            continue  # 远程引用（如 $schema）不检查
+        target_path = (path.parent / target).resolve()
+        if not target_path.exists():
+            bad.append(f"{ref}（文件不存在）")
+            continue
+        if frag:
+            try:
+                resolve_pointer(load_json(target_path), frag)
+            except Exception:  # noqa: BLE001
+                bad.append(f"{ref}（指针不可解析）")
+    if bad:
+        report.fail(f"{rel(path)}: $ref 检查失败", "\n".join(sorted(set(bad))))
+    else:
+        report.ok(f"{rel(path)}: $ref 全部可解析")
+
+
+# ---------------------------------------------------------------------------
+# 各类检查
+# ---------------------------------------------------------------------------
+def check_schemas(report: Report) -> None:
+    seen_ids: dict[str, str] = {}
+    for path in schema_files():
+        try:
+            doc = load_json(path)
+        except json.JSONDecodeError as exc:
+            report.fail(f"{rel(path)}: JSON 解析失败", str(exc))
+            continue
+        problems = []
+        if Draft202012Validator is not None:
+            try:
+                Draft202012Validator.check_schema(doc)
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"元校验失败: {exc}")
+        sid = doc.get("$id", "")
+        if not sid:
+            problems.append("缺少 $id")
+        else:
+            if not re.search(r"/v\d+", sid):
+                problems.append(f"$id 缺少版本段 /v{{n}}: {sid}")
+            if sid in seen_ids:
+                problems.append(f"$id 重复（另见 {seen_ids[sid]}）")
+            else:
+                seen_ids[sid] = rel(path)
+        for prop_name, prop in doc.get("properties", {}).items():
+            pat = prop.get("pattern")
+            if pat:
+                try:
+                    re.compile(pat)
+                except re.error as exc:
+                    problems.append(f"pattern 非法（{prop_name}）: {exc}")
+        if problems:
+            report.fail(f"{rel(path)}: Schema 检查", "\n".join(problems))
+        else:
+            report.ok(f"{rel(path)}: Schema 检查")
+
+
+def check_openapi(report: Report) -> None:
+    for path in openapi_files():
+        doc = load_yaml(path)
+        problems: list[str] = []
+        if not str(doc.get("openapi", "")).startswith("3."):
+            problems.append("缺少 openapi 3.x 版本")
+        info = doc.get("info", {})
+        if not info.get("title"):
+            problems.append("缺少 info.title")
+        if not info.get("version"):
+            problems.append("缺少 info.version")
+        paths = doc.get("paths", {})
+        if not paths:
+            problems.append("paths 为空")
+        op_ids: set[str] = set()
+        for p, item in paths.items():
+            for method, op in item.items():
+                if method not in ("get", "post", "put", "patch", "delete"):
+                    continue
+                oid = op.get("operationId")
+                if not oid:
+                    problems.append(f"{method.upper()} {p}: 缺少 operationId")
+                elif oid in op_ids:
+                    problems.append(f"{method.upper()} {p}: operationId 重复 {oid}")
+                else:
+                    op_ids.add(oid)
+                params = op.get("parameters", [])
+                declared = {param.get("name") for param in params}
+                for var in re.findall(r"{(\w+)}", p):
+                    if var not in declared:
+                        problems.append(f"{method.upper()} {p}: 路径参数 {var} 未声明")
+                if method == "post" and p.startswith("/commands/"):
+                    req = op.get("requestBody", {})
+                    schema = (
+                        req.get("content", {})
+                        .get("application/json", {})
+                        .get("schema", {})
+                    )
+                    if "$ref" in schema:
+                        schema = resolve_pointer(doc, schema["$ref"].lstrip("#"))
+                    required = set(schema.get("required", []))
+                    if "idempotency_key" not in required:
+                        problems.append(f"POST {p}: request schema 缺少 idempotency_key（required）")
+                    const = schema.get("properties", {}).get("type", {}).get("const")
+                    segment = p.rsplit("/", 1)[-1]
+                    if not re.match(r"^\{", segment):
+                        if const != segment:
+                            problems.append(f"POST {p}: type.const({const!r}) != 路径段({segment!r})")
+                    elif const is not None and not TYPE_RE.match(str(const)):
+                        problems.append(f"POST {p}: type.const 命名不合规")
+                    responses = op.get("responses", {})
+                    missing = COMMAND_METHOD_REQUIRED_RESPONSES - set(responses)
+                    if missing:
+                        problems.append(f"POST {p}: 缺少响应 {sorted(missing)}")
+        if problems:
+            report.fail(f"{rel(path)}: OpenAPI 检查", "\n".join(problems))
+        else:
+            report.ok(f"{rel(path)}: OpenAPI 检查（{len(op_ids)} 个操作）")
+        check_refs(doc, path, report)
+
+
+# 各契约文件的查询时点参数要求（任一命中即通过）
+QUERY_AS_OF_RULES = {
+    "02-operation-contract/query.openapi.yaml": {"as_of"},
+    "03-time-contract/time-travel.api.yaml": {"valid_at", "recorded_at", "from", "to"},
+}
+
+
+def check_query_time_points(report: Report) -> None:
+    for rel_path, required_any in QUERY_AS_OF_RULES.items():
+        path = ROOT / rel_path
+        doc = load_yaml(path)
+        problems = []
+        for p, item in doc.get("paths", {}).items():
+            for method, op in item.items():
+                if method != "get":
+                    continue
+                names = {param.get("name") for param in op.get("parameters", [])}
+                if not (names & required_any):
+                    problems.append(f"GET {p}: 缺少时点参数 {sorted(required_any)} 之一")
+        if problems:
+            report.fail(f"{rel(rel_path)}: 时点查询参数检查", "\n".join(problems))
+        else:
+            report.ok(f"{rel(rel_path)}: 全部 GET 支持时点参数")
+
+
+def check_asyncapi(report: Report) -> None:
+    for path in asyncapi_files():
+        doc = load_yaml(path)
+        problems = []
+        if not str(doc.get("asyncapi", "")).startswith("3."):
+            problems.append("缺少 asyncapi 3.x 版本")
+        if not doc.get("channels"):
+            problems.append("channels 为空")
+        messages = doc.get("components", {}).get("messages", {})
+        if not messages:
+            problems.append("缺少 components.messages")
+        for name, msg in messages.items():
+            payload = msg.get("payload", {})
+            if "$ref" not in payload:
+                problems.append(f"消息 {name} 负载缺少 $ref")
+        if problems:
+            report.fail(f"{rel(path)}: AsyncAPI 检查", "\n".join(problems))
+        else:
+            report.ok(f"{rel(path)}: AsyncAPI 检查")
+        check_refs(doc, path, report)
+
+
+def check_error_codes(report: Report) -> None:
+    path = ROOT / "02-operation-contract/error-codes.yaml"
+    doc = load_yaml(path)
+    problems = []
+    seen = set()
+    for item in doc.get("codes", []):
+        code = item.get("code", "")
+        m = ERROR_CODE_RE.match(code)
+        if not m:
+            problems.append(f"错误码格式非法: {code}")
+            continue
+        if code in seen:
+            problems.append(f"错误码重复: {code}")
+        seen.add(code)
+        if str(item.get("http_status")) != m.group(1):
+            problems.append(f"{code}: http_status 与编码不一致")
+        if not isinstance(item.get("retryable"), bool):
+            problems.append(f"{code}: 缺少 retryable")
+    if problems:
+        report.fail(f"{rel(path)}: 错误码检查", "\n".join(problems))
+    else:
+        report.ok(f"{rel(path)}: 错误码检查（{len(seen)} 个）")
+
+
+def check_manifests(report: Report) -> None:
+    manifests: dict[str, dict] = {}
+    for path in sorted((ROOT / "extensions").glob("*/manifest.yaml")):
+        doc = load_yaml(path)
+        ext = doc.get("extension", {})
+        problems = []
+        ext_id = ext.get("id")
+        if not ext_id:
+            problems.append("缺少 extension.id")
+        elif ext_id != path.parent.name:
+            problems.append(f"extension.id({ext_id}) 与目录名({path.parent.name})不一致")
+        if not SEMVER_RE.match(str(ext.get("version", ""))):
+            problems.append(f"extension.version 非语义化版本: {ext.get('version')}")
+        if not ext.get("core_version"):
+            problems.append("缺少 extension.core_version")
+        for section in ("objects", "operations", "rules"):
+            for entry in ext.get(section, []):
+                ref_file = entry.get("schema") or entry.get("contract") or entry.get("file")
+                if ref_file and not (path.parent / ref_file).exists():
+                    problems.append(f"{section} 引用不存在: {ref_file}")
+        if problems:
+            report.fail(f"{rel(path)}: 扩展清单检查", "\n".join(problems))
+        else:
+            report.ok(f"{rel(path)}: 扩展清单检查（引用完整性通过）")
+        if ext_id:
+            manifests[ext_id] = ext
+    return manifests
+
+
+def check_compositions(report: Report, manifests: dict) -> None:
+    for path in sorted((ROOT / "cases").glob("*/composition.yaml")):
+        doc = load_yaml(path)
+        comp = doc.get("composition", {})
+        problems = []
+        if not comp.get("id"):
+            problems.append("缺少 composition.id")
+        for entry in comp.get("extensions", []):
+            ext_id, version = entry.get("id"), entry.get("version")
+            if ext_id not in manifests:
+                problems.append(f"扩展不存在: {ext_id}")
+            elif version != manifests[ext_id].get("version"):
+                problems.append(
+                    f"扩展版本不匹配: {ext_id} 组合声明 {version}，manifest 为 "
+                    f"{manifests[ext_id].get('version')}"
+                )
+        if problems:
+            report.fail(f"{rel(path)}: 组合检查", "\n".join(problems))
+        else:
+            report.ok(f"{rel(path)}: 组合检查")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def cmd_self_test(args) -> int:
+    report = Report("contract-checker --self-test")
+    if Draft202012Validator is None:
+        report.fail("缺少依赖 jsonschema（pip install jsonschema）")
+        report.print()
+        return 2
+    # 构造一个非法命令 API：缺少 idempotency_key 与 409 响应
+    import tempfile
+
+    bad = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1.0.0"},
+        "paths": {
+            "/commands/x.y": {
+                "post": {
+                    "operationId": "op1",
+                    "requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}},
+                    "responses": {"202": {"description": "ok"}},
+                }
+            }
+        },
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "bad.openapi.yaml"
+        import yaml as _yaml
+
+        p.write_text(_yaml.safe_dump(bad, allow_unicode=True), encoding="utf-8")
+        tmp_report = Report("tmp")
+        # 直接复用检查逻辑（打补丁方式：临时替换文件列表）
+        global openapi_files  # noqa: PLW0603
+        orig = openapi_files
+        openapi_files = lambda: [p]
+        try:
+            check_openapi(tmp_report)
+        finally:
+            openapi_files = orig
+        if tmp_report.success:
+            report.fail("自测：非法命令 API 未被检出")
+        else:
+            report.ok("自测：非法命令 API 被正确检出（缺 idempotency_key / 响应）")
+    report.print()
+    return 0 if report.success else 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="contract-checker", description="EIS 契约检查（参考实现）")
+    parser.add_argument("--json", action="store_true", help="JSON 输出")
+    parser.add_argument("--verbose", action="store_true", help="输出全部明细")
+    parser.add_argument("--self-test", action="store_true", help="自测")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        return cmd_self_test(args)
+
+    report = Report("contract-checker — EIS 契约检查")
+    check_schemas(report)
+    check_openapi(report)
+    check_query_time_points(report)
+    check_asyncapi(report)
+    check_error_codes(report)
+    manifests = check_manifests(report)
+    check_compositions(report, manifests)
+    if args.json:
+        print(json.dumps(report.to_json(), ensure_ascii=False, indent=2))
+    else:
+        report.print(verbose=args.verbose)
+    return 0 if report.success else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,134 @@
+# query.openapi.yaml — EIS 查询 API 契约（Spec v1.0.0，冻结）
+# 元结构：所有查询必须支持时点查询（as_of = 业务时间；recorded_as_of = 系统时间）
+openapi: 3.1.0
+info:
+  title: EIS Query API
+  version: 1.0.0
+  description: |
+    只读查询入口。时点语义（半开区间 [from, to)）：
+    - 缺省：返回当前版本（valid_to IS NULL 且 superseded_at IS NULL）
+    - as_of：返回业务时间切点处的版本
+    - recorded_as_of：返回系统记录时间切点处的版本
+    - 组合使用：双时间轴联合查询
+
+paths:
+  /objects/{objectType}/{id}:
+    get:
+      summary: 按 ID 查询业务对象
+      operationId: getObject
+      parameters:
+        - name: objectType
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: 时点查询（业务时间）
+        - name: recorded_as_of
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: 时点查询（系统时间）
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectResponse'
+        '404':
+          description: 对象不存在
+
+  /balances/{balanceType}:
+    get:
+      summary: 查询余额
+      operationId: getBalance
+      parameters:
+        - name: balanceType
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: subject
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+
+components:
+  schemas:
+    ObjectResponse:
+      type: object
+      required: [object_type, id, version, valid_from, recorded_at, data]
+      properties:
+        object_type:
+          type: string
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        valid_from:
+          type: string
+          format: date-time
+        valid_to:
+          type: [string, 'null']
+          format: date-time
+        recorded_at:
+          type: string
+          format: date-time
+        superseded_at:
+          type: [string, 'null']
+          format: date-time
+        data:
+          type: object
+          description: 对象领域数据（由扩展 Schema 定义）
+
+    BalanceResponse:
+      type: object
+      required: [balance_type, subject, as_of, amount, unit]
+      properties:
+        balance_type:
+          type: string
+        subject:
+          type: string
+          format: uuid
+          description: 余额主体（业务对象 ID）
+        as_of:
+          type: string
+          format: date-time
+          description: 业务时点（缺省 = 当前）
+        amount:
+          type: string
+          pattern: '^-?\d+(\.\d+)?$'
+          description: 十进制字符串（避免浮点误差）
+        unit:
+          type: string
+        updated_at:
+          type: string
+          format: date-time

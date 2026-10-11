@@ -1,0 +1,41 @@
+# acceptance.yaml — EIS Spec v1.0.0 验收标准
+version: "1.0.0"
+frozen: "2026-10-08"
+status: "契约已冻结；全部核心验收项已可执行（tools/ 参考实现；一键：python3 tools/e2e-runner --all；DDL 由 CI 在 PostgreSQL 16 冒烟）。"
+
+acceptance:
+  core:
+    - "所有 Schema 通过校验"
+    - "所有 DDL 生成成功"
+    - "所有 OpenAPI 通过校验"
+    - "所有代码生成成功"
+    - "时点查询返回正确结果"
+    - "时间旅行返回正确结果"
+    - "授权解析返回正确角色"
+    - "SoD 检测到所有冲突"
+    - "审计链验证通过"
+    - "篡改被检测"
+    - "迁移演练通过"
+    - "回滚演练通过"
+
+  pilot:
+    - "端到端场景跑通"
+    - "业务人员验证业务正确性"
+    - "合规人员验证审计完整性"
+    - "运维人员验证部署与回滚"
+
+# 验证矩阵（Spec 第 10.1 节）
+verification_matrix:
+  - { contract: "数据契约", check: "Schema 校验", method: "JSON Schema", judgement: "通过/失败" }
+  - { contract: "数据契约", check: "DDL 生成", method: "schema-compiler", judgement: "通过/失败" }
+  - { contract: "操作契约", check: "OpenAPI 校验", method: "contract-checker", judgement: "通过/失败" }
+  - { contract: "操作契约", check: "代码生成", method: "schema-compiler", judgement: "通过/失败" }
+  - { contract: "时间契约", check: "时点查询", method: "e2e-runner", judgement: "通过/失败" }
+  - { contract: "时间契约", check: "时间旅行", method: "e2e-runner", judgement: "通过/失败" }
+  - { contract: "授权契约", check: "解析测试", method: "authz-resolver", judgement: "通过/失败" }
+  - { contract: "授权契约", check: "SoD 测试", method: "authz-resolver", judgement: "通过/失败" }
+  - { contract: "审计契约", check: "哈希链验证", method: "audit-verifier", judgement: "通过/失败" }
+  - { contract: "审计契约", check: "篡改检测", method: "audit-verifier", judgement: "通过/失败" }
+  - { contract: "演进契约", check: "迁移演练", method: "e2e-runner", judgement: "通过/失败" }
+  - { contract: "演进契约", check: "回滚演练", method: "e2e-runner", judgement: "通过/失败" }
+  - { contract: "端到端", check: "试点场景", method: "e2e-runner", judgement: "通过/失败" }

@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""migration-generator — EIS 迁移脚本生成（v1.0.0 参考实现）
+
+用途: 新旧 JSON Schema diff → 迁移 SQL + 回滚 SQL（基于 06-evolution-contract 模板）
+
+用法:
+  migration-generator --old A.schema.json --new B.schema.json --table T [--version V] [--out DIR]
+  （缺省输出到 stdout；--out 时写入 DIR/migration/V__T.sql 与 DIR/rollback/V__T.sql）
+  migration-generator --self-test
+
+说明:
+  - SQL 为草案：破坏性变更（删除列）需先完成双写下线与对账，见 migration.template.sql
+  - 必填新增列生成三步：ADD COLUMN → 回填（占位）→ SET NOT NULL
+
+退出码: 0 生成成功 / 1 用例失败（--self-test）/ 2 用法或输入错误
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from eis_common import load_json  # noqa: E402
+
+
+def map_type(prop: dict) -> str:
+    t = prop.get("type")
+    if isinstance(t, list):
+        t = next((x for x in t if x != "null"), None)
+    fmt = prop.get("format")
+    if t == "string":
+        if fmt == "uuid":
+            return "UUID"
+        if fmt == "date-time":
+            return "TIMESTAMPTZ(6)"
+        if fmt == "date":
+            return "DATE"
+        if prop.get("enum"):
+            return "TEXT"  # 枚举约束由 CHECK 管理（草案从略）
+        return "TEXT"
+    if t == "integer":
+        return "BIGINT"
+    if t == "number":
+        return "NUMERIC(20,2)"
+    if t == "boolean":
+        return "BOOLEAN"
+    if t in ("object", "array"):
+        return "JSONB"
+    return "TEXT"
+
+
+def generate(old: dict, new: dict, table: str, version: str) -> tuple[str, str]:
+    op, np_ = old.get("properties", {}), new.get("properties", {})
+    oreq, nreq = set(old.get("required", [])), set(new.get("required", []))
+
+    mig: list[str] = [
+        "-- ============================================================================",
+        f"-- migration V{version} — {table}",
+        "-- 生成器：tools/migration-generator（草案，须经人工评审与演练）",
+        "-- 流程：准备 → 双写 → 切换 → 清理（见 06-evolution-contract/migration.template.sql）",
+        "-- ============================================================================",
+        "",
+    ]
+    roll: list[str] = [
+        "-- ============================================================================",
+        f"-- rollback V{version} — {table}",
+        "-- 前提：迁移期间旧结构保留（无破坏性改写），随时可回退；数据丢失不可逆处已标注",
+        "-- ============================================================================",
+        "",
+    ]
+    has_change = False
+
+    for name, prop in np_.items():
+        if name in op:
+            continue
+        has_change = True
+        sql_type = map_type(prop)
+        if name in nreq:
+            mig.append(f"-- 必填新增列（三步：加列 → 回填 → NOT NULL）")
+            mig.append(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type};")
+            mig.append(f"UPDATE {table} SET {name} = NULL /* TODO 回填值 */ WHERE {name} IS NULL;")
+            mig.append(f"ALTER TABLE {table} ALTER COLUMN {name} SET NOT NULL;")
+        else:
+            mig.append(f"-- 可选新增列")
+            mig.append(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type};")
+        mig.append("")
+        roll.append(f"ALTER TABLE {table} DROP COLUMN IF EXISTS {name};")
+        roll.append("")
+
+    for name, prop in op.items():
+        if name in np_:
+            continue
+        has_change = True
+        mig.append(f"-- 删除列（破坏性：确认双写下线、对账完成、无引用后再执行）")
+        mig.append(f"ALTER TABLE {table} DROP COLUMN {name};")
+        mig.append("")
+        roll.append(f"-- 恢复删除的列（注意：数据无法恢复）")
+        roll.append(f"ALTER TABLE {table} ADD COLUMN {name} {map_type(prop)};")
+        roll.append("")
+
+    for name, oprop in op.items():
+        if name not in np_:
+            continue
+        nprop = np_[name]
+        if otype_str(oprop) == otype_str(nprop):
+            continue
+        has_change = True
+        new_sql = map_type(nprop)
+        mig.append(f"-- 类型变更 {otype_str(oprop)} → {otype_str(nprop)}")
+        mig.append(f"ALTER TABLE {table} ALTER COLUMN {name} TYPE {new_sql} USING {name}::{new_sql};")
+        mig.append("")
+        old_sql = map_type(oprop)
+        roll.append(f"ALTER TABLE {table} ALTER COLUMN {name} TYPE {old_sql} USING {name}::{old_sql};")
+        roll.append("")
+
+    if not has_change:
+        mig.append("-- 无结构变更（空迁移）")
+        roll.append("-- 无结构变更（空回滚）")
+
+    return "\n".join(mig).rstrip() + "\n", "\n".join(roll).rstrip() + "\n"
+
+
+def otype_str(prop: dict) -> str:
+    t = prop.get("type")
+    if isinstance(t, list):
+        t = next((x for x in t if x != "null"), None)
+    fmt = prop.get("format")
+    return f"{t}:{fmt}" if fmt else str(t)
+
+
+def cmd_self_test(args) -> int:
+    ok = True
+
+    def report(name, cond):
+        nonlocal ok
+        print(f"[{'ok  ' if cond else 'FAIL'}] {name}")
+        ok = ok and cond
+
+    old = {"properties": {"a": {"type": "integer"}, "b": {"type": "string"}}, "required": ["a", "b"]}
+    new = {"properties": {"b": {"type": "string"}, "c": {"type": "string"},
+                          "d": {"type": "string", "format": "date-time"}},
+           "required": ["b", "d"]}
+    with tempfile.TemporaryDirectory() as tmp:
+        mig, roll = generate(old, new, "t_demo", "1.2.0")
+        report("生成 ADD COLUMN（可选）", "ADD COLUMN c TEXT;" in mig)
+        report("生成必填三步（含回填）", "SET NOT NULL" in mig and "回填" in mig and "ADD COLUMN d TIMESTAMPTZ(6);" in mig)
+        report("生成 DROP COLUMN", "DROP COLUMN a;" in mig)
+        report("回滚含反向 DROP", "DROP COLUMN IF EXISTS c;" in roll)
+        report("回滚含反向 ADD", "ADD COLUMN a BIGINT;" in roll)
+        out = Path(tmp) / "migration"
+        out.mkdir()
+        (out / f"V1.2.0__t_demo.sql").write_text(mig, encoding="utf-8")
+        (out.parent / "rollback").mkdir()
+        (out.parent / "rollback" / f"V1.2.0__t_demo.sql").write_text(roll, encoding="utf-8")
+        report("写出迁移/回滚文件", (out / "V1.2.0__t_demo.sql").exists()
+               and (out.parent / "rollback" / "V1.2.0__t_demo.sql").exists())
+    print(f"自测结果: {'通过' if ok else '失败'}")
+    return 0 if ok else 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="migration-generator", description="EIS 迁移脚本生成（参考实现）")
+    parser.add_argument("--old", help="旧 Schema（JSON）")
+    parser.add_argument("--new", dest="new", help="新 Schema（JSON）")
+    parser.add_argument("--table", help="目标表名")
+    parser.add_argument("--version", default="x.y.z", help="目标版本（用于文件名）")
+    parser.add_argument("--out", help="输出目录（缺省打印到 stdout）")
+    parser.add_argument("--self-test", action="store_true", help="自测")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        return cmd_self_test(args)
+    if not (args.old and args.new and args.table):
+        parser.print_usage(sys.stderr)
+        return 2
+    try:
+        old, new = load_json(args.old), load_json(args.new)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"输入错误: {exc}", file=sys.stderr)
+        return 2
+    mig, roll = generate(old, new, args.table, args.version)
+    if args.out:
+        base = Path(args.out)
+        (base / "migration").mkdir(parents=True, exist_ok=True)
+        (base / "rollback").mkdir(parents=True, exist_ok=True)
+        mig_path = base / "migration" / f"V{args.version}__{args.table}.sql"
+        roll_path = base / "rollback" / f"V{args.version}__{args.table}.sql"
+        mig_path.write_text(mig, encoding="utf-8")
+        roll_path.write_text(roll, encoding="utf-8")
+        print(f"[ok  ] 迁移: {mig_path}")
+        print(f"[ok  ] 回滚: {roll_path}")
+    else:
+        print("-- migration.sql --")
+        print(mig)
+        print("-- rollback.sql --")
+        print(roll)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

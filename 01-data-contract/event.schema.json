@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://core/event/v1",
+  "title": "Event",
+  "description": "已经发生的事实，不可变更。事件由命令处理后产生，携幂等键以便去重。",
+  "type": "object",
+  "required": ["id", "type", "occurred_at", "recorded_at", "actor", "payload", "idempotency_key"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.]*$",
+      "description": "事件类型，如 \"purchase.order.created\""
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "业务发生时间"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "系统记录时间"
+    },
+    "actor": {
+      "type": "string",
+      "format": "uuid",
+      "description": "发起者 ID"
+    },
+    "subjects": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "涉及的业务对象 ID"
+    },
+    "payload": {
+      "type": "object",
+      "description": "事件负载"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "description": "幂等键，格式：{command_id}:{rule_id}:{action_index}"
+    },
+    "version": {
+      "type": "integer",
+      "description": "事件 Schema 版本",
+      "minimum": 1
+    }
+  }
+}

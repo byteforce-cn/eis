@@ -1,0 +1,29 @@
+# manifest.yaml — 审批域扩展（v1.0.0，骨架）
+extension:
+  id: "approval"
+  name: "审批域扩展"
+  version: "1.0.0"
+  core_version: "1.0.0"
+
+  dependencies: []
+  conflicts: []
+
+  objects:
+    - name: "ApprovalRequest"
+      schema: "objects/approval-request.schema.json"
+    - name: "ApprovalDecision"
+      schema: "objects/approval-decision.schema.json"
+
+  operations:
+    - name: "submitRequest"
+      contract: "operations/submit-request.openapi.yaml"
+    - name: "decideRequest"
+      contract: "operations/decide.openapi.yaml"
+
+  rules:
+    - name: "no_self_approval"
+      file: "rules/no-self-approval.yaml"
+
+  invariants:
+    - name: "禁止自审"
+      expression: "decision.decider != request.requester"

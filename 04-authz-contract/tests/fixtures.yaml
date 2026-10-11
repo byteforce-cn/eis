@@ -1,0 +1,69 @@
+# 授权解析夹具（04-authz-contract，v1.0.0）
+# 供 authz-resolver 与 e2e-runner（kind: authz）使用；也可作为实现方对齐
+# 时点解析 / 代理展开 / SoD 语义的参考数据。
+fixtures:
+  principals:
+    - id: "01900000-0000-7000-8000-000000000101"
+      type: "person"
+      key: "away"
+      attributes: { department: "D001" }
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+    - id: "01900000-0000-7000-8000-000000000102"
+      type: "person"
+      key: "agent"
+      attributes: { department: "D001" }
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+    - id: "01900000-0000-7000-8000-000000000103"
+      type: "person"
+      key: "both"
+      attributes: { department: "D001" }
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+
+  roles:
+    - id: "01900000-0000-7000-8000-0000000000a1"
+      key: "approver"
+      name: "审批人"
+      permissions: ["purchase.request.approve"]
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+    - id: "01900000-0000-7000-8000-0000000000a2"
+      key: "requester"
+      name: "申请人"
+      permissions: ["purchase.request.create"]
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+
+  bindings:
+    # away 的审批权 2026-10-01 才生效（用于验证历史时点重建）
+    - id: "01900000-0000-7000-8000-0000000000b1"
+      principal: "01900000-0000-7000-8000-000000000101"
+      role: "01900000-0000-7000-8000-0000000000a1"
+      scope: { department: "D001" }
+      valid_from: "2026-10-01T00:00:00Z"
+      recorded_at: "2026-10-01T00:00:00Z"
+    # both 同部门同时持有 create + approve → 触发 SOD-001
+    - id: "01900000-0000-7000-8000-0000000000b2"
+      principal: "01900000-0000-7000-8000-000000000103"
+      role: "01900000-0000-7000-8000-0000000000a1"
+      scope: { department: "D001" }
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+    - id: "01900000-0000-7000-8000-0000000000b3"
+      principal: "01900000-0000-7000-8000-000000000103"
+      role: "01900000-0000-7000-8000-0000000000a2"
+      scope: { department: "D001" }
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+
+  proxies:
+    # away 休假期间（2026-10-01 ~ 2026-11-01）由 agent 代为行权
+    - id: "01900000-0000-7000-8000-0000000000c1"
+      principal: "01900000-0000-7000-8000-000000000101"
+      agent: "01900000-0000-7000-8000-000000000102"
+      scope: { department: "D001" }
+      valid_from: "2026-10-01T00:00:00Z"
+      valid_to: "2026-11-01T00:00:00Z"
+      recorded_at: "2026-10-01T00:00:00Z"

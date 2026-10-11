@@ -1,0 +1,36 @@
+openapi: 3.1.0
+info:
+  title: IAM - 签发会话
+  version: 1.0.0
+paths:
+  /commands/iam.session.issue:
+    post:
+      operationId: sessionIssue
+      summary: 记录成功认证后的会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Command'
+      responses:
+        '202': {description: 已接受}
+        '400': {description: 参数非法}
+        '409': {description: 幂等冲突}
+components:
+  schemas:
+    Command:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type: {type: string, const: iam.session.issue}
+        payload:
+          type: object
+          required: [account_id, client_id, auth_method, jti, expires_at]
+          properties:
+            account_id: {type: string, format: uuid}
+            client_id: {type: string}
+            auth_method: {type: string}
+            jti: {type: string}
+            expires_at: {type: string, format: date-time}
+        idempotency_key: {type: string, minLength: 1}

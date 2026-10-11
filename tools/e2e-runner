@@ -1,0 +1,447 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""e2e-runner — EIS 端到端测试执行器（v1.0.0 参考实现）
+
+用途: 执行各契约目录 tests/*.test.yaml 的可执行用例与 cases/*/scenarios 场景，
+      并编排工具链流水线（contract-checker / schema-compiler / 审计自测）。
+
+可执行用例类型（kind）:
+  static      文本检查：target + check(present|absent) + pattern(regex) + min_matches
+  schema-doc  JSON 文档对 Schema 校验：schema + doc（内联）
+  chain       审计链夹具：fixture + expect(valid|invalid) + error_types
+  authz       授权用例：fixture + op(check|resolve|sod-check) + 断言字段
+  compat      兼容性：old + new + expect_level + expect_kinds + expect_requires
+  migrate     迁移生成：old + new + table + expect_contains + rollback_contains
+  scenario    场景（内核执行）：file 或内联 scenario
+  cli         工具 CLI：args + expect_exit + stdout_contains
+
+用法:
+  e2e-runner --all [--json] [--verbose]    全量：流水线 + 全部用例 + 全部场景
+  e2e-runner FILE.test.yaml [...]          执行指定用例文件
+  e2e-runner --list                        列出将被执行的文件
+
+退出码: 0 全部通过 / 1 有失败 / 2 用法错误
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+import uuid as _uuid
+from datetime import date, datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from eis_common import ROOT, load_json, load_yaml, rel  # noqa: E402
+import kernel as kernel_mod  # noqa: E402
+
+PY = sys.executable
+
+
+# ---------------------------------------------------------------------------
+# 工具函数
+# ---------------------------------------------------------------------------
+def run_cli(args: list[str], expect_exit: int = 0):
+    proc = subprocess.run([PY] + args, cwd=ROOT, capture_output=True, text=True, timeout=300)
+    return proc
+
+
+def read_target(rel_path: str) -> str:
+    return (ROOT / rel_path).read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# schema-doc：$ref 展开 + 迷你校验器（覆盖本仓库 Schema 所用子集）
+# ---------------------------------------------------------------------------
+def expand_refs(schema, base_dir: Path, depth: int = 0):
+    if depth > 12:
+        raise ValueError("$ref 展开过深")
+    if isinstance(schema, list):
+        return [expand_refs(x, base_dir, depth) for x in schema]
+    if not isinstance(schema, dict):
+        return schema
+    if "$ref" in schema and isinstance(schema["$ref"], str):
+        ref = schema["$ref"]
+        if ref.startswith("#"):
+            return {"__local_ref__": ref}
+        target, _, frag = ref.partition("#")
+        doc = load_json((base_dir / target).resolve())
+        if frag:
+            node = doc
+            for part in frag.lstrip("/").split("/"):
+                node = node[part]
+            doc = node
+        return expand_refs(doc, (base_dir / target).resolve().parent, depth + 1)
+    return {k: expand_refs(v, base_dir, depth) for k, v in schema.items()}
+
+
+def resolve_local(ref: str, root_schema):
+    node = root_schema
+    for part in ref.lstrip("#/").split("/"):
+        node = node[part]
+    return node
+
+
+def validate_doc(node, schema, root_schema, path="$") -> list[str]:
+    problems: list[str] = []
+    if not isinstance(schema, dict):
+        return problems
+    if "__local_ref__" in schema:
+        return validate_doc(node, expand_refs(resolve_local(schema["__local_ref__"], root_schema),
+                                              Path(".")), root_schema, path)
+    for item in schema.get("allOf", []):
+        problems += validate_doc(node, item, root_schema, path)
+
+    t = schema.get("type")
+    if isinstance(t, list):
+        if node is None and "null" in t:
+            pass
+        else:
+            candidates = [x for x in t if x != "null"]
+            if node is None or not _type_ok(node, candidates):
+                problems.append(f"{path}: 类型应为 {t}")
+    elif t:
+        if not _type_ok(node, [t]):
+            problems.append(f"{path}: 类型应为 {t}，实际 {type(node).__name__}")
+            return problems
+
+    if isinstance(node, dict):
+        for req in schema.get("required", []):
+            if req not in node:
+                problems.append(f"{path}: 缺少必填字段 {req}")
+        for key, value in node.items():
+            if key in schema.get("properties", {}):
+                problems += validate_doc(value, schema["properties"][key], root_schema, f"{path}.{key}")
+    if isinstance(node, list):
+        min_items = schema.get("minItems")
+        if min_items is not None and len(node) < min_items:
+            problems.append(f"{path}: 元素数 {len(node)} < {min_items}")
+        if "items" in schema:
+            for i, item in enumerate(node):
+                problems += validate_doc(item, schema["items"], root_schema, f"{path}[{i}]")
+    if isinstance(node, str):
+        fmt = schema.get("format")
+        if fmt == "uuid":
+            try:
+                _uuid.UUID(node)
+            except ValueError:
+                problems.append(f"{path}: 非 UUID 格式")
+        elif fmt == "date-time":
+            try:
+                dt = datetime.fromisoformat(node.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    problems.append(f"{path}: 时间缺少时区（必须 UTC）")
+            except ValueError:
+                problems.append(f"{path}: 非 ISO 8601 时间")
+        elif fmt == "date":
+            try:
+                date.fromisoformat(node)
+            except ValueError:
+                problems.append(f"{path}: 非日期格式")
+        if "enum" in schema and node not in schema["enum"]:
+            problems.append(f"{path}: 取值 {node!r} 不在 {schema['enum']}")
+        if "pattern" in schema:
+            try:
+                if not re.search(schema["pattern"], node):
+                    problems.append(f"{path}: 不匹配 pattern {schema['pattern']}")
+            except re.error:
+                pass
+    return problems
+
+
+def _type_ok(node, types: list) -> bool:
+    for t in types:
+        if t == "string" and isinstance(node, str):
+            return True
+        if t == "integer" and isinstance(node, int) and not isinstance(node, bool):
+            return True
+        if t == "number" and isinstance(node, (int, float)) and not isinstance(node, bool):
+            return True
+        if t == "boolean" and isinstance(node, bool):
+            return True
+        if t == "object" and isinstance(node, dict):
+            return True
+        if t == "array" and isinstance(node, list):
+            return True
+        if t == "null" and node is None:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# kind 处理器
+# ---------------------------------------------------------------------------
+def kind_static(item) -> tuple[bool, str]:
+    text = read_target(item["target"])
+    count = len(re.findall(item["pattern"], text, re.M))
+    if item.get("check", "present") == "absent":
+        ok = count == 0
+        return ok, f"absent {item['pattern']!r}（匹配 {count} 处）"
+    need = int(item.get("min_matches", 1))
+    ok = count >= need
+    return ok, f"present {item['pattern']!r} ×{count}（要求 ≥{need}）"
+
+
+def kind_schema_doc(item) -> tuple[bool, str]:
+    schema_path = ROOT / item["schema"]
+    schema = load_json(schema_path)
+    expanded = expand_refs(schema, schema_path.parent)
+    problems = validate_doc(item["doc"], expanded, schema)
+    expect = item.get("expect", "valid")
+    if expect == "invalid":
+        if not problems:
+            return False, "期望校验失败，但文档通过了校验"
+        joined = " / ".join(problems)
+        for part in item.get("problem_contains", []):
+            if part not in joined:
+                return False, f"失败原因缺少 {part!r}（实际: {joined}）"
+        return True, f"按预期失败：{joined[:160]}"
+    if problems:
+        return False, f"{item['schema']}: " + "; ".join(problems)
+    return True, f"{item['schema']} 校验通过"
+
+
+def kind_chain(item) -> tuple[bool, str]:
+    proc = run_cli(["tools/audit-verifier", str(ROOT / item["fixture"]), "--json"])
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return False, f"audit-verifier 输出异常: {proc.stdout[:200]} {proc.stderr[:200]}"
+    expect_valid = item.get("expect", "valid") == "valid"
+    if result["valid"] != expect_valid:
+        return False, f"期望 valid={expect_valid}，实际 {result['valid']}: {result.get('errors')}"
+    for err_type in item.get("error_types", []):
+        if not any(e["type"] == err_type for e in result.get("errors", [])):
+            return False, f"缺少期望错误类型 {err_type}（实际 {[e['type'] for e in result.get('errors', [])]}）"
+    detail = "valid" if result["valid"] else f"检出 {[e['type'] for e in result['errors']]}"
+    return True, detail
+
+
+def kind_authz(item) -> tuple[bool, str]:
+    base = ["tools/authz-resolver", item["op"], "--fixtures", str(ROOT / item["fixture"]),
+            "--principal", item["principal"], "--as-of", item["as_of"]]
+    if item["op"] == "check":
+        base += ["--permission", item["permission"]]
+    proc = run_cli(base)
+    if proc.returncode != 0:
+        return False, f"authz-resolver 退出码 {proc.returncode}: {proc.stderr[:200]}"
+    out = json.loads(proc.stdout)
+    if item["op"] == "check":
+        if out["allowed"] != item["expect_allowed"]:
+            return False, f"期望 allowed={item['expect_allowed']}，实际 {out}"
+        if item.get("expect_code") and out.get("reason_code") != item["expect_code"]:
+            return False, f"期望 reason_code={item['expect_code']}，实际 {out.get('reason_code')}"
+        return True, f"allowed={out['allowed']} reason_code={out.get('reason_code')}"
+    if item["op"] == "resolve":
+        roles = out.get("roles", [])
+        for want in item.get("expect_roles_contains", []):
+            if want not in roles:
+                return False, f"角色缺少 {want}（实际 {roles}）"
+        for want in item.get("expect_permissions_contains", []):
+            if want not in out.get("permissions", []):
+                return False, f"权限缺少 {want}（实际 {out.get('permissions')}）"
+        return True, f"roles={roles}"
+    conflicts = [c["rule"] for c in out.get("sod_conflicts", [])]
+    for want in item.get("expect_conflicts_contains", []):
+        if want not in conflicts:
+            return False, f"SoD 冲突缺少 {want}（实际 {conflicts}）"
+    return True, f"conflicts={conflicts}"
+
+
+def kind_compat(item) -> tuple[bool, str]:
+    proc = run_cli(["tools/compatibility-checker", "--old", str(ROOT / item["old"]),
+                    "--new", str(ROOT / item["new"]), "--json"])
+    out = json.loads(proc.stdout)
+    if out["overall"] != item["expect_level"]:
+        return False, f"期望级别 {item['expect_level']}，实际 {out['overall']}"
+    kinds = {ch["kind"] for ch in out["changes"]}
+    for want in item.get("expect_kinds", []):
+        if want not in kinds:
+            return False, f"缺少变更类型 {want}（实际 {kinds}）"
+    for kind_name, requires in (item.get("expect_requires") or {}).items():
+        ch = next((c for c in out["changes"] if c["kind"] == kind_name), None)
+        if ch is None or not set(requires) <= set(ch.get("requires", [])):
+            return False, f"{kind_name} requires 期望包含 {requires}，实际 {ch and ch.get('requires')}"
+    return True, f"{out['overall']}（{sorted(kinds)}）"
+
+
+def kind_migrate(item) -> tuple[bool, str]:
+    proc = run_cli(["tools/migration-generator", "--old", str(ROOT / item["old"]),
+                    "--new", str(ROOT / item["new"]), "--table", item["table"]])
+    if proc.returncode != 0:
+        return False, f"migration-generator 退出码 {proc.returncode}: {proc.stderr[:200]}"
+    if "-- rollback.sql --" in proc.stdout:
+        mig, roll = proc.stdout.split("-- rollback.sql --", 1)
+    else:
+        return False, "输出缺少 rollback 段"
+    for frag in item.get("expect_contains", []):
+        if frag not in mig:
+            return False, f"迁移缺少片段: {frag}"
+    for frag in item.get("rollback_contains", []):
+        if frag not in roll:
+            return False, f"回滚缺少片段: {frag}"
+    return True, f"迁移/回滚片段齐全（{len(item.get('expect_contains', []))}+{len(item.get('rollback_contains', []))}）"
+
+
+def kind_scenario(item) -> tuple[bool, str]:
+    if "file" in item:
+        result = kernel_mod.run_scenario(ROOT / item["file"])
+    else:
+        result = kernel_mod.run_scenario({"scenario": item["scenario"]})
+    if result["ok"]:
+        return True, f"场景通过（{len(result['steps'])} 步 / {len(result['asserts'])} 断言）"
+    return False, "; ".join(result["errors"])
+
+
+def kind_cli(item) -> tuple[bool, str]:
+    proc = run_cli(item["args"])
+    if proc.returncode != item.get("expect_exit", 0):
+        return False, f"退出码 {proc.returncode}（期望 {item.get('expect_exit', 0)}）: {proc.stderr[:200]}"
+    for pattern in item.get("stdout_contains", []):
+        if pattern not in proc.stdout:
+            return False, f"stdout 缺少 {pattern!r}"
+    return True, f"退出码 {proc.returncode}"
+
+
+KIND_HANDLERS = {
+    "static": kind_static,
+    "schema-doc": kind_schema_doc,
+    "chain": kind_chain,
+    "authz": kind_authz,
+    "compat": kind_compat,
+    "migrate": kind_migrate,
+    "scenario": kind_scenario,
+    "cli": kind_cli,
+}
+
+
+# ---------------------------------------------------------------------------
+# 执行
+# ---------------------------------------------------------------------------
+def run_test_file(path: Path, verbose: bool) -> dict:
+    doc = load_yaml(path)
+    suite = doc.get("suite") or path.parent.parent.name
+    results = []
+    for item in doc.get("tests", []):
+        name = item.get("name", "未命名")
+        kind = item.get("kind")
+        handler = KIND_HANDLERS.get(kind)
+        if handler is None:
+            results.append({"name": name, "ok": False, "detail": f"未知 kind: {kind}"})
+            continue
+        try:
+            ok, detail = handler(item)
+        except Exception as exc:  # noqa: BLE001 — 用例失败不应中断整个套件
+            ok, detail = False, f"执行异常: {type(exc).__name__}: {exc}"
+        results.append({"name": name, "ok": ok, "detail": detail})
+    failed = [r for r in results if not r["ok"]]
+    if verbose or failed:
+        print(f"-- {rel(path)} [{suite}]")
+        for r in results:
+            print(f"  [{'ok  ' if r['ok'] else 'FAIL'}] {r['name']}")
+            if verbose or not r["ok"]:
+                print(f"         {r['detail']}")
+    n_ok = len(results) - len(failed)
+    print(f"   {n_ok}/{len(results)} 通过" + ("" if not failed else f"，{len(failed)} 失败"))
+    return {"file": rel(path), "suite": suite, "tests": results,
+            "ok": not failed, "passed": n_ok, "total": len(results)}
+
+
+def discover_test_files() -> list[Path]:
+    files = []
+    for section in sorted(ROOT.glob("0*/tests/*.test.yaml")):
+        files.append(section)
+    for ext in sorted((ROOT / "extensions").glob("*/tests/*.test.yaml")):
+        files.append(ext)
+    return files
+
+
+def run_pipeline(verbose: bool) -> list[dict]:
+    """工具链流水线：契约检查 / Schema 一致性 / 扩展编译 / 审计自测。"""
+    steps = [
+        ("契约检查 contract-checker", ["tools/contract-checker"]),
+        ("Schema 一致性 schema-compiler check", ["tools/schema-compiler", "check"]),
+        ("扩展编译 schema-compiler compile --all", ["tools/schema-compiler", "compile", "--all"]),
+        ("审计自测 verify.tool --self-test", ["05-audit-contract/verify.tool", "--self-test"]),
+        ("审计自测 audit-verifier --self-test", ["tools/audit-verifier", "--self-test"]),
+    ]
+    results = []
+    print("== 流水线 ==")
+    for name, args in steps:
+        proc = run_cli(args)
+        ok = proc.returncode == 0
+        results.append({"step": name, "ok": ok})
+        print(f"[{'ok  ' if ok else 'FAIL'}] {name}")
+        if verbose or not ok:
+            tail = "\n".join((proc.stdout + proc.stderr).strip().splitlines()[-6:])
+            print("\n".join(f"        {line}" for line in tail.splitlines()))
+    return results
+
+
+def cmd_all(args) -> int:
+    pipelined = run_pipeline(args.verbose)
+    print()
+    file_results = [run_test_file(path, args.verbose) for path in discover_test_files()]
+
+    # 试点场景（cases/*/scenarios/*.yaml）
+    scenario_results = []
+    for scenario_path in sorted((ROOT / "cases").glob("*/scenarios/*.yaml")):
+        result = kernel_mod.run_scenario(scenario_path)
+        scenario_results.append({"file": rel(scenario_path), "ok": result["ok"], "result": result})
+        print(f"[{'ok  ' if result['ok'] else 'FAIL'}] 场景 {rel(scenario_path)}"
+              f"（{len(result['steps'])} 步 / {len(result['asserts'])} 断言 / 审计 {result['audit_entries']} 条）")
+        for err in result["errors"]:
+            print(f"        {err}")
+
+    total_ok = sum(r["passed"] for r in file_results)
+    total = sum(r["total"] for r in file_results)
+    all_ok = (all(s["ok"] for s in pipelined) and all(r["ok"] for r in file_results)
+              and all(s["ok"] for s in scenario_results))
+    print()
+    print(f"== 汇总：用例 {total_ok}/{total}；场景 {sum(s['ok'] for s in scenario_results)}/"
+          f"{len(scenario_results)}；流水线 {sum(s['ok'] for s in pipelined)}/{len(pipelined)} ==")
+    print(f"== 总判定：{'通过' if all_ok else '失败'} ==")
+
+    if args.json:
+        print(json.dumps({
+            "ok": all_ok, "pipeline": pipelined, "files": file_results,
+            "scenarios": [{"file": s["file"], "ok": s["ok"]} for s in scenario_results],
+        }, ensure_ascii=False, indent=2))
+    return 0 if all_ok else 1
+
+
+def cmd_files(args) -> int:
+    results = [run_test_file(Path(p), args.verbose) for p in args.files]
+    all_ok = all(r["ok"] for r in results)
+    if args.json:
+        print(json.dumps({"ok": all_ok, "files": results}, ensure_ascii=False, indent=2))
+    else:
+        print(f"== 总判定：{'通过' if all_ok else '失败'} ==")
+    return 0 if all_ok else 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="e2e-runner", description="EIS 端到端测试执行器（参考实现）")
+    parser.add_argument("files", nargs="*", help="测试文件（*.test.yaml）")
+    parser.add_argument("--all", action="store_true", help="全量：流水线 + 全部用例 + 全部场景")
+    parser.add_argument("--list", action="store_true", help="列出将被执行的文件")
+    parser.add_argument("--json", action="store_true", help="输出 JSON 汇总")
+    parser.add_argument("--verbose", action="store_true", help="输出全部明细")
+    args = parser.parse_args(argv)
+
+    if args.list:
+        for path in discover_test_files():
+            print(rel(path))
+        return 0
+    if args.all:
+        return cmd_all(args)
+    if args.files:
+        return cmd_files(args)
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

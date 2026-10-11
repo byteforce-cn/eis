@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""schema-compiler — EIS Schema 编译（v1.0.0 参考实现）
+
+用途:
+  compile   业务对象 Schema → PostgreSQL DDL（扩展表 + 双时间轴模板）
+  check     已提交核心 DDL（core.ddl / audit.ddl）与核心 Schema 的一致性
+  --self-test  自测：编译全部扩展到临时目录并做结构断言
+
+用法:
+  schema-compiler compile <extension-id> [--out DIR]   # 编译单个扩展
+  schema-compiler compile --all [--out DIR]            # 编译全部扩展
+  schema-compiler check [--json]                       # 核心一致性检查
+  schema-compiler --self-test
+
+约定:
+  - 扩展对象表名 = {extension}_{snake_case(title)}，如 accounting_balance
+  - 扩展表 = 核心元字段（object.schema.json）+ 领域字段（allOf 第二部分）
+  - 时间字段一律 eis_timestamp（TIMESTAMPTZ(6)）；金额 NUMERIC(20,2)；数量 NUMERIC(20,4)
+  - 输出为参考 DDL；数据库专有优化（分区等）不属于契约
+
+退出码: 0 通过 / 1 失败 / 2 用法或环境错误
+"""
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from eis_common import BUILD_DIR, ROOT, Report, load_json, load_yaml, rel, snake  # noqa: E402
+
+CORE_DIR = ROOT / "01-data-contract"
+EXT_DIR = ROOT / "extensions"
+
+# ---------------------------------------------------------------------------
+# 核心 Schema → 已提交 DDL 的映射（check 模式）
+#   overrides: "schema.property" → 实际列名
+#   skip:      仅存在于嵌套结构、不独立成列的属性
+# ---------------------------------------------------------------------------
+CORE_TABLE_MAP = [
+    {
+        "schema": CORE_DIR / "object.schema.json",
+        "ddl": CORE_DIR / "core.ddl",
+        "table": "business_object",
+        "overrides": {},
+        "skip": set(),
+    },
+    {
+        "schema": CORE_DIR / "event.schema.json",
+        "ddl": CORE_DIR / "core.ddl",
+        "table": "event",
+        "overrides": {},
+        "skip": set(),
+    },
+    {
+        "schema": CORE_DIR / "command.schema.json",
+        "ddl": CORE_DIR / "core.ddl",
+        "table": "command",
+        "overrides": {},
+        "skip": set(),
+    },
+    {
+        "schema": CORE_DIR / "view.schema.json",
+        "ddl": CORE_DIR / "core.ddl",
+        "table": "view",
+        "overrides": {},
+        "skip": set(),
+    },
+    {
+        "schema": ROOT / "05-audit-contract" / "audit.schema.json",
+        "ddl": ROOT / "05-audit-contract" / "audit.ddl",
+        "table": "audit_entry",
+        "overrides": {"resource.type": "resource_type", "resource.id": "resource_id"},
+        "skip": {"resource"},
+    },
+]
+
+# 元字段列（顺序与 core.ddl 模板一致）
+META_SQL = [
+    ("id", "eis_id", True, ""),
+    ("version", "eis_version", True, " DEFAULT 1"),
+    ("valid_from", "eis_timestamp", True, ""),
+    ("valid_to", "eis_timestamp", False, ""),
+    ("recorded_at", "eis_timestamp", True, ""),
+    ("superseded_at", "eis_timestamp", False, ""),
+    ("created_by", "eis_id", True, ""),
+    ("created_at", "eis_timestamp", True, ""),
+    ("updated_by", "eis_id", False, ""),
+    ("updated_at", "eis_timestamp", False, ""),
+]
+
+MONEY_HINTS = ("amount", "balance", "debit", "credit", "total", "opening", "price", "cost")
+
+
+# ---------------------------------------------------------------------------
+# 类型映射
+# ---------------------------------------------------------------------------
+def sql_type(name: str, prop: dict):
+    """JSON Schema 属性 → (SQL 类型, 可空, 附加列级 CHECK, 注释)。"""
+    checks: list[str] = []
+    t = prop.get("type")
+    nullable = False
+    if isinstance(t, list):
+        parts = [x for x in t if x != "null"]
+        nullable = "null" in t
+        t = parts[0] if parts else None
+
+    fmt = prop.get("format")
+    if t == "string":
+        if fmt == "uuid":
+            return "UUID", nullable, checks, None
+        if fmt == "date-time":
+            return "eis_timestamp", nullable, checks, None
+        if fmt == "date":
+            return "DATE", nullable, checks, None
+        enum = prop.get("enum")
+        if enum:
+            values = ", ".join("'" + str(v).replace("'", "''") + "'" for v in enum)
+            checks.append(f"CHECK ({name} IN ({values}))")
+            return "TEXT", nullable, checks, None
+        pat = prop.get("pattern")
+        if pat:
+            if pat == r"^[A-Z]{3}$":
+                return "CHAR(3)", nullable, checks, None
+            if pat == r"^\d{4}-\d{2}$":
+                return "CHAR(7)", nullable, checks, None
+            if pat in (r"^\d+(\.\d{1,2})?$", r"^-?\d+(\.\d{1,2})?$",
+                       r"^\d+(\.\d+)?$", r"^-?\d+(\.\d+)?$"):
+                if any(h in name.lower() for h in MONEY_HINTS):
+                    return "NUMERIC(20,2)", nullable, checks, None
+                return "NUMERIC(20,4)", nullable, checks, None
+            return "TEXT", nullable, checks, f"pattern {pat}"
+        return "TEXT", nullable, checks, None
+    if t == "integer":
+        return "BIGINT", nullable, checks, None
+    if t == "number":
+        return "NUMERIC", nullable, checks, None
+    if t == "boolean":
+        return "BOOLEAN", nullable, checks, None
+    if t == "object":
+        return "JSONB", nullable, checks, None
+    if t == "array":
+        items = prop.get("items", {})
+        if items.get("format") == "uuid":
+            return "UUID[]", nullable, checks, None
+        if items.get("type") == "string":
+            return "TEXT[]", nullable, checks, None
+        return "JSONB", nullable, checks, None
+    return "TEXT", nullable, checks, None
+
+
+# ---------------------------------------------------------------------------
+# 扩展编译
+# ---------------------------------------------------------------------------
+def resolve_ref(schema_path: Path, ref: str) -> dict:
+    """解析 $ref：支持外部文件引用与文件内 #/ 指针（仅本工具所需子集）。"""
+    if ref.startswith("#"):
+        node = load_json(schema_path)
+        for part in ref.lstrip("#/").split("/"):
+            node = node[part]
+        return node
+    target, _, frag = ref.partition("#")
+    doc = load_json((schema_path.parent / target).resolve())
+    if not frag:
+        return doc
+    node = doc
+    for part in frag.lstrip("/").split("/"):
+        node = node[part]
+    return node
+
+
+def object_fields(schema_path: Path):
+    """返回 (title, meta_props, domain_props, required)。"""
+    doc = load_json(schema_path)
+    title = doc.get("title") or schema_path.stem
+    meta, domain, required = {}, {}, set()
+    if "allOf" in doc:
+        for item in doc["allOf"]:
+            if "$ref" in item:
+                ref_doc = resolve_ref(schema_path, item["$ref"])
+                meta.update(ref_doc.get("properties", {}))
+                required.update(ref_doc.get("required", []))
+            else:
+                domain.update(item.get("properties", {}))
+                required.update(item.get("required", []))
+    else:
+        domain.update(doc.get("properties", {}))
+        required.update(doc.get("required", []))
+    return title, meta, domain, required
+
+
+def compile_extension(ext_id: str) -> tuple[str, list[str]]:
+    """编译单个扩展，返回 (DDL 文本, 表名列表)。"""
+    ext_root = EXT_DIR / ext_id
+    manifest = load_yaml(ext_root / "manifest.yaml")["extension"]
+    objects = manifest.get("objects", [])
+    out = io.StringIO()
+    tables: list[str] = []
+    out.write("-- ============================================================================\n")
+    out.write(f"-- {ext_id}.ddl — {manifest.get('name', ext_id)} {manifest.get('version', '')} 生成物\n")
+    out.write(f"-- 源：extensions/{ext_id}/objects/*.schema.json + 01-data-contract/object.schema.json\n")
+    out.write("-- 生成器：tools/schema-compiler（参考实现）；禁止手工修改\n")
+    out.write("-- 前置：已执行 01-data-contract/core.ddl（eis_id / eis_version / eis_timestamp 域）\n")
+    out.write("-- ============================================================================\n\n")
+    out.write("CREATE EXTENSION IF NOT EXISTS btree_gist;\n\n")
+    for obj in objects:
+        schema_path = ext_root / obj["schema"]
+        title, _, domain, required = object_fields(schema_path)
+        table = f"{ext_id}_{snake(obj.get('name') or title)}"
+        tables.append(table)
+        out.write("-- ----------------------------------------------------------------------------\n")
+        out.write(f"-- {title}（{rel(schema_path)}）\n")
+        out.write("-- ----------------------------------------------------------------------------\n")
+        out.write(f"CREATE TABLE {table} (\n")
+        for col, sql, not_null, extra in META_SQL:
+            body = f"{col:<15} {sql:<13}".rstrip()
+            if not_null:
+                body += " NOT NULL"
+            e = extra.strip()
+            if e:
+                body += " " + e
+            out.write(f"    {body},\n")
+        out.write("    -- 领域字段\n")
+        table_checks: list[str] = []
+        domain_items = list(domain.items())
+        for name, prop in domain_items:
+            sql, nullable, checks, comment = sql_type(name, prop)
+            not_null = (name in required) and not nullable
+            body = f"{name:<15} {sql:<13}".rstrip()
+            if not_null:
+                body += " NOT NULL"
+            tail = f",   -- {comment}" if comment else ","
+            out.write(f"    {body}{tail}\n")
+            for c in checks:
+                table_checks.append(f"CONSTRAINT ck_{table}_{name} {c}")
+        out.write(f"    CONSTRAINT pk_{table}            PRIMARY KEY (id, recorded_at),\n")
+        out.write("    CONSTRAINT valid_range    CHECK (valid_to IS NULL OR valid_to > valid_from),\n")
+        out.write("    CONSTRAINT recorded_range CHECK (superseded_at IS NULL OR superseded_at > recorded_at)")
+        if table_checks:
+            out.write(",\n    " + ",\n    ".join(table_checks))
+        out.write("\n);\n\n")
+        out.write(f"CREATE UNIQUE INDEX uq_{table}_current ON {table} (id) WHERE superseded_at IS NULL;\n")
+        out.write(f"CREATE INDEX idx_{table}_valid_time    ON {table} (valid_from, valid_to);\n")
+        out.write(f"CREATE INDEX idx_{table}_recorded_time ON {table} (recorded_at, superseded_at);\n")
+        out.write(f"CREATE INDEX idx_{table}_bitemporal    ON {table} (valid_from, valid_to, recorded_at, superseded_at);\n\n")
+    return out.getvalue(), tables
+
+
+# ---------------------------------------------------------------------------
+# 核心一致性检查
+# ---------------------------------------------------------------------------
+def parse_tables(ddl_text: str) -> dict:
+    """极简 DDL 解析：返回 {表名: {列名: not_null}}。仅支持本仓库受控 DDL 风格。"""
+    tables: dict[str, dict[str, bool]] = {}
+    pattern = re.compile(r"CREATE TABLE\s+(\w+)\s*\((.*?)\)\s*;", re.S | re.I)
+    for m in pattern.finditer(ddl_text):
+        name, body = m.group(1), m.group(2)
+        cols: dict[str, bool] = {}
+        for line in body.splitlines():
+            line = line.strip()
+            if not line or line.startswith("--"):
+                continue
+            if re.match(r"(CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN|EXCLUDE)\b", line, re.I):
+                continue
+            cm = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\s+(.+?),?$", line)
+            if cm:
+                col, rest = cm.group(1), cm.group(2)
+                cols[col] = "NOT NULL" in rest.upper()
+        tables[name] = cols
+    return tables
+
+
+def check_core(report: Report) -> None:
+    ddl_cache: dict[Path, dict] = {}
+    for item in CORE_TABLE_MAP:
+        schema = load_json(item["schema"])
+        ddl = item["ddl"]
+        if ddl not in ddl_cache:
+            ddl_cache[ddl] = parse_tables(ddl.read_text(encoding="utf-8"))
+        tables = ddl_cache[ddl]
+        table = item["table"]
+        if table not in tables:
+            report.fail(f"{rel(item['schema'])} → 表 {table} 未在 {rel(ddl)} 中找到")
+            continue
+        cols = tables[table]
+        required = set(schema.get("required", []))
+        missing, null_mismatch = [], []
+        for prop_name in schema.get("properties", {}):
+            if prop_name in item["skip"]:
+                continue
+            col = item["overrides"].get(prop_name, prop_name)
+            if col not in cols:
+                missing.append(prop_name)
+                continue
+            if prop_name in required and not cols[col]:
+                null_mismatch.append(prop_name)
+        if missing or null_mismatch:
+            lines = []
+            if missing:
+                lines.append("缺少列: " + ", ".join(missing))
+            if null_mismatch:
+                lines.append("应为 NOT NULL: " + ", ".join(null_mismatch))
+            report.fail(f"{rel(item['schema'])} 与 {table} 列覆盖不一致", "\n".join(lines))
+        else:
+            report.ok(f"{rel(item['schema'])} ↔ {table} 列与 NOT NULL 一致性通过")
+
+
+def check_extensions(report: Report) -> None:
+    for ext_root in sorted(p for p in EXT_DIR.iterdir() if p.is_dir()):
+        try:
+            _, tables = compile_extension(ext_root.name)
+        except Exception as exc:  # noqa: BLE001 — 汇总所有失败
+            report.fail(f"extensions/{ext_root.name} 编译失败: {exc}")
+            continue
+        if not tables:
+            report.fail(f"extensions/{ext_root.name} 未声明任何对象")
+            continue
+        report.ok(f"extensions/{ext_root.name} 编译通过（{len(tables)} 表: {', '.join(tables)}）")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def cmd_compile(args) -> int:
+    out_dir = Path(args.out) if args.out else BUILD_DIR / "ddl"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if args.all:
+        ext_ids = [p.name for p in sorted(EXT_DIR.iterdir()) if p.is_dir()]
+    elif args.extension:
+        ext_ids = [args.extension]
+    else:
+        print("compile 需要 <extension-id> 或 --all", file=sys.stderr)
+        return 2
+    rc = 0
+    for ext_id in ext_ids:
+        if not (EXT_DIR / ext_id / "manifest.yaml").exists():
+            print(f"未知扩展: {ext_id}", file=sys.stderr)
+            rc = 2
+            continue
+        ddl, tables = compile_extension(ext_id)
+        target = out_dir / f"{ext_id}.ddl"
+        target.write_text(ddl, encoding="utf-8")
+        print(f"[ok  ] {ext_id}: {len(tables)} 表 → {rel(target)}")
+    return rc
+
+
+def cmd_check(args) -> int:
+    report = Report("schema-compiler check — 核心 DDL ↔ Schema 一致性")
+    check_core(report)
+    check_extensions(report)
+    if args.json:
+        print(json.dumps(report.to_json(), ensure_ascii=False, indent=2))
+    else:
+        report.print(verbose=args.verbose)
+    return 0 if report.success else 1
+
+
+def cmd_self_test(args) -> int:
+    report = Report("schema-compiler --self-test")
+    with tempfile.TemporaryDirectory() as tmp:  # noqa: F841 — 仅为隔离编译环境
+        ddl, _ = compile_extension("accounting")
+        asserts = {
+            "accounting_balance 表": "CREATE TABLE accounting_balance" in ddl,
+            "accounting_voucher 表": "CREATE TABLE accounting_voucher" in ddl,
+            "双时间轴列": "valid_from" in ddl and "eis_timestamp" in ddl,
+            "区间约束": "CONSTRAINT valid_range" in ddl,
+            "金额映射 NUMERIC(20,2)": "NUMERIC(20,2)" in ddl,
+        }
+    for name, cond in asserts.items():
+        (report.ok if cond else report.fail)(f"编译断言：{name}")
+    r2 = Report("schema-compiler check（冒烟）")
+    check_core(r2)
+    if r2.success:
+        report.ok("check 模式：核心一致性通过")
+    else:
+        report.fail("check 模式：核心一致性失败（详见独立运行 check）")
+    report.print(verbose=True)
+    return 0 if report.success else 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="schema-compiler", description="EIS Schema 编译（参考实现）")
+    parser.add_argument("--self-test", action="store_true", help="自测")
+    sub = parser.add_subparsers(dest="cmd")
+    p_compile = sub.add_parser("compile", help="编译扩展 Schema → DDL")
+    p_compile.add_argument("extension", nargs="?", help="扩展 ID（如 accounting）")
+    p_compile.add_argument("--all", action="store_true", help="编译全部扩展")
+    p_compile.add_argument("--out", help="输出目录（默认 build/ddl）")
+    p_check = sub.add_parser("check", help="核心 DDL ↔ Schema 一致性检查")
+    p_check.add_argument("--json", action="store_true", help="JSON 输出")
+    p_check.add_argument("--verbose", action="store_true", help="输出全部检查明细")
+
+    args = parser.parse_args(argv)
+    if args.self_test:
+        return cmd_self_test(args)
+    if args.cmd == "compile":
+        return cmd_compile(args)
+    if args.cmd == "check":
+        return cmd_check(args)
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

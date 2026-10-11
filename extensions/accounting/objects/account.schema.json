@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/accounting/object/account/v1",
+  "title": "Account",
+  "description": "会计科目。核心元字段通过 allOf 引用（冻结），仅追加领域字段。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["code", "name", "category", "normal_balance"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[0-9]{4,8}$",
+          "description": "科目编码，如 \"1001\""
+        },
+        "name": {
+          "type": "string",
+          "description": "科目名称，如 \"库存现金\""
+        },
+        "category": {
+          "type": "string",
+          "enum": ["asset", "liability", "equity", "revenue", "expense"],
+          "description": "科目类别"
+        },
+        "normal_balance": {
+          "type": "string",
+          "enum": ["debit", "credit"],
+          "description": "余额方向：资产/费用为借，负债/权益/收入为贷"
+        },
+        "parent_code": {
+          "type": ["string", "null"],
+          "description": "上级科目编码（可空）"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+openapi: 3.1.0
+info:
+  title: IAM - 吊销会话
+  version: 1.0.0
+paths:
+  /commands/iam.session.revoke:
+    post:
+      operationId: sessionRevoke
+      summary: 吊销认证会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Command'
+      responses:
+        '202': {description: 已接受}
+        '400': {description: 参数非法}
+        '409': {description: IAM-409-003 会话状态冲突}
+components:
+  schemas:
+    Command:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type: {type: string, const: iam.session.revoke}
+        payload:
+          type: object
+          required: [session_id]
+          properties:
+            session_id: {type: string, format: uuid}
+        idempotency_key: {type: string, minLength: 1}

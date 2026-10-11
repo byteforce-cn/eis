@@ -1,0 +1,95 @@
+# temporal.rules.yaml — EIS 时间契约规则（Spec v1.0.0，冻结）
+# 语义权威：本文件。DDL 片段见 temporal.ddl；查询模板见 query-templates.sql
+version: "1.0.0"
+
+semantics:
+  valid_time:       [valid_from, valid_to]          # 业务时间：事实在现实中生效的区间
+  transaction_time: [recorded_at, superseded_at]    # 系统时间：系统记录该事实的区间
+  interval: "半开区间 [from, to)：from <= t < to；端点 NULL 表示直到无穷"
+  timezone: "UTC"
+  precision: 6                                      # 微秒（6 位小数）
+  current: "valid_to IS NULL 且 superseded_at IS NULL"
+
+rules:
+  - id: T-R001
+    name: 双时间轴字段必备
+    statement: 所有业务对象必须包含 valid_from、valid_to、recorded_at、superseded_at 四个时间字段
+    applies_to: "01-data-contract/*.schema.json"
+    enforced_by: [schema-compiler]
+    severity: error
+
+  - id: T-R002
+    name: 半开区间语义
+    statement: >-
+      时间区间一律为半开区间 [from, to)；时点 t 命中条件：
+      valid_from <= t AND (valid_to IS NULL OR valid_to > t)
+    applies_to: [query, rule-engine]
+    enforced_by: [e2e-runner]
+    severity: error
+
+  - id: T-R003
+    name: 业务时间区间有序
+    statement: "valid_to IS NULL OR valid_to > valid_from"
+    applies_to: [ddl]
+    enforced_by: [ddl-constraint]
+    severity: error
+
+  - id: T-R004
+    name: 系统时间区间有序
+    statement: "superseded_at IS NULL OR superseded_at > recorded_at"
+    applies_to: [ddl]
+    enforced_by: [ddl-constraint]
+    severity: error
+
+  - id: T-R005
+    name: 单当前记录
+    statement: 同一业务对象（id）至多一条 superseded_at IS NULL 的记录
+    applies_to: [ddl]
+    enforced_by: [ddl-unique-index]
+    severity: error
+
+  - id: T-R006
+    name: 系统时间轴 append-only
+    statement: >-
+      recorded_at 记录一经写入不可修改、不可删除；修正一律追加新记录，
+      并将被修正记录的 superseded_at 置为修正记录的 recorded_at
+    applies_to: [all-writes]
+    enforced_by: [runtime, audit-verifier]
+    severity: error
+
+  - id: T-R007
+    name: UTC 微秒无歧义
+    statement: 所有时间字段为 UTC、微秒精度（精确到 6 位小数）；禁止存储本地时间或秒级截断
+    applies_to: "01-data-contract/*.schema.json"
+    enforced_by: [schema-compiler]
+    severity: error
+
+  - id: T-R008
+    name: 时点查询单一版本
+    statement: as_of（业务时间）查询对每个实体至多返回一个版本；recorded_as_of 同理
+    applies_to: [query]
+    enforced_by: [e2e-runner]
+    severity: error
+
+  - id: T-R009
+    name: 有效区间不重叠
+    statement: 同一实体在同一系统时间视图下的有效区间互不重叠（相邻区间允许相接：前区间 valid_to == 后区间 valid_from）
+    applies_to: [ddl]
+    enforced_by: [ddl-exclusion-constraint]
+    severity: error
+
+  - id: T-R010
+    name: 记录不早于发生
+    statement: "recorded_at >= 对应事实的 occurred_at（系统不记录尚未发生的事实）"
+    applies_to: [event]
+    enforced_by: [ddl-constraint]
+    severity: error
+
+  - id: T-R011
+    name: 迟到事件追加写入
+    statement: >-
+      迟到的业务事实（occurred_at 早于已记录事实）必须以新的系统时间记录追加写入，
+      并允许其有效区间覆盖历史区间（以 superseded 机制留痕）；不得回改已记录历史
+    applies_to: [all-writes]
+    enforced_by: [runtime]
+    severity: error

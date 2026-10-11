@@ -1,0 +1,18 @@
+# rules/non-negative.yaml — 库存非负（inventory v1.0.0）
+rule:
+  id: "inventory.non_negative"
+  name: "库存非负"
+  statement: "任何变动（receipt/issue/adjust）应用后，同一 (item, warehouse) 的余额必须 >= 0"
+  applies_to:
+    - "operations/receive-stock.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "INV-400-001"
+    error_message: "库存不足：物品 {item} 在仓库 {warehouse} 余额 {balance}，本次变动 {delta}"
+  tests:
+    - name: "收货后余额增加"
+      input: "receipt 10，余额 5"
+      expect: "accepted，余额 15"
+    - name: "超发必须拒绝"
+      input: "issue 10，余额 5"
+      expect: "rejected code=INV-400-001"

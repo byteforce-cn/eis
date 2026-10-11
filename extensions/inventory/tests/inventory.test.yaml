@@ -1,0 +1,71 @@
+# 库存域验证用例（inventory v1.0.0）— 可执行版
+# 运行：tools/e2e-runner extensions/inventory/tests/inventory.test.yaml
+suite: inventory
+x-common:
+  authz: &authz
+    principals:
+      - {id: "01900000-0000-7000-8000-000000000401", type: person, key: keeper, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    roles:
+      - {id: "01900000-0000-7000-8000-0000000004a1", key: keeper, permissions: [inventory.stock.receive], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    bindings:
+      - {id: "01900000-0000-7000-8000-0000000004b1", principal: "01900000-0000-7000-8000-000000000401", role: "01900000-0000-7000-8000-0000000004a1", scope: {warehouse: WH01}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+
+tests:
+  - name: "收货后余额增加（accepted，余额 10）"
+    kind: scenario
+    scenario:
+      id: inventory.receive-ok
+      authz: *authz
+      setup:
+        ids: {item: "01900000-0000-7000-8000-00000000b101"}
+      steps:
+        - id: T1
+          actor: keeper
+          command: inventory.stock.receive
+          payload: {item_id: "${ids.item}", warehouse: WH01, quantity: "10"}
+          events: [inventory.stock.received]
+      assert:
+        - {kind: stock, item_id: "${ids.item}", warehouse: WH01, expect: "10"}
+        - {kind: object-field, type: stock_movement, id: "${steps.T1.created.id}", field: movement_type, expect: receipt}
+        - {kind: audit-chain, expect: valid, min_entries: 1}
+
+  - name: "非正数量必须拒绝（INV-400-001）"
+    kind: scenario
+    scenario:
+      id: inventory.non-positive-reject
+      authz: *authz
+      setup:
+        ids: {item: "01900000-0000-7000-8000-00000000b102"}
+      steps:
+        - id: T1
+          actor: keeper
+          command: inventory.stock.receive
+          payload: {item_id: "${ids.item}", warehouse: WH01, quantity: "0"}
+          expect_status: rejected
+          expect_code: INV-400-001
+      assert:
+        - {kind: stock, item_id: "${ids.item}", warehouse: WH01, expect: "0"}
+        - {kind: events, absent: [inventory.stock.received]}
+        - {kind: audit-chain, expect: valid}
+
+  - name: "多次收货余额累计（5 + 3 = 8）"
+    kind: scenario
+    scenario:
+      id: inventory.cumulative
+      authz: *authz
+      setup:
+        ids: {item: "01900000-0000-7000-8000-00000000b103"}
+      steps:
+        - id: T1
+          actor: keeper
+          command: inventory.stock.receive
+          payload: {item_id: "${ids.item}", warehouse: WH01, quantity: "5"}
+          events: [inventory.stock.received]
+        - id: T2
+          actor: keeper
+          command: inventory.stock.receive
+          payload: {item_id: "${ids.item}", warehouse: WH01, quantity: "3"}
+          events: [inventory.stock.received]
+      assert:
+        - {kind: stock, item_id: "${ids.item}", warehouse: WH01, expect: "8"}
+        - {kind: audit-chain, expect: valid, min_entries: 2}

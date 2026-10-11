@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""audit-verifier — EIS 审计链验证（v1.0.0 参考实现）
+
+用途: 哈希链完整性（序列连续、链接衔接、逐条重算）——规范权威见
+      05-audit-contract/hash-chain.spec.md，参考实现为 05 的 verify.tool。
+      本工具封装 verify.tool，并提供：冻结测试向量校验、测试夹具批量验证。
+
+用法:
+  audit-verifier CHAIN.json [--json]     验证单个链文件
+  audit-verifier --all [--dir D]         验证 D 下全部 *.chain.json（默认全仓库 tests/）
+  audit-verifier --vector                校验规范冻结的创世测试向量
+  audit-verifier --self-test             向量 + 合法/篡改/缺口/断链
+
+退出码: 0 通过 / 1 验证失败 / 2 用法或输入错误
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from eis_common import ROOT, rel  # noqa: E402
+
+VERIFY_TOOL = ROOT / "05-audit-contract" / "verify.tool"
+
+# hash-chain.spec.md §3 冻结测试向量（创世条目）
+GENESIS_VECTOR_ENTRY = {
+    "id": "018f2e3a-1234-7000-8000-000000000001",
+    "sequence": 1,
+    "timestamp": "2026-10-08T09:00:00.000000+00:00",
+    "actor": "018f2e3a-0000-7000-8000-000000000001",
+    "action": "voucher.create",
+    "resource": {"type": "voucher", "id": "018f2e3a-9999-7000-8000-000000000002"},
+    "payload": {"amount": "100.00", "currency": "CNY"},
+    "prev_hash": "0" * 64,
+}
+GENESIS_VECTOR_HASH = "447c6e299d9adaec35d89e273b15d28752eeaac4674000b5df88d2e53a087410"
+
+
+def load_verify_module():
+    loader = SourceFileLoader("eis_verify_tool", str(VERIFY_TOOL))
+    module = module_from_spec(spec_from_loader("eis_verify_tool", loader))
+    loader.exec_module(module)
+    return module
+
+
+def check_vector(vt) -> bool:
+    return vt.compute_hash(GENESIS_VECTOR_ENTRY) == GENESIS_VECTOR_HASH
+
+
+def verify_file(vt, path: Path) -> dict:
+    try:
+        entries = vt.load_entries(str(path))
+    except (OSError, ValueError) as exc:
+        return {"file": rel(path), "valid": False, "error": f"读取失败: {exc}"}
+    errors = vt.verify_chain(entries)
+    return {"file": rel(path), "valid": not errors, "entries": len(entries), "errors": errors}
+
+
+def cmd_all(args) -> int:
+    vt = load_verify_module()
+    root = Path(args.dir) if args.dir else ROOT
+    fixtures = sorted(root.rglob("*.chain.json"))
+    if not fixtures:
+        print(f"[ok  ] 未发现 *.chain.json 夹具（{rel(root)}）")
+        return 0
+    rc = 0
+    for path in fixtures:
+        result = verify_file(vt, path)
+        if result["valid"]:
+            print(f"[ok  ] {result['file']}（{result.get('entries', 0)} 条）")
+        else:
+            rc = 1
+            print(f"[FAIL] {result['file']}: {result.get('error') or result['errors']}")
+    return rc
+
+
+def cmd_self_test(args) -> int:
+    vt = load_verify_module()
+    ok = True
+
+    def report(name, cond):
+        nonlocal ok
+        print(f"[{'ok  ' if cond else 'FAIL'}] {name}")
+        ok = ok and cond
+
+    report("冻结测试向量（hash-chain.spec.md §3）", check_vector(vt))
+    chain, prev = [], vt.GENESIS_PREV_HASH
+    for seq in (1, 2, 3):
+        entry = vt._build_entry(seq, prev)
+        chain.append(entry)
+        prev = entry["hash"]
+    report("合法链通过", not vt.verify_chain(chain))
+    import copy
+
+    tampered = copy.deepcopy(chain)
+    tampered[1]["payload"]["amount"] = "999.00"
+    report("篡改检出（invalid_hash）", any(e["type"] == "invalid_hash" for e in vt.verify_chain(tampered)))
+    report("缺口检出（sequence_gap）", any(e["type"] == "sequence_gap" for e in vt.verify_chain([chain[0], chain[2]])))
+    broken = copy.deepcopy(chain)
+    broken[2]["prev_hash"] = "f" * 64
+    broken[2]["hash"] = vt.compute_hash(broken[2])
+    report("断链检出（prev_hash_mismatch）",
+           any(e["type"] == "prev_hash_mismatch" for e in vt.verify_chain(broken)))
+    print(f"自测结果: {'通过' if ok else '失败'}")
+    return 0 if ok else 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="audit-verifier", description="EIS 审计链验证（参考实现）")
+    parser.add_argument("chain", nargs="?", help="审计链文件（JSON 数组 / {entries:[...]} / JSONL）")
+    parser.add_argument("--json", action="store_true", help="JSON 输出")
+    parser.add_argument("--all", action="store_true", help="验证目录下全部 *.chain.json")
+    parser.add_argument("--dir", help="配合 --all：扫描目录（默认仓库根）")
+    parser.add_argument("--vector", action="store_true", help="校验冻结测试向量")
+    parser.add_argument("--self-test", action="store_true", help="自测")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        return cmd_self_test(args)
+    if args.vector:
+        vt = load_verify_module()
+        if check_vector(vt):
+            print("[ok  ] 冻结测试向量通过")
+            return 0
+        print("[FAIL] 冻结测试向量不匹配（实现缺陷）", file=sys.stderr)
+        return 1
+    if args.all:
+        return cmd_all(args)
+    if not args.chain:
+        parser.print_usage(sys.stderr)
+        return 2
+    vt = load_verify_module()
+    result = verify_file(vt, Path(args.chain))
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif result["valid"]:
+        print(f"审计链验证：通过（{result.get('entries', 0)} 条）")
+    else:
+        print(f"审计链验证：失败（{result.get('error') or len(result.get('errors', []))} 项）")
+        for err in result.get("errors", []):
+            print(f"  - [{err['type']}] sequence={err.get('sequence')}: {err.get('message', '')}")
+    return 0 if result["valid"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

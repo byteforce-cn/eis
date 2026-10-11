@@ -1,0 +1,51 @@
+# 演进契约验证用例（Spec v1.0.0）— 可执行版
+# 运行：tools/e2e-runner 06-evolution-contract/tests/evolution-contract.test.yaml
+# 夹具：06-evolution-contract/tests/fixtures/*.json
+suite: evolution-contract
+tests:
+  - name: "破坏性变更必须标记 MAJOR（含配套动作）"
+    kind: compat
+    old: 06-evolution-contract/tests/fixtures/schema-v1.json
+    new: 06-evolution-contract/tests/fixtures/schema-v2-breaking.json
+    expect_level: MAJOR
+    expect_kinds: ["字段删除", "字段类型变更", "必填字段新增"]
+    expect_requires:
+      字段删除: [migration, dual_write, rollback]
+      必填字段新增: [migration, backfill, dual_write]
+
+  - name: "向后兼容新增判定 MINOR"
+    kind: compat
+    old: 06-evolution-contract/tests/fixtures/schema-v1.json
+    new: 06-evolution-contract/tests/fixtures/schema-v2-minor.json
+    expect_level: MINOR
+    expect_kinds: ["可选字段新增"]
+
+  - name: "迁移必须可生成且含对应回滚"
+    kind: migrate
+    old: 06-evolution-contract/tests/fixtures/schema-v1.json
+    new: 06-evolution-contract/tests/fixtures/schema-v2-breaking.json
+    table: demo_object
+    expect_contains:
+      - "DROP COLUMN code;"
+      - "ALTER COLUMN name TYPE BIGINT"
+      - "ADD COLUMN amount TEXT;"
+      - "SET NOT NULL"
+    rollback_contains:
+      - "DROP COLUMN IF EXISTS amount;"
+      - "ADD COLUMN code BIGINT;"
+
+  - name: "双写对账门槛（差异率 < 0.001%）"
+    kind: static
+    target: 06-evolution-contract/migration.template.sql
+    check: present
+    pattern: '0\.001'
+
+  - name: "兼容性检查器自测必须通过"
+    kind: cli
+    args: [tools/compatibility-checker, --self-test]
+    stdout_contains: ["自测结果: 通过"]
+
+  - name: "迁移生成器自测必须通过（含回滚）"
+    kind: cli
+    args: [tools/migration-generator, --self-test]
+    stdout_contains: ["自测结果: 通过"]

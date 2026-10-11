@@ -1,0 +1,38 @@
+openapi: 3.1.0
+info:
+  title: IAM - 定义角色
+  version: 1.0.0
+paths:
+  /commands/iam.role.define:
+    post:
+      operationId: roleDefine
+      summary: 定义或更新角色
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Command'
+      responses:
+        '202': {description: 已接受}
+        '400': {description: 参数非法}
+        '409': {description: IAM-409-002 角色 key 冲突}
+components:
+  schemas:
+    Command:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type: {type: string, const: iam.role.define}
+        payload:
+          type: object
+          required: [key, name, permissions]
+          properties:
+            role_id: {type: string, format: uuid}
+            key: {type: string, pattern: '^[a-z][a-z0-9_.-]*$'}
+            name: {type: string}
+            permissions:
+              type: array
+              uniqueItems: true
+              items: {type: string}
+        idempotency_key: {type: string, minLength: 1}

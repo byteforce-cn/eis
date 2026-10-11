@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  spec:
+    name: 规范与工具校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖
+        run: pip install pyyaml jsonschema
+      - name: 全量校验（流水线 + 全部用例 + 试点场景）
+        run: python3 tools/e2e-runner --all
+
+  ddl:
+    name: PostgreSQL DDL 冒烟
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: eis
+          POSTGRES_PASSWORD: eis
+          POSTGRES_DB: eis
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eis"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: eis
+      PGPASSWORD: eis
+      PGDATABASE: eis
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖
+        run: pip install pyyaml jsonschema
+      - name: 编译扩展 DDL（生成物）
+        run: python3 tools/schema-compiler compile --all
+      - name: 执行核心 DDL
+        run: |
+          psql -v ON_ERROR_STOP=1 -f 01-data-contract/core.ddl
+          psql -v ON_ERROR_STOP=1 -f 03-time-contract/temporal.ddl
+          psql -v ON_ERROR_STOP=1 -f 05-audit-contract/audit.ddl
+      - name: 执行扩展 DDL（schema-compiler 生成物）
+        run: |
+          for f in build/ddl/*.ddl; do
+            echo "== $f"
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+      - name: 执行查询模板（展开示例依赖扩展表）
+        run: psql -v ON_ERROR_STOP=1 -f 03-time-contract/query-templates.sql
+      - name: 冒烟断言（时点 / 半开区间 / append-only / 扩展函数）
+        run: psql -v ON_ERROR_STOP=1 -f tools/ci/ddl-smoke.sql

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://core/view/v1",
+  "title": "View",
+  "description": "读模型：由事件投射得到的查询视图。必须携带计算时点信息（业务时间 + 系统时间），保证可重复构建。",
+  "type": "object",
+  "required": ["id", "view_type", "data", "as_of", "recorded_as_of", "computed_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "view_type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.]*$",
+      "description": "视图类型，如 \"accounting.balance\""
+    },
+    "subject": {
+      "type": "string",
+      "format": "uuid",
+      "description": "视图的主体业务对象 ID（可选，如余额视图的主体为科目）"
+    },
+    "data": {
+      "type": "object",
+      "description": "视图数据"
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date-time",
+      "description": "业务时间切点（该视图代表的业务时点）"
+    },
+    "recorded_as_of": {
+      "type": "string",
+      "format": "date-time",
+      "description": "系统时间切点（构建该视图时已知的最新事件记录时间）"
+    },
+    "computed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "视图实际计算时间"
+    },
+    "source_events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "description": "参与构建的源事件 ID（可选，用于审计与重建）"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "视图版本（同一 subject + as_of 的重复构建结果必须一致）"
+    }
+  }
+}

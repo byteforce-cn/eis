@@ -1,0 +1,61 @@
+# 审计契约验证用例（Spec v1.0.0）— 可执行版
+# 运行：tools/e2e-runner 05-audit-contract/tests/audit-contract.test.yaml
+# 链夹具：05-audit-contract/tests/fixtures/*.chain.json（由参考实现生成）
+suite: audit-contract
+tests:
+  - name: "审计表必须 append-only（UPDATE/DELETE 被规则拦截）"
+    kind: static
+    target: 05-audit-contract/audit.ddl
+    check: present
+    pattern: 'CREATE RULE audit_no_(update|delete)'
+    min_matches: 2
+
+  - name: "哈希链必须可验证"
+    kind: chain
+    fixture: 05-audit-contract/tests/fixtures/valid.chain.json
+    expect: valid
+
+  - name: "篡改必须被检测"
+    kind: chain
+    fixture: 05-audit-contract/tests/fixtures/tampered.chain.json
+    expect: invalid
+    error_types: [invalid_hash]
+
+  - name: "序列号必须连续（缺口检出）"
+    kind: chain
+    fixture: 05-audit-contract/tests/fixtures/gap.chain.json
+    expect: invalid
+    error_types: [sequence_gap]
+
+  - name: "断链必须被检出"
+    kind: chain
+    fixture: 05-audit-contract/tests/fixtures/broken.chain.json
+    expect: invalid
+    error_types: [prev_hash_mismatch]
+
+  - name: "冻结测试向量必须一致（跨实现验证）"
+    kind: cli
+    args: [tools/audit-verifier, --vector]
+
+  - name: "审计链应由内核命令流生成并自验"
+    kind: scenario
+    scenario:
+      id: audit-contract.kernel-chain
+      authz:
+        principals:
+          - {id: "01900000-0000-7000-8000-000000000301", type: person, key: operator, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+        roles:
+          - {id: "01900000-0000-7000-8000-0000000003a1", key: operator, permissions: [approval.request.submit], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+        bindings:
+          - {id: "01900000-0000-7000-8000-0000000003b1", principal: "01900000-0000-7000-8000-000000000301", role: "01900000-0000-7000-8000-0000000003a1", scope: {department: D001}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      steps:
+        - id: T1
+          actor: operator
+          command: approval.request.submit
+          payload:
+            operation: inventory.stock.receive
+            target: {type: purchase_order, id: "01900000-0000-7000-8000-00000000f301"}
+          events: [approval.request.submitted]
+      assert:
+        - {kind: audit-chain, expect: valid, min_entries: 1}
+        - {kind: idempotency, step: T1}

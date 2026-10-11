@@ -1,0 +1,109 @@
+# resolution.api.yaml — EIS 授权解析 API 契约（Spec v1.0.0，冻结）
+# 元结构：授权判定必须支持时点（as_of）；/check 必须返回 allowed 与 reason
+openapi: 3.1.0
+info:
+  title: EIS Authorization Resolution API
+  version: 1.0.0
+  description: |
+    授权解析服务：
+    - /resolve：解析主体在特定时间点的有效角色与权限（支持代理展开）
+    - /check：检查权限，返回 allowed + reason（拒绝时必须给出原因）
+
+paths:
+  /resolve:
+    post:
+      summary: 解析主体在特定时间点的有效角色
+      operationId: resolveRoles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [principal, as_of]
+              properties:
+                principal:
+                  type: string
+                  format: uuid
+                as_of:
+                  type: string
+                  format: date-time
+                scope:
+                  $ref: '#/components/schemas/Scope'
+      responses:
+        '200':
+          description: 解析成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roles:
+                    type: array
+                    items:
+                      type: string
+                  permissions:
+                    type: array
+                    items:
+                      type: string
+                  sod_warnings:
+                    type: array
+                    items:
+                      type: string
+                    description: 命中的 warn 级 SoD 规则 ID（prevent 级冲突在 /check 中拒绝）
+
+  /check:
+    post:
+      summary: 检查权限
+      operationId: checkPermission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [principal, permission, as_of]
+              properties:
+                principal:
+                  type: string
+                  format: uuid
+                permission:
+                  type: string
+                as_of:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: 检查结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allowed:
+                    type: boolean
+                  reason:
+                    type: string
+                  reason_code:
+                    type: string
+                    description: 机器可读原因码：SOD-xxx（职责分离冲突）/ NO_PERMISSION 等
+
+components:
+  schemas:
+    Scope:
+      type: object
+      description: 作用域：键值对（常用键见下；允许扩展键）。作用域与时点一样参与授权判定。
+      properties:
+        department:
+          type: string
+          description: 部门编码，如 "D001"
+        organization:
+          type: string
+          description: 组织编码
+        warehouse:
+          type: string
+          description: 仓库编码
+        project:
+          type: string
+          description: 项目编码
+      additionalProperties: true

@@ -1,0 +1,21 @@
+# rules/double-entry.yaml — 借贷平衡（accounting v1.0.0）
+rule:
+  id: "accounting.double_entry"
+  name: "借贷平衡"
+  statement: "同一凭证内，按币种分组：sum(debit) == sum(credit)"
+  applies_to:
+    - "operations/post-voucher.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "ACC-400-001"
+    error_message: "凭证借贷不平衡：借方 {debit_total}，贷方 {credit_total}"
+  tests:
+    - name: "平衡凭证必须通过"
+      input: "借方 100.00 / 贷方 100.00"
+      expect: "accepted"
+    - name: "不平衡凭证必须拒绝"
+      input: "借方 100.00 / 贷方 90.00"
+      expect: "rejected code=ACC-400-001"
+    - name: "多币种按币种分别平衡"
+      input: "CNY 借 100/贷 100；USD 借 50/贷 40"
+      expect: "rejected code=ACC-400-001"

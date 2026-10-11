@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://core/role/v1",
+  "title": "Role",
+  "description": "角色：权限集合 + 作用域。角色定义本身也带双时间轴（角色含义变更可审计）。",
+  "type": "object",
+  "required": ["id", "key", "permissions", "valid_from", "recorded_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "key": {
+      "type": "string",
+      "description": "角色唯一标识，如 \"direct_manager\""
+    },
+    "name": {
+      "type": "string"
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "权限列表，如 \"purchase.request.approve\""
+    },
+    "scope": {
+      "type": "object",
+      "description": "作用域，如部门、项目"
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_to": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "superseded_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

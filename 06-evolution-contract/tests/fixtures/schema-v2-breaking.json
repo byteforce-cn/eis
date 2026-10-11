@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://tests/evolution/demo-object/v2",
+  "title": "DemoObject",
+  "description": "演进契约测试夹具：破坏性变更（字段删除 + 类型变更 + 必填新增）",
+  "type": "object",
+  "required": ["name", "amount"],
+  "properties": {
+    "name": { "type": "integer" },
+    "amount": { "type": "string" }
+  }
+}

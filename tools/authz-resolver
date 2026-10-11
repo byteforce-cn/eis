@@ -1,0 +1,350 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""authz-resolver — EIS 授权解析（v1.0.0 参考实现）
+
+语义（见 04-authz-contract/）:
+  - 双时间轴：as_of（业务时间）筛选 valid 区间；recorded_as_of（系统时间）筛选记录区
+  - 代理：agent 可在代理范围内行使被代理人（principal）的角色
+  - SoD：同一作用域内同时持有冲突权限 → prevent 拒绝（reason_code=SOD-xxx）/ warn 上报
+
+用法:
+  authz-resolver resolve --fixtures F --principal P --as-of T [--recorded-as-of T] [--scope-json J]
+  authz-resolver check   --fixtures F --principal P --permission X --as-of T [--recorded-as-of T]
+  authz-resolver sod-check --fixtures F --principal P --as-of T
+  authz-resolver --self-test
+
+主体可按 UUID 或 key 引用。输出为 JSON。
+
+退出码: 0 成功 / 1 判定失败（仅 self-test 时用作断言） / 2 用法或输入错误
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from eis_common import ROOT, load_yaml  # noqa: E402
+
+SOD_RULES_PATH = ROOT / "04-authz-contract" / "sod.rules.yaml"
+
+SCOPE_KEYS = {
+    "same_department": "department",
+    "same_organization": "organization",
+    "same_warehouse": "warehouse",
+}
+
+
+# ---------------------------------------------------------------------------
+# 时间
+# ---------------------------------------------------------------------------
+def parse_ts(value) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def in_range(entity: dict, as_of: datetime, recorded_as_of: datetime | None) -> bool:
+    """双时间轴命中：半开区间 [from, to)。"""
+    valid_from = entity.get("valid_from")
+    valid_to = entity.get("valid_to")
+    if valid_from is not None and parse_ts(valid_from) > as_of:
+        return False
+    if valid_to is not None and parse_ts(valid_to) <= as_of:
+        return False
+    if recorded_as_of is not None:
+        recorded_at = entity.get("recorded_at")
+        superseded_at = entity.get("superseded_at")
+        if recorded_at is not None and parse_ts(recorded_at) > recorded_as_of:
+            return False
+        if superseded_at is not None and parse_ts(superseded_at) <= recorded_as_of:
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# 授权解析
+# ---------------------------------------------------------------------------
+class Authz:
+    def __init__(self, fixtures: dict, sod_rules: list[dict] | None = None):
+        fx = fixtures.get("fixtures", fixtures)
+        self.principals = fx.get("principals", [])
+        self.roles = fx.get("roles", [])
+        self.bindings = fx.get("bindings", [])
+        self.proxies = fx.get("proxies", [])
+        if sod_rules is None:
+            sod_rules = load_yaml(SOD_RULES_PATH).get("sod_rules", [])
+        self.sod_rules = sod_rules
+        self._roles_by_id = {r["id"]: r for r in self.roles}
+        self._roles_by_key = {r.get("key"): r for r in self.roles}
+        self._principals_by_ref = {}
+        for p in self.principals:
+            self._principals_by_ref[p["id"]] = p
+            if p.get("key"):
+                self._principals_by_ref[p["key"]] = p
+
+    # -- 查询工具 ---------------------------------------------------------
+    def principal(self, ref: str) -> dict:
+        p = self._principals_by_ref.get(ref)
+        if p is None:
+            raise KeyError(f"主体不存在: {ref}")
+        return p
+
+    def role_of(self, binding: dict) -> dict | None:
+        role_ref = binding.get("role")
+        return self._roles_by_id.get(role_ref) or self._roles_by_key.get(role_ref)
+
+    def scope_matches(self, binding_scope: dict | None, scope_filter: dict | None) -> bool:
+        if not scope_filter:
+            return True
+        binding_scope = binding_scope or {}
+        if not binding_scope:
+            return True  # 全局授权
+        for key, value in scope_filter.items():
+            if key in binding_scope and binding_scope[key] != value:
+                return False
+        return True
+
+    def proxy_grants(self, agent_id: str, as_of: datetime, recorded_as_of):
+        """agent 可行使的被代理人授权集合：[(principal_id, scope, proxy)]。"""
+        grants = []
+        for proxy in self.proxies:
+            if proxy.get("agent") != agent_id:
+                continue
+            if not in_range(proxy, as_of, recorded_as_of):
+                continue
+            grants.append((proxy["principal"], proxy.get("scope") or {}, proxy))
+        return grants
+
+    def _grants(self, principal_id: str, as_of, recorded_as_of, include_proxy=True):
+        """返回 [(binding, role, scope, source)]，含代理展开。"""
+        out = []
+        for b in self.bindings:
+            if b.get("principal") != principal_id:
+                continue
+            if not in_range(b, as_of, recorded_as_of):
+                continue
+            role = self.role_of(b)
+            if role and in_range(role, as_of, recorded_as_of):
+                out.append((b, role, b.get("scope") or {}, "direct"))
+        if include_proxy:
+            for proxy_principal, proxy_scope, _proxy in self.proxy_grants(principal_id, as_of, recorded_as_of):
+                for b in self.bindings:
+                    if b.get("principal") != proxy_principal:
+                        continue
+                    if not in_range(b, as_of, recorded_as_of):
+                        continue
+                    b_scope = b.get("scope") or {}
+                    # 代理范围约束：代理 scope 限定的键必须与绑定一致
+                    if any(b_scope.get(k) != v for k, v in (proxy_scope or {}).items()):
+                        continue
+                    role = self.role_of(b)
+                    if role and in_range(role, as_of, recorded_as_of):
+                        out.append((b, role, b_scope, "proxy"))
+        return out
+
+    # -- 对外操作 ---------------------------------------------------------
+    def resolve(self, principal_ref: str, as_of, recorded_as_of=None, scope_filter=None) -> dict:
+        p = self.principal(principal_ref)
+        as_of_dt = parse_ts(as_of)
+        recorded_dt = parse_ts(recorded_as_of) if recorded_as_of else None
+        roles, permissions = [], []
+        for _b, role, scope, _src in self._grants(p["id"], as_of_dt, recorded_dt):
+            if not self.scope_matches(scope, scope_filter):
+                continue
+            key = role.get("key") or role.get("id")
+            if key not in roles:
+                roles.append(key)
+            for perm in role.get("permissions", []):
+                if perm not in permissions:
+                    permissions.append(perm)
+        warnings = self._sod_conflicts(p["id"], as_of_dt, recorded_dt, mode="warn")
+        return {
+            "principal": p["id"],
+            "as_of": as_of_dt.isoformat().replace("+00:00", "Z"),
+            "roles": roles,
+            "permissions": permissions,
+            "sod_warnings": [w["rule"] for w in warnings],
+        }
+
+    def check(self, principal_ref: str, permission: str, as_of, recorded_as_of=None) -> dict:
+        p = self.principal(principal_ref)
+        as_of_dt = parse_ts(as_of)
+        recorded_dt = parse_ts(recorded_as_of) if recorded_as_of else None
+        held = []
+        for _b, role, scope, _src in self._grants(p["id"], as_of_dt, recorded_dt):
+            for perm in role.get("permissions", []):
+                held.append((perm, scope))
+        if not any(perm == permission for perm, _ in held):
+            return {"allowed": False, "reason": f"主体在 {as_of} 无权限 {permission}",
+                    "reason_code": "NO_PERMISSION", "warnings": []}
+        # prevent 级 SoD：请求的权限与已持有权限同作用域冲突 → 拒绝
+        for rule in self.sod_rules:
+            if permission not in rule.get("conflicting_permissions", []):
+                continue
+            others = [perm for perm, _ in held if perm in rule["conflicting_permissions"] and perm != permission]
+            if not others:
+                continue
+            key = SCOPE_KEYS.get(rule.get("scope"))
+            if self._conflicts_in_scope(permission, others, held, key):
+                if rule.get("enforcement") == "prevent":
+                    return {"allowed": False,
+                            "reason": f"违反职责分离 {rule['id']}（{rule.get('name')}）",
+                            "reason_code": rule["id"], "warnings": []}
+        warnings = [w["rule"] for w in self._sod_conflicts(p["id"], as_of_dt, recorded_dt, mode="warn")]
+        return {"allowed": True, "reason": "允许", "reason_code": "ALLOWED", "warnings": warnings}
+
+    def _conflicts_in_scope(self, permission, others, held, scope_key) -> bool:
+        scopes_a = [s for perm, s in held if perm == permission]
+        for other in others:
+            scopes_b = [s for perm, s in held if perm == other]
+            for sa in scopes_a:
+                for sb in scopes_b:
+                    if scope_key is None:
+                        return True
+                    va, vb = sa.get(scope_key), sb.get(scope_key)
+                    if va is not None and va == vb:
+                        return True
+                    if va is None and vb is None:
+                        return True
+        return False
+
+    def _sod_conflicts(self, principal_id, as_of_dt, recorded_dt, mode) -> list[dict]:
+        held = []
+        for _b, role, scope, _src in self._grants(principal_id, as_of_dt, recorded_dt):
+            for perm in role.get("permissions", []):
+                held.append((perm, scope))
+        conflicts = []
+        for rule in self.sod_rules:
+            if rule.get("enforcement") != mode:
+                continue
+            perms = rule.get("conflicting_permissions", [])
+            present = [perm for perm in perms if any(h == perm for h, _ in held)]
+            if len(present) < 2:
+                continue
+            key = SCOPE_KEYS.get(rule.get("scope"))
+            if self._conflicts_in_scope(present[0], present[1:], held, key):
+                conflicts.append({"rule": rule["id"], "name": rule.get("name"), "permissions": present})
+        return conflicts
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def load_fixtures(path: str) -> dict:
+    return load_yaml(Path(path))
+
+
+def cmd_self_test(args) -> int:
+    # 确定性夹具
+    P_AWAY = "01900000-0000-7000-8000-000000000001"   # 被代理人（休假）
+    P_AGENT = "01900000-0000-7000-8000-000000000002"  # 代理人
+    P_BOTH = "01900000-0000-7000-8000-000000000003"   # 同时持有冲突权限
+    R_APPROVE = "01900000-0000-7000-8000-0000000000a1"
+    R_CREATE = "01900000-0000-7000-8000-0000000000a2"
+    fixtures = {
+        "fixtures": {
+            "principals": [
+                {"id": P_AWAY, "type": "person", "key": "away", "valid_from": "2026-01-01T00:00:00Z", "recorded_at": "2026-01-01T00:00:00Z"},
+                {"id": P_AGENT, "type": "person", "key": "agent", "valid_from": "2026-01-01T00:00:00Z", "recorded_at": "2026-01-01T00:00:00Z"},
+                {"id": P_BOTH, "type": "person", "key": "both", "valid_from": "2026-01-01T00:00:00Z", "recorded_at": "2026-01-01T00:00:00Z"},
+            ],
+            "roles": [
+                {"id": R_APPROVE, "key": "approver", "permissions": ["purchase.request.approve"], "valid_from": "2026-01-01T00:00:00Z", "recorded_at": "2026-01-01T00:00:00Z"},
+                {"id": R_CREATE, "key": "requester", "permissions": ["purchase.request.create"], "valid_from": "2026-01-01T00:00:00Z", "recorded_at": "2026-01-01T00:00:00Z"},
+            ],
+            "bindings": [
+                {"id": "01900000-0000-7000-8000-0000000000b1", "principal": P_AWAY, "role": R_APPROVE, "scope": {"department": "D001"}, "valid_from": "2026-10-01T00:00:00Z", "recorded_at": "2026-10-01T00:00:00Z"},
+                {"id": "01900000-0000-7000-8000-0000000000b2", "principal": P_BOTH, "role": R_APPROVE, "scope": {"department": "D001"}, "valid_from": "2026-01-01T00:00:00Z", "recorded_at": "2026-01-01T00:00:00Z"},
+                {"id": "01900000-0000-7000-8000-0000000000b3", "principal": P_BOTH, "role": R_CREATE, "scope": {"department": "D001"}, "valid_from": "2026-01-01T00:00:00Z", "recorded_at": "2026-01-01T00:00:00Z"},
+            ],
+            "proxies": [
+                {"id": "01900000-0000-7000-8000-0000000000c1", "principal": P_AWAY, "agent": P_AGENT, "scope": {"department": "D001"}, "valid_from": "2026-10-01T00:00:00Z", "valid_to": "2026-11-01T00:00:00Z", "recorded_at": "2026-10-01T00:00:00Z"},
+            ],
+        }
+    }
+    a = Authz(fixtures)
+    report = []
+
+    def expect(name, cond):
+        report.append((name, cond))
+
+    # 1. 历史时点（授权生效前）拒绝
+    r = a.check("away", "purchase.request.approve", "2026-09-30T12:00:00Z")
+    expect("生效前时点拒绝（NO_PERMISSION）", r["allowed"] is False and r["reason_code"] == "NO_PERMISSION")
+    # 2. 生效后直接授权
+    r = a.check("away", "purchase.request.approve", "2026-10-15T12:00:00Z")
+    expect("生效后直接授权允许", r["allowed"] is True)
+    # 3. 代理在代理期内可行权
+    r = a.check("agent", "purchase.request.approve", "2026-10-15T12:00:00Z")
+    expect("代理期内可行权", r["allowed"] is True)
+    # 4. 代理期外拒绝
+    r = a.check("agent", "purchase.request.approve", "2026-11-15T12:00:00Z")
+    expect("代理期外拒绝", r["allowed"] is False)
+    # 5. SoD-001 prevent：同时持有 create+approve → 拒绝
+    r = a.check("both", "purchase.request.approve", "2026-10-15T12:00:00Z")
+    expect("SoD-001 prevent 拒绝", r["allowed"] is False and r["reason_code"] == "SOD-001")
+    # 6. resolve 输出角色
+    r = a.resolve("agent", "2026-10-15T12:00:00Z")
+    expect("代理解析出被代理人角色", "approver" in r["roles"])
+
+    failed = [name for name, cond in report if not cond]
+    for name, cond in report:
+        print(f"[{'ok  ' if cond else 'FAIL'}] {name}")
+    print(f"-- {len(report) - len(failed)} 通过, {len(failed)} 失败")
+    return 0 if not failed else 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="authz-resolver", description="EIS 授权解析（参考实现）")
+    parser.add_argument("--self-test", action="store_true", help="自测（内置夹具）")
+    sub = parser.add_subparsers(dest="cmd")
+
+    def add_common(p):
+        p.add_argument("--fixtures", required=True, help="夹具文件（YAML/JSON）")
+        p.add_argument("--principal", required=True, help="主体（UUID 或 key）")
+        p.add_argument("--as-of", required=True, dest="as_of", help="业务时点（RFC 3339）")
+        p.add_argument("--recorded-as-of", dest="recorded_as_of", help="系统时点（可选）")
+
+    p_resolve = sub.add_parser("resolve", help="解析角色/权限")
+    add_common(p_resolve)
+    p_resolve.add_argument("--scope-json", dest="scope_json", help="作用域过滤（JSON）")
+
+    p_check = sub.add_parser("check", help="检查权限")
+    add_common(p_check)
+    p_check.add_argument("--permission", required=True)
+
+    p_sod = sub.add_parser("sod-check", help="列出 SoD 冲突")
+    add_common(p_sod)
+
+    args = parser.parse_args(argv)
+    if args.self_test:
+        return cmd_self_test(args)
+    if args.cmd is None:
+        parser.print_help()
+        return 2
+    try:
+        authz = Authz(load_fixtures(args.fixtures))
+    except (OSError, KeyError) as exc:
+        print(f"夹具加载失败: {exc}", file=sys.stderr)
+        return 2
+    if args.cmd == "resolve":
+        scope_filter = json.loads(args.scope_json) if args.scope_json else None
+        out = authz.resolve(args.principal, args.as_of, args.recorded_as_of, scope_filter)
+    elif args.cmd == "check":
+        out = authz.check(args.principal, args.permission, args.as_of, args.recorded_as_of)
+    else:
+        p = authz.principal(args.principal)
+        out = {"sod_conflicts": authz._sod_conflicts(p["id"], parse_ts(args.as_of), None, "prevent")}
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

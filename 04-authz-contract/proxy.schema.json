@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://core/proxy/v1",
+  "title": "ProxyBinding",
+  "description": "代理绑定：代理人代表被代理人行事（如休假代办），带双时间轴与作用域。",
+  "type": "object",
+  "required": ["id", "principal", "agent", "valid_from", "recorded_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "principal": {
+      "type": "string",
+      "format": "uuid",
+      "description": "被代理人"
+    },
+    "agent": {
+      "type": "string",
+      "format": "uuid",
+      "description": "代理人"
+    },
+    "scope": {
+      "type": "object"
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_to": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "superseded_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,58 @@
+# operations/submit-request.openapi.yaml — 提交审批申请（approval v1.0.0）
+# 遵循核心命令 API 元结构：02-operation-contract/command.openapi.yaml
+openapi: 3.1.0
+info:
+  title: 审批域 — 提交申请
+  version: 1.0.0
+  description: |
+    命令 approval.request.submit：提交审批申请（operation + target）。
+    事件：approval.request.submitted
+
+paths:
+  /commands/approval.request.submit:
+    post:
+      operationId: submitRequest
+      summary: 提交审批申请
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitRequestCommand'
+      responses:
+        '202':
+          description: 已接受
+        '400':
+          description: 参数非法（操作类型/目标缺失）
+        '409':
+          description: EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    SubmitRequestCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: approval.request.submit
+        payload:
+          type: object
+          required: [operation, target]
+          properties:
+            operation:
+              type: string
+              pattern: '^[a-z][a-z0-9_.]*$'
+            target:
+              type: object
+              required: [type, id]
+              properties:
+                type:
+                  type: string
+                id:
+                  type: string
+                  format: uuid
+            summary:
+              type: [string, 'null']
+        idempotency_key:
+          type: string

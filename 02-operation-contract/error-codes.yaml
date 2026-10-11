@@ -1,0 +1,93 @@
+# error-codes.yaml — EIS 操作契约错误码目录（Spec v1.0.0，冻结）
+version: "1.0.0"
+
+conventions:
+  format: "EIS-{http_status}-{seq}"
+  envelope: "所有错误响应必须包含 code、message；details 可选"
+  namespace: "核心错误码固定使用 EIS- 前缀；领域扩展使用自身前缀（如 ACC- / INV- / APR-）并在扩展内注册，不得占用 EIS-（见 extensions/README.md §3）"
+  rule: "新增错误码属于 MINOR；修改既有错误码含义属于 MAJOR"
+
+codes:
+  - code: EIS-400-001
+    http_status: 400
+    name: invalid_payload
+    description: 请求体不满足命令 Schema（结构/类型/格式错误）
+    retryable: false
+    emitted_when:
+      - "缺失必填字段（如 idempotency_key）"
+      - "字段类型或格式非法（如 UUID 非法）"
+
+  - code: EIS-400-002
+    http_status: 400
+    name: command_rejected
+    description: 命令未通过业务规则校验（返回 CommandRejected）
+    retryable: false
+    emitted_when:
+      - "业务规则拒绝（如借贷不平衡、时间区间非法）"
+
+  - code: EIS-400-003
+    http_status: 400
+    name: temporal_violation
+    description: 违反时间契约（如同实体有效区间重叠、系统时间轴被回改）
+    retryable: false
+    emitted_when:
+      - "valid_to <= valid_from"
+      - "尝试修改已记录的系统时间轴"
+
+  - code: EIS-401-001
+    http_status: 401
+    name: unauthenticated
+    description: 缺少或无效的认证凭证
+    retryable: false
+    emitted_when:
+      - "缺少认证信息或凭证已失效"
+
+  - code: EIS-403-001
+    http_status: 403
+    name: forbidden
+    description: 授权拒绝（reason 必填，来自 /check 的判定理由）
+    retryable: false
+    emitted_when:
+      - "主体在当前时点无所需权限"
+      - "违反职责分离（SoD）规则"
+
+  - code: EIS-404-001
+    http_status: 404
+    name: object_not_found
+    description: 指定时点下业务对象不存在（时点查询语义下无版本命中）
+    retryable: false
+    emitted_when:
+      - "id 不存在"
+      - "as_of 早于对象首个版本 valid_from"
+
+  - code: EIS-409-001
+    http_status: 409
+    name: idempotency_conflict
+    description: 幂等冲突：同幂等键的重复提交内容不一致（返回原命令结果供比对）
+    retryable: false
+    emitted_when:
+      - "idempotency_key 已存在且 payload 指纹与首次提交不同"
+
+  - code: EIS-409-002
+    http_status: 409
+    name: version_conflict
+    description: 乐观锁冲突：期望 version 与当前版本不一致
+    retryable: true
+    emitted_when:
+      - "并发更新同一业务对象"
+
+  - code: EIS-500-001
+    http_status: 500
+    name: internal_error
+    description: 服务内部错误（响应不泄露内部细节；随响应返回 traceId 供排查）
+    retryable: true
+    emitted_when:
+      - "未处理异常"
+
+  - code: EIS-503-001
+    http_status: 503
+    name: unavailable
+    description: 依赖不可用（存储/事件通道），命令未被接受，可安全重试
+    retryable: true
+    emitted_when:
+      - "存储抖动或事件通道不可用"

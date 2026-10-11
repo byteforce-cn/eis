@@ -1,0 +1,56 @@
+# 贡献指南（Contributing）
+
+感谢参与 EIS Spec。本仓库遵循 **契约先行、无工件不合并** 的治理原则。
+
+## 1. 快速开始
+
+```bash
+# 环境：Python 3.10+（推荐 3.12）
+pip install pyyaml jsonschema
+
+# 一键跑全部：流水线（契约检查/编译/审计自测）+ 全部用例 + 试点场景
+python3 tools/e2e-runner --all
+```
+
+预期输出：`用例 43/43；场景 1/1；流水线 5/5；总判定：通过`。
+
+## 2. 贡献类型与流程
+
+| 类型 | 流程 | 备注 |
+|------|------|------|
+| 缺陷修复（工具/文档/测试） | 直接提 PR | 需通过 `e2e-runner --all` |
+| **契约变更**（数据/操作/时间/授权/审计/演进） | ADR → 可执行工件 → 验证 → PR | 模板 `00-freeze/adr/template.md`；兼容性判定依据 `06-evolution-contract/compatibility.rules.yaml`；无工件的变更一律拒绝 |
+| 新增领域扩展 | `extensions/{domain}/` 按结构提交 + manifest + 用例 | 不得修改核心契约；错误码使用自有前缀（如 `Xxx-400-001`） |
+| 新增应用案例 | `cases/{case}/`（composition + scenarios） | 场景须可由 `tools/e2e-runner` 执行 |
+| 新增测试 | 按 `tools/e2e-runner` 的 kind 语义编写 | 测试必须可执行、可复现（确定性时钟/数据） |
+
+## 3. 硬性要求
+
+1. **可执行**：新增/修改的用例必须在 `tools/e2e-runner --all` 下通过；
+2. **可验证**：契约变更必须附带工件（Schema/DDL/测试/工具变更清单）；
+3. **可演进**：破坏性变更必须给出迁移 + 回滚 + 对账路径（模板见 `06-evolution-contract/`）；
+4. **确定性**：测试不得依赖真实时钟、网络与外部数据库（DDL 冒烟由 CI 的 PostgreSQL 任务覆盖）；
+5. **命名**：命令/事件类型形如 `^[a-z][a-z0-9_.]*$`；核心错误码 `EIS-` 前缀不可占用。
+
+## 4. 提交规范
+
+- Commit message 建议：`feat: ...` / `fix: ...` / `docs: ...` / `test: ...` / `chore: ...`；
+- 一个 PR 聚焦一件事；契约变更 PR 必须链接对应 ADR；
+- PR 描述中附上 `e2e-runner` 的汇总行。
+
+## 5. 行为准则与许可
+
+- 参与即表示同意 [行为准则](CODE_OF_CONDUCT.md)；
+- 提交的代码与文档按 [Apache-2.0](LICENSE) 授权。
+
+## 6. 目录速查
+
+```
+00-freeze/                 冻结与治理（ADR 在这里）
+01..06-*-contract/         六份契约（含 tests/）
+extensions/                领域扩展（独立版本化）
+cases/                     应用案例（组合与场景）
+tools/                     工具链（参考实现）与参考内核（tools/lib/kernel.py）
+tools/ci/ddl-smoke.sql     PostgreSQL 冒烟（CI 使用）
+docs/                      落地映射 / 合规等级 / 路线图
+```

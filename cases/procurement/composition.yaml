@@ -1,0 +1,21 @@
+# composition.yaml — 采购系统（case v1.0.0）
+composition:
+  id: "procurement"
+  name: "采购系统"
+  version: "1.0.0"
+
+  extensions:
+    - id: "accounting"
+      version: "1.0.0"
+    - id: "inventory"
+      version: "1.0.0"
+    - id: "approval"
+      version: "1.0.0"
+
+  conflicts: []
+
+  # 组合验证
+  validation:
+    - "所有扩展的 dependencies 必须满足"
+    - "所有扩展的 conflicts 必须为空"
+    - "组合后的不变量必须兼容"

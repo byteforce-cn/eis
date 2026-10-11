@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://core/binding/v1",
+  "title": "RoleBinding",
+  "description": "授权绑定：主体 × 角色 × 作用域。带双时间轴，可重建任意时点的授权关系。",
+  "type": "object",
+  "required": ["id", "principal", "role", "scope", "valid_from", "recorded_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "principal": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "role": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "scope": {
+      "type": "object",
+      "description": "作用域，如 {\"department\": \"D001\"}"
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_to": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "superseded_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

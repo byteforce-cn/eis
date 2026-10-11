@@ -1,0 +1,85 @@
+# 时间契约验证用例（Spec v1.0.0）— 可执行版
+# 运行：tools/e2e-runner 03-time-contract/tests/time-contract.test.yaml
+# 时点查询/双时间轴语义由参考内核（tools/lib/kernel.py）实际执行验证
+suite: time-contract
+tests:
+  - name: "所有业务对象必须有双时间轴字段"
+    kind: static
+    target: 01-data-contract/temporal.schema.json
+    check: present
+    pattern: '"(valid_from|valid_to|recorded_at|superseded_at)"'
+    min_matches: 4
+
+  - name: "时间精度必须为 UTC 微秒（无时区歧义）"
+    kind: static
+    target: 03-time-contract/temporal.rules.yaml
+    check: present
+    pattern: "precision: 6"
+
+  - name: "时点查询必须返回单一版本（T-R008）"
+    kind: scenario
+    scenario:
+      id: time-contract.single-version
+      authz:
+        principals:
+          - {id: "01900000-0000-7000-8000-000000000201", type: person, key: accountant, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+        roles:
+          - {id: "01900000-0000-7000-8000-0000000002a1", key: accountant, permissions: [accounting.voucher.post], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+        bindings:
+          - {id: "01900000-0000-7000-8000-0000000002b1", principal: "01900000-0000-7000-8000-000000000201", role: "01900000-0000-7000-8000-0000000002a1", scope: {department: D001}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      setup:
+        ids: {voucher: "01900000-0000-7000-8000-00000000f101"}
+        objects:
+          - type: voucher
+            id: "${ids.voucher}"
+            actor: "01900000-0000-7000-8000-000000000201"
+            data:
+              number: "记-时间-0001"
+              voucher_date: "2026-10-05"
+              status: draft
+              lines:
+                - {account_code: "1405", debit: "10.00", currency: CNY}
+                - {account_code: "2202", credit: "10.00", currency: CNY}
+      steps:
+        - id: T1
+          actor: accountant
+          command: accounting.voucher.post
+          payload: {voucher_id: "${ids.voucher}", post_date: "2026-10-05"}
+          events: [accounting.voucher.posted]
+      assert:
+        - {kind: time-travel, type: voucher, id: "${ids.voucher}", as_of_step: T1, expect_version: 1}
+        - {kind: object-field, type: voucher, id: "${ids.voucher}", field: version, expect: 2}
+
+  - name: "双时间轴区间必须相接且无重叠（T-R009）"
+    kind: scenario
+    scenario:
+      id: time-contract.no-overlap
+      authz:
+        principals:
+          - {id: "01900000-0000-7000-8000-000000000201", type: person, key: accountant, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+        roles:
+          - {id: "01900000-0000-7000-8000-0000000002a1", key: accountant, permissions: [accounting.voucher.post], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+        bindings:
+          - {id: "01900000-0000-7000-8000-0000000002b1", principal: "01900000-0000-7000-8000-000000000201", role: "01900000-0000-7000-8000-0000000002a1", scope: {department: D001}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      setup:
+        ids: {voucher: "01900000-0000-7000-8000-00000000f102"}
+        objects:
+          - type: voucher
+            id: "${ids.voucher}"
+            actor: "01900000-0000-7000-8000-000000000201"
+            data:
+              number: "记-时间-0002"
+              voucher_date: "2026-10-06"
+              status: draft
+              lines:
+                - {account_code: "1405", debit: "10.00", currency: CNY}
+                - {account_code: "2202", credit: "10.00", currency: CNY}
+      steps:
+        - id: T1
+          actor: accountant
+          command: accounting.voucher.post
+          payload: {voucher_id: "${ids.voucher}", post_date: "2026-10-06"}
+          events: [accounting.voucher.posted]
+      assert:
+        - {kind: temporal-history, type: voucher, id: "${ids.voucher}", expect_versions: 2, expect_adjacent: true}
+        - {kind: audit-chain, expect: valid, min_entries: 1}

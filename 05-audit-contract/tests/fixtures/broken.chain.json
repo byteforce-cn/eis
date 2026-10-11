@@ -1,0 +1,53 @@
+[
+  {
+    "id": "018f2e3a-1234-7000-8000-000000000001",
+    "sequence": 1,
+    "timestamp": "2026-10-08T09:00:00.001000+00:00",
+    "actor": "018f2e3a-0000-7000-8000-000000000001",
+    "action": "voucher.create",
+    "resource": {
+      "type": "voucher",
+      "id": "018f2e3a-9999-7000-8000-000000000002"
+    },
+    "payload": {
+      "amount": "100.00",
+      "currency": "CNY"
+    },
+    "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "hash": "a518601df1a175291e6898d95194e3248dee6a07d6e07493262e5f28ea6e08ce"
+  },
+  {
+    "id": "018f2e3a-1234-7000-8000-000000000002",
+    "sequence": 2,
+    "timestamp": "2026-10-08T09:00:00.002000+00:00",
+    "actor": "018f2e3a-0000-7000-8000-000000000001",
+    "action": "voucher.create",
+    "resource": {
+      "type": "voucher",
+      "id": "018f2e3a-9999-7000-8000-000000000002"
+    },
+    "payload": {
+      "amount": "100.00",
+      "currency": "CNY"
+    },
+    "prev_hash": "a518601df1a175291e6898d95194e3248dee6a07d6e07493262e5f28ea6e08ce",
+    "hash": "19152f604ce1ef22c59981ab1255f6c6fae7ab4717564e99d9de1e9c432c314e"
+  },
+  {
+    "id": "018f2e3a-1234-7000-8000-000000000003",
+    "sequence": 3,
+    "timestamp": "2026-10-08T09:00:00.003000+00:00",
+    "actor": "018f2e3a-0000-7000-8000-000000000001",
+    "action": "voucher.create",
+    "resource": {
+      "type": "voucher",
+      "id": "018f2e3a-9999-7000-8000-000000000002"
+    },
+    "payload": {
+      "amount": "100.00",
+      "currency": "CNY"
+    },
+    "prev_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "hash": "5f3cc29a8eb231d2070a1fed6a1381a3a9af2413f5d00e4410a0d556094ffe87"
+  }
+]

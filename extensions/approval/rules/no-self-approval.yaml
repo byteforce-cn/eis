@@ -1,0 +1,18 @@
+# rules/no-self-approval.yaml — 禁止自审（approval v1.0.0）
+rule:
+  id: "approval.no_self_approval"
+  name: "禁止自审"
+  statement: "审批决定的 decider 不得等于申请 requester"
+  applies_to:
+    - "operations/decide.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "APR-403-001"
+    error_message: "禁止自审：申请人 {requester} 与决定人 {decider} 相同"
+  tests:
+    - name: "他人审批必须通过"
+      input: "requester=A，decider=B，A != B"
+      expect: "accepted"
+    - name: "自审必须拒绝"
+      input: "requester=A，decider=A"
+      expect: "rejected code=APR-403-001"

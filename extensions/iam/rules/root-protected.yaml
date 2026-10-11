@@ -1,0 +1,9 @@
+rule:
+  id: iam.root_protected
+  name: 保护内置 root 账户
+  statement: built_in=true 的账户不得禁用或删除
+  applies_to: [operations/user-disable.openapi.yaml]
+  on_violation:
+    enforcement: prevent
+    error_code: IAM-403-002
+    error_message: 内置账户不可禁用

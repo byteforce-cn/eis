@@ -1,0 +1,32 @@
+# 操作契约验证用例（Spec v1.0.0）— 可执行版
+# 运行：tools/e2e-runner 02-operation-contract/tests/operation-contract.test.yaml
+suite: operation-contract
+tests:
+  - name: "所有命令必须声明幂等键（契约检查器全量核验）"
+    kind: cli
+    args: [tools/contract-checker]
+
+  - name: "命令接口必须声明 400/409 响应"
+    kind: static
+    target: 02-operation-contract/command.openapi.yaml
+    check: present
+    pattern: "'409':"
+
+  - name: "所有查询必须支持时点查询（as_of / recorded_as_of）"
+    kind: static
+    target: 02-operation-contract/query.openapi.yaml
+    check: present
+    pattern: "as_of"
+    min_matches: 2
+
+  - name: "所有事件必须有 Schema（asyncapi 负载引用）"
+    kind: static
+    target: 02-operation-contract/event.asyncapi.yaml
+    check: present
+    pattern: "event.schema.json"
+
+  - name: "命令结果必须可查询（异步语义）"
+    kind: static
+    target: 02-operation-contract/command.openapi.yaml
+    check: present
+    pattern: "CommandStatus"

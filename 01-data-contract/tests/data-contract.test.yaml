@@ -1,0 +1,47 @@
+# 数据契约验证用例（Spec v1.0.0）— 可执行版
+# 运行：tools/e2e-runner 01-data-contract/tests/data-contract.test.yaml
+# kind 语义见 tools/e2e-runner 头部文档
+suite: data-contract
+tests:
+  - name: "所有业务对象必须包含元字段"
+    kind: schema-doc
+    schema: 01-data-contract/object.schema.json
+    doc:
+      id: "01900000-0000-7000-8000-00000000f001"
+      version: 1
+      valid_from: "2026-10-08T09:00:00.000000Z"
+      recorded_at: "2026-10-08T09:00:00.000000Z"
+      created_by: "01900000-0000-7000-8000-00000000f002"
+      created_at: "2026-10-08T09:00:00.000000Z"
+
+  - name: "ID 必须是合法 UUID（格式约束）"
+    kind: schema-doc
+    schema: 01-data-contract/object.schema.json
+    expect: invalid
+    problem_contains: ["非 UUID"]
+    doc:
+      id: "not-a-uuid"
+      version: 1
+      valid_from: "2026-10-08T09:00:00.000000Z"
+      recorded_at: "2026-10-08T09:00:00.000000Z"
+      created_by: "01900000-0000-7000-8000-00000000f002"
+      created_at: "2026-10-08T09:00:00.000000Z"
+
+  - name: "时间字段必须带时区（UTC 无歧义）"
+    kind: schema-doc
+    schema: 01-data-contract/object.schema.json
+    expect: invalid
+    problem_contains: ["缺少时区"]
+    doc:
+      id: "01900000-0000-7000-8000-00000000f001"
+      version: 1
+      valid_from: "2026-10-08T09:00:00"
+      recorded_at: "2026-10-08T09:00:00.000000Z"
+      created_by: "01900000-0000-7000-8000-00000000f002"
+      created_at: "2026-10-08T09:00:00.000000Z"
+
+  - name: "事件必须有幂等键（required）"
+    kind: static
+    target: 01-data-contract/event.schema.json
+    check: present
+    pattern: '"idempotency_key"\]'

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/iam/object/role-binding/v1",
+  "title": "RoleBinding",
+  "description": "principal 到 role 的时态授权绑定。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["principal", "role", "scope", "status"],
+      "properties": {
+        "principal": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "role": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "revoked"]
+        }
+      }
+    }
+  ]
+}

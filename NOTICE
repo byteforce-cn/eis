@@ -1,0 +1,9 @@
+EIS Spec（企业信息系统规范）
+Copyright 2026 ByteForce
+
+本产品（EIS Spec）由 ByteForce 开发，依据 Apache License, Version 2.0 授权
+（见 LICENSE）。仓库内的规范文本、Schema、DDL、参考工具与测试用例均适用
+Apache-2.0。
+
+规范中的既有思想来源（如双时间轴、关系授权、哈希链审计）在相关文档中注明，
+其版权归各自作者所有。

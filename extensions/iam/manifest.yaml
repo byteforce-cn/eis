@@ -1,0 +1,66 @@
+extension:
+  id: "iam"
+  name: "身份与访问管理扩展"
+  version: "1.0.0"
+  core_version: "1.0.0"
+
+  dependencies: []
+  conflicts: []
+
+  objects:
+    - name: "UserAccount"
+      schema: "objects/user-account.schema.json"
+    - name: "Credential"
+      schema: "objects/credential.schema.json"
+    - name: "Role"
+      schema: "objects/role.schema.json"
+    - name: "RoleBinding"
+      schema: "objects/role-binding.schema.json"
+    - name: "AuthSession"
+      schema: "objects/auth-session.schema.json"
+
+  operations:
+    - name: "userCreate"
+      contract: "operations/user-create.openapi.yaml"
+    - name: "userUpdate"
+      contract: "operations/user-update.openapi.yaml"
+    - name: "userDisable"
+      contract: "operations/user-disable.openapi.yaml"
+    - name: "userEnable"
+      contract: "operations/user-enable.openapi.yaml"
+    - name: "credentialRotate"
+      contract: "operations/credential-rotate.openapi.yaml"
+    - name: "credentialReset"
+      contract: "operations/credential-reset.openapi.yaml"
+    - name: "roleDefine"
+      contract: "operations/role-define.openapi.yaml"
+    - name: "bindingGrant"
+      contract: "operations/binding-grant.openapi.yaml"
+    - name: "bindingRevoke"
+      contract: "operations/binding-revoke.openapi.yaml"
+    - name: "sessionIssue"
+      contract: "operations/session-issue.openapi.yaml"
+    - name: "sessionRevoke"
+      contract: "operations/session-revoke.openapi.yaml"
+
+  rules:
+    - name: "username_unique"
+      file: "rules/username-unique.yaml"
+    - name: "root_protected"
+      file: "rules/root-protected.yaml"
+    - name: "no_self_grant"
+      file: "rules/no-self-grant.yaml"
+    - name: "binding_sod_precheck"
+      file: "rules/binding-sod-precheck.yaml"
+    - name: "old_credential_check"
+      file: "rules/old-credential-check.yaml"
+
+  invariants:
+    - name: "禁用账户无活动会话"
+      expression: "account.status == disabled implies no active session"
+    - name: "活动绑定唯一"
+      expression: "unique(principal, role, scope) where active"
+    - name: "活动凭证唯一"
+      expression: "unique(account_id, type) where active"
+    - name: "角色 key 唯一"
+      expression: "unique(role.key)"

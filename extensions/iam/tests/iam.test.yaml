@@ -1,0 +1,254 @@
+suite: iam
+x-common:
+  authz: &authz
+    principals:
+      - {id: "01900000-0000-7000-8000-000000000901", type: person, key: admin, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000902", type: person, key: member, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    roles:
+      - {id: "01900000-0000-7000-8000-0000000009a1", key: iam-admin, permissions: [iam.user.create, iam.user.update, iam.user.disable, iam.user.enable, iam.credential.rotate, iam.credential.reset, iam.role.define, iam.binding.grant, iam.binding.revoke, iam.session.issue, iam.session.revoke], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    bindings:
+      - {id: "01900000-0000-7000-8000-0000000009b1", principal: "01900000-0000-7000-8000-000000000901", role: "01900000-0000-7000-8000-0000000009a1", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000009b2", principal: "01900000-0000-7000-8000-000000000902", role: "01900000-0000-7000-8000-0000000009a1", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+
+tests:
+  - name: 创建用户并写入审计链
+    kind: scenario
+    scenario:
+      id: iam.user-create
+      authz: *authz
+      steps:
+        - id: T1
+          actor: admin
+          command: iam.user.create
+          payload: {username: alice, display_name: Alice, org_code: D001}
+          events: [iam.user.created]
+      assert:
+        - {kind: object-field, type: iam_user_account, id: "${steps.T1.created.id}", field: status, expect: active}
+        - {kind: object-field, type: iam_user_account, id: "${steps.T1.created.id}", field: version, expect: 1}
+        - {kind: audit-chain, expect: valid, min_entries: 1}
+
+  - name: 重复用户名被唯一约束拒绝
+    kind: scenario
+    scenario:
+      id: iam.username-unique
+      authz: *authz
+      steps:
+        - id: T1
+          actor: admin
+          command: iam.user.create
+          payload: {username: alice, display_name: Alice}
+        - id: T2
+          actor: admin
+          command: iam.user.create
+          payload: {username: alice, display_name: Another Alice}
+          expect_status: rejected
+          expect_code: IAM-409-001
+      assert:
+        - {kind: object-count, type: iam_user_account, where: {username: alice}, expect: 1}
+        - {kind: temporal-history, type: iam_user_account, id: "${steps.T1.created.id}", expect_versions: 1}
+
+  - name: 禁用用户级联吊销活动会话
+    kind: scenario
+    scenario:
+      id: iam.user-disable-cascade
+      authz: *authz
+      setup:
+        objects:
+          - type: iam_user_account
+            id: "01900000-0000-7000-8000-000000000911"
+            data: {username: alice, display_name: Alice, status: active, built_in: false}
+          - type: iam_auth_session
+            id: "01900000-0000-7000-8000-000000000912"
+            data: {account_id: "01900000-0000-7000-8000-000000000911", client_id: web, auth_method: password, jti: jti-1, status: active, expires_at: "2026-10-08T10:00:00Z"}
+      steps:
+        - id: T1
+          actor: admin
+          command: iam.user.disable
+          payload: {account_id: "01900000-0000-7000-8000-000000000911"}
+          events: [iam.session.revoked, iam.user.disabled]
+      assert:
+        - {kind: object-field, type: iam_user_account, id: "01900000-0000-7000-8000-000000000911", field: status, expect: disabled}
+        - {kind: object-field, type: iam_auth_session, id: "01900000-0000-7000-8000-000000000912", field: status, expect: revoked}
+        - {kind: temporal-history, type: iam_auth_session, id: "01900000-0000-7000-8000-000000000912", expect_versions: 2}
+
+  - name: 内置 root 账户受保护
+    kind: scenario
+    scenario:
+      id: iam.root-protected
+      authz: *authz
+      setup:
+        objects:
+          - type: iam_user_account
+            id: "01900000-0000-7000-8000-000000000913"
+            data: {username: root, display_name: Root, status: active, built_in: true}
+      steps:
+        - id: T1
+          actor: admin
+          command: iam.user.disable
+          payload: {account_id: "01900000-0000-7000-8000-000000000913"}
+          expect_status: rejected
+          expect_code: IAM-403-002
+      assert:
+        - {kind: object-field, type: iam_user_account, id: "01900000-0000-7000-8000-000000000913", field: status, expect: active}
+        - {kind: events, absent: [iam.user.disabled]}
+
+  - name: 凭证轮换封口旧版本并隐藏散列
+    kind: scenario
+    scenario:
+      id: iam.credential-rotate
+      authz: *authz
+      setup:
+        objects:
+          - type: iam_user_account
+            id: "01900000-0000-7000-8000-000000000902"
+            data: {username: member, display_name: Member, status: active, built_in: false}
+          - type: iam_credential
+            id: "01900000-0000-7000-8000-000000000914"
+            data: {account_id: "01900000-0000-7000-8000-000000000902", type: password, secret_hash: "$2a$old-hash", status: active, must_change: true}
+      steps:
+        - id: T1
+          actor: member
+          command: iam.credential.rotate
+          payload: {account_id: "01900000-0000-7000-8000-000000000902", old_secret_hash: "$2a$old-hash", new_secret_hash: "$2a$new-hash"}
+          events: [iam.credential.rotated]
+      assert:
+        - {kind: object-field, type: iam_credential, id: "01900000-0000-7000-8000-000000000914", field: must_change, expect: false}
+        - {kind: temporal-history, type: iam_credential, id: "01900000-0000-7000-8000-000000000914", expect_versions: 2}
+        - {kind: command-redacted, step: T1, fields: [old_secret_hash, new_secret_hash, secret_hash]}
+
+  - name: 凭证轮换拒绝错误旧凭证
+    kind: scenario
+    scenario:
+      id: iam.old-credential-check
+      authz: *authz
+      setup:
+        objects:
+          - type: iam_user_account
+            id: "01900000-0000-7000-8000-000000000902"
+            data: {username: member, display_name: Member, status: active, built_in: false}
+          - type: iam_credential
+            id: "01900000-0000-7000-8000-000000000915"
+            data: {account_id: "01900000-0000-7000-8000-000000000902", type: password, secret_hash: "$2a$right-hash", status: active, must_change: false}
+      steps:
+        - id: T1
+          actor: member
+          command: iam.credential.rotate
+          payload: {account_id: "01900000-0000-7000-8000-000000000902", old_secret_hash: "$2a$wrong-hash", new_secret_hash: "$2a$new-hash"}
+          expect_status: rejected
+          expect_code: IAM-400-002
+      assert:
+        - {kind: temporal-history, type: iam_credential, id: "01900000-0000-7000-8000-000000000915", expect_versions: 1}
+        - {kind: events, absent: [iam.credential.rotated]}
+
+  - name: 绑定授予执行 SoD 拒绝预检
+    kind: scenario
+    scenario:
+      id: iam.binding-sod-precheck
+      authz: *authz
+      setup:
+        objects:
+          - type: iam_user_account
+            id: "01900000-0000-7000-8000-000000000916"
+            data: {username: buyer, display_name: Buyer, status: active, built_in: false}
+          - type: iam_role
+            id: "01900000-0000-7000-8000-000000000917"
+            data: {key: requester, name: Requester, permissions: [purchase.request.create], built_in: false}
+          - type: iam_role
+            id: "01900000-0000-7000-8000-000000000918"
+            data: {key: approver, name: Approver, permissions: [purchase.request.approve], built_in: false}
+          - type: iam_role_binding
+            id: "01900000-0000-7000-8000-000000000919"
+            data: {principal: "01900000-0000-7000-8000-000000000916", role: "01900000-0000-7000-8000-000000000917", scope: {department: D001}, status: active}
+      steps:
+        - id: T1
+          actor: admin
+          command: iam.binding.grant
+          payload: {principal: "01900000-0000-7000-8000-000000000916", role_id: "01900000-0000-7000-8000-000000000918", scope: {department: D001}}
+          expect_status: rejected
+          expect_code: IAM-403-003
+          expect_reason_code: SOD-001
+      assert:
+        - {kind: object-count, type: iam_role_binding, where: {principal: "01900000-0000-7000-8000-000000000916"}, expect: 1}
+
+  - name: 授予撤销可按双时间轴重建
+    kind: scenario
+    scenario:
+      id: iam.binding-time-travel
+      authz: *authz
+      setup:
+        objects:
+          - type: iam_user_account
+            id: "01900000-0000-7000-8000-000000000920"
+            data: {username: analyst, display_name: Analyst, status: active, built_in: false}
+          - type: iam_role
+            id: "01900000-0000-7000-8000-000000000921"
+            data: {key: reader, name: Reader, permissions: [iam.user.update], built_in: false}
+      steps:
+        - id: T1
+          actor: admin
+          command: iam.binding.grant
+          payload: {principal: "01900000-0000-7000-8000-000000000920", role_id: "01900000-0000-7000-8000-000000000921", scope: {department: D001}}
+          events: [iam.binding.granted]
+        - id: T2
+          actor: admin
+          command: iam.binding.revoke
+          payload: {binding_id: "${steps.T1.created.id}"}
+          events: [iam.binding.revoked]
+        - id: T3
+          actor: admin
+          command: iam.user.update
+          payload: {account_id: "01900000-0000-7000-8000-000000000920", display_name: Analyst v2}
+      assert:
+        - {kind: time-travel, type: iam_role_binding, id: "${steps.T1.created.id}", as_of_step: T1, expect_absent: true}
+        - {kind: time-travel, type: iam_role_binding, id: "${steps.T1.created.id}", as_of_step: T2, expect_version: 1}
+        - {kind: time-travel, type: iam_role_binding, id: "${steps.T1.created.id}", as_of_step: T3, expect_version: 2}
+        - {kind: object-field, type: iam_role_binding, id: "${steps.T1.created.id}", field: status, expect: revoked}
+        - {kind: temporal-history, type: iam_role_binding, id: "${steps.T1.created.id}", expect_versions: 2}
+
+  - name: 会话签发吊销并支持幂等重放
+    kind: scenario
+    scenario:
+      id: iam.session-idempotency
+      authz: *authz
+      setup:
+        objects:
+          - type: iam_user_account
+            id: "01900000-0000-7000-8000-000000000902"
+            data: {username: member, display_name: Member, status: active, built_in: false}
+      steps:
+        - id: T1
+          actor: member
+          command: iam.session.issue
+          payload: {account_id: "01900000-0000-7000-8000-000000000902", client_id: web, auth_method: password, jti: token-1, expires_at: "2026-10-08T10:00:00Z"}
+          events: [iam.session.issued]
+        - id: T2
+          actor: admin
+          command: iam.session.revoke
+          payload: {session_id: "${steps.T1.created.id}"}
+          events: [iam.session.revoked]
+      assert:
+        - {kind: object-field, type: iam_auth_session, id: "${steps.T1.created.id}", field: status, expect: revoked}
+        - {kind: idempotency, step: T1}
+
+  - name: 禁止向本人授予角色
+    kind: scenario
+    scenario:
+      id: iam.no-self-grant
+      authz: *authz
+      setup:
+        objects:
+          - type: iam_user_account
+            id: "01900000-0000-7000-8000-000000000902"
+            data: {username: member, display_name: Member, status: active, built_in: false}
+          - type: iam_role
+            id: "01900000-0000-7000-8000-000000000922"
+            data: {key: self-role, name: Self role, permissions: [iam.user.update], built_in: false}
+      steps:
+        - id: T1
+          actor: member
+          command: iam.binding.grant
+          payload: {principal: "01900000-0000-7000-8000-000000000902", role_id: "01900000-0000-7000-8000-000000000922", scope: {}}
+          expect_status: rejected
+          expect_code: IAM-403-001
+      assert:
+        - {kind: object-count, type: iam_role_binding, expect: 0}

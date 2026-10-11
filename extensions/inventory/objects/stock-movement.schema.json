@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/inventory/object/stock-movement/v1",
+  "title": "StockMovement",
+  "description": "出入库变动：不可变更的事实（事件同构），驱动库存余额投射。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["item_id", "warehouse", "movement_type", "quantity"],
+      "properties": {
+        "item_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "物品对象 ID"
+        },
+        "warehouse": {
+          "type": "string",
+          "description": "仓库编码"
+        },
+        "movement_type": {
+          "type": "string",
+          "enum": ["receipt", "issue", "adjust"],
+          "description": "方向：收货 / 发料 / 调整（调整可为负）"
+        },
+        "quantity": {
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d+)?$",
+          "description": "数量（十进制字符串；issue/adjust 可为负）"
+        },
+        "reference": {
+          "type": ["string", "null"],
+          "description": "来源单据引用（如采购单、审批单）"
+        }
+      }
+    }
+  ]
+}

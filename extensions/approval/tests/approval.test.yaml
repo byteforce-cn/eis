@@ -1,0 +1,88 @@
+# 审批域验证用例（approval v1.0.0）— 可执行版
+# 运行：tools/e2e-runner extensions/approval/tests/approval.test.yaml
+suite: approval
+x-common:
+  authz: &authz
+    principals:
+      - {id: "01900000-0000-7000-8000-000000000501", type: person, key: buyer, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000502", type: person, key: manager, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    roles:
+      - {id: "01900000-0000-7000-8000-0000000005a1", key: requester, permissions: [approval.request.submit, approval.request.decide], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000005a2", key: approver, permissions: [approval.request.decide], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    bindings:
+      - {id: "01900000-0000-7000-8000-0000000005b1", principal: "01900000-0000-7000-8000-000000000501", role: "01900000-0000-7000-8000-0000000005a1", scope: {department: D001}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000005b2", principal: "01900000-0000-7000-8000-000000000502", role: "01900000-0000-7000-8000-0000000005a2", scope: {department: D001}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+
+tests:
+  - name: "提交与审批通过（他人审批）"
+    kind: scenario
+    scenario:
+      id: approval.approve-ok
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: inventory.stock.receive
+            target: {type: purchase_order, id: "01900000-0000-7000-8000-00000000c101"}
+          events: [approval.request.submitted]
+        - id: T2
+          actor: manager
+          command: approval.request.decide
+          payload: {request_id: "${steps.T1.created.id}", outcome: approve}
+          events: [approval.request.approved]
+      assert:
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: approved}
+        - {kind: audit-chain, expect: valid, min_entries: 2}
+
+  - name: "禁止自审必须拒绝（APR-403-001）"
+    kind: scenario
+    scenario:
+      id: approval.no-self-approval
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: inventory.stock.receive
+            target: {type: purchase_order, id: "01900000-0000-7000-8000-00000000c102"}
+          events: [approval.request.submitted]
+        - id: T2
+          actor: buyer
+          command: approval.request.decide
+          payload: {request_id: "${steps.T1.created.id}", outcome: approve}
+          expect_status: rejected
+          expect_code: APR-403-001
+      assert:
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: pending}
+        - {kind: events, absent: [approval.request.approved]}
+
+  - name: "重复决定必须拒绝（EIS-409-001）"
+    kind: scenario
+    scenario:
+      id: approval.duplicate-decision
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: inventory.stock.receive
+            target: {type: purchase_order, id: "01900000-0000-7000-8000-00000000c103"}
+          events: [approval.request.submitted]
+        - id: T2
+          actor: manager
+          command: approval.request.decide
+          payload: {request_id: "${steps.T1.created.id}", outcome: approve}
+          events: [approval.request.approved]
+        - id: T3
+          actor: manager
+          command: approval.request.decide
+          payload: {request_id: "${steps.T1.created.id}", outcome: reject}
+          expect_status: rejected
+          expect_code: EIS-409-001
+      assert:
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: approved}
+        - {kind: audit-chain, expect: valid, min_entries: 2}

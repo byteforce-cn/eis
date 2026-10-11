@@ -1,0 +1,29 @@
+# manifest.yaml — 库存域扩展（v1.0.0，骨架）
+extension:
+  id: "inventory"
+  name: "库存域扩展"
+  version: "1.0.0"
+  core_version: "1.0.0"
+
+  dependencies: []
+  conflicts: []
+
+  objects:
+    - name: "InventoryItem"
+      schema: "objects/inventory-item.schema.json"
+    - name: "StockMovement"
+      schema: "objects/stock-movement.schema.json"
+    - name: "StockBalance"
+      schema: "objects/stock-balance.schema.json"
+
+  operations:
+    - name: "receiveStock"
+      contract: "operations/receive-stock.openapi.yaml"
+
+  rules:
+    - name: "non_negative"
+      file: "rules/non-negative.yaml"
+
+  invariants:
+    - name: "库存非负"
+      expression: "quantity >= 0 for all (item, warehouse)"

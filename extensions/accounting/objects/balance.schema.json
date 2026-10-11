@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/accounting/object/balance/v1",
+  "title": "Balance",
+  "description": "科目余额（某科目 × 期间 × 币种）。读模型：由凭证事件投射，可重复构建（view.schema.json 语义）。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["account_code", "period", "currency", "debit_total", "credit_total", "balance"],
+      "properties": {
+        "account_code": {
+          "type": "string",
+          "pattern": "^[0-9]{4,8}$"
+        },
+        "period": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}$",
+          "description": "会计期间，如 \"2026-10\""
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "opening_balance": {
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d{1,2})?$",
+          "description": "期初余额"
+        },
+        "debit_total": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d{1,2})?$",
+          "description": "本期借方累计"
+        },
+        "credit_total": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d{1,2})?$",
+          "description": "本期贷方累计"
+        },
+        "balance": {
+          "type": "string",
+          "pattern": "^-?\\d+(\\.\\d{1,2})?$",
+          "description": "期末余额（按 normal_balance 方向）"
+        }
+      }
+    }
+  ]
+}

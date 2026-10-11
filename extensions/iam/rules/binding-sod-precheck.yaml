@@ -1,0 +1,10 @@
+rule:
+  id: iam.binding_sod_precheck
+  name: 角色绑定 SoD 预检
+  statement: 新绑定不得使同主体在相同作用域内持有冲突权限
+  applies_to: [operations/binding-grant.openapi.yaml]
+  source: ../../04-authz-contract/sod.rules.yaml
+  on_violation:
+    enforcement: prevent
+    error_code: IAM-403-003
+    error_message: 职责分离规则冲突

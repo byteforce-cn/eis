@@ -1,0 +1,157 @@
+# 会计域验证用例（accounting v1.0.0）— 可执行版
+# 运行：tools/e2e-runner extensions/accounting/tests/accounting.test.yaml
+# 由参考内核（tools/lib/kernel.py）执行命令流并验证规则/事件/审计/读模型
+suite: accounting
+x-common:
+  authz: &authz
+    principals:
+      - {id: "01900000-0000-7000-8000-000000000201", type: person, key: accountant, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    roles:
+      - {id: "01900000-0000-7000-8000-0000000002a1", key: accountant, permissions: [accounting.voucher.post, accounting.period.close], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    bindings:
+      - {id: "01900000-0000-7000-8000-0000000002b1", principal: "01900000-0000-7000-8000-000000000201", role: "01900000-0000-7000-8000-0000000002a1", scope: {department: D001}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+  lines_balanced: &lines_balanced
+    - {account_code: "1405", debit: "100.00", currency: CNY}
+    - {account_code: "2202", credit: "100.00", currency: CNY}
+
+tests:
+  - name: "平衡凭证过账必须成功"
+    kind: scenario
+    scenario:
+      id: accounting.balanced-post
+      authz: *authz
+      setup:
+        ids: {voucher: "01900000-0000-7000-8000-00000000a101"}
+        objects:
+          - type: voucher
+            id: "${ids.voucher}"
+            actor: "01900000-0000-7000-8000-000000000201"
+            data: {number: "记-2026-10-0001", voucher_date: "2026-10-05", status: draft, lines: *lines_balanced}
+      steps:
+        - id: T1
+          actor: accountant
+          command: accounting.voucher.post
+          payload: {voucher_id: "${ids.voucher}", post_date: "2026-10-05"}
+          events: [accounting.voucher.posted]
+      assert:
+        - {kind: object-field, type: voucher, id: "${ids.voucher}", field: status, expect: posted}
+        - {kind: audit-chain, expect: valid, min_entries: 1}
+        - {kind: balance, account_code: "1405", period: "2026-10", debit: "100.00", credit: "0.00"}
+
+  - name: "不平衡凭证必须拒绝（ACC-400-001）"
+    kind: scenario
+    scenario:
+      id: accounting.unbalanced-reject
+      authz: *authz
+      setup:
+        ids: {voucher: "01900000-0000-7000-8000-00000000a102"}
+        objects:
+          - type: voucher
+            id: "${ids.voucher}"
+            actor: "01900000-0000-7000-8000-000000000201"
+            data:
+              number: "记-2026-10-0002"
+              voucher_date: "2026-10-05"
+              status: draft
+              lines:
+                - {account_code: "1405", debit: "100.00", currency: CNY}
+                - {account_code: "2202", credit: "90.00", currency: CNY}
+      steps:
+        - id: T1
+          actor: accountant
+          command: accounting.voucher.post
+          payload: {voucher_id: "${ids.voucher}", post_date: "2026-10-05"}
+          expect_status: rejected
+          expect_code: ACC-400-001
+      assert:
+        - {kind: object-field, type: voucher, id: "${ids.voucher}", field: status, expect: draft}
+        - {kind: events, absent: [accounting.voucher.posted]}
+        - {kind: audit-chain, expect: valid}
+
+  - name: "锁定期间必须拒绝过账（ACC-409-001）"
+    kind: scenario
+    scenario:
+      id: accounting.locked-period
+      authz: *authz
+      setup:
+        ids: {posted: "01900000-0000-7000-8000-00000000a103", draft: "01900000-0000-7000-8000-00000000a104"}
+        objects:
+          - type: voucher
+            id: "${ids.posted}"
+            actor: "01900000-0000-7000-8000-000000000201"
+            data: {number: "记-2026-10-0003", voucher_date: "2026-10-05", status: draft, lines: *lines_balanced}
+          - type: voucher
+            id: "${ids.draft}"
+            actor: "01900000-0000-7000-8000-000000000201"
+            data: {number: "记-2026-10-0004", voucher_date: "2026-10-06", status: draft, lines: *lines_balanced}
+      steps:
+        - id: T1
+          actor: accountant
+          command: accounting.voucher.post
+          payload: {voucher_id: "${ids.posted}", post_date: "2026-10-05"}
+          events: [accounting.voucher.posted]
+        - id: T2
+          actor: accountant
+          command: accounting.period.close
+          payload: {period: "2026-09"}
+          events: [accounting.period.closed]
+        - id: T3
+          actor: accountant
+          command: accounting.voucher.post
+          payload: {voucher_id: "${ids.draft}", post_date: "2026-09-15"}
+          expect_status: rejected
+          expect_code: ACC-409-001
+      assert:
+        - {kind: object-field, type: voucher, id: "${ids.draft}", field: status, expect: draft}
+        - {kind: audit-chain, expect: valid, min_entries: 2}
+
+  - name: "幂等重放返回同一结果"
+    kind: scenario
+    scenario:
+      id: accounting.idempotency
+      authz: *authz
+      setup:
+        ids: {voucher: "01900000-0000-7000-8000-00000000a105"}
+        objects:
+          - type: voucher
+            id: "${ids.voucher}"
+            actor: "01900000-0000-7000-8000-000000000201"
+            data: {number: "记-2026-10-0005", voucher_date: "2026-10-05", status: draft, lines: *lines_balanced}
+      steps:
+        - id: T1
+          actor: accountant
+          command: accounting.voucher.post
+          payload: {voucher_id: "${ids.voucher}", post_date: "2026-10-05"}
+          events: [accounting.voucher.posted]
+      assert:
+        - {kind: idempotency, step: T1}
+        - {kind: object-field, type: voucher, id: "${ids.voucher}", field: version, expect: 2}
+
+  - name: "关账后余额视图不再变化（业务时间）"
+    kind: scenario
+    scenario:
+      id: accounting.close-balance
+      authz: *authz
+      setup:
+        ids: {voucher: "01900000-0000-7000-8000-00000000a106"}
+        objects:
+          - type: voucher
+            id: "${ids.voucher}"
+            actor: "01900000-0000-7000-8000-000000000201"
+            data: {number: "记-2026-10-0006", voucher_date: "2026-10-05", status: draft, lines: *lines_balanced}
+      steps:
+        - id: T1
+          actor: accountant
+          command: accounting.voucher.post
+          payload: {voucher_id: "${ids.voucher}", post_date: "2026-10-05"}
+          events: [accounting.voucher.posted]
+        - id: T2
+          actor: accountant
+          command: accounting.period.close
+          payload: {period: "2026-10"}
+          events: [accounting.period.closed]
+      assert:
+        - {kind: balance, account_code: "1405", period: "2026-10", debit: "100.00", credit: "0.00"}
+        - {kind: balance, account_code: "2202", period: "2026-10", debit: "0.00", credit: "100.00"}
+        - {kind: time-travel, type: voucher, id: "${ids.voucher}", as_of_step: T1, expect_version: 1}
+        - {kind: audit-chain, expect: valid, min_entries: 2}

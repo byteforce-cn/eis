@@ -1,0 +1,32 @@
+openapi: 3.1.0
+info:
+  title: IAM - 禁用用户
+  version: 1.0.0
+paths:
+  /commands/iam.user.disable:
+    post:
+      operationId: userDisable
+      summary: 禁用用户并吊销其活动会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Command'
+      responses:
+        '202': {description: 已接受}
+        '400': {description: 参数非法}
+        '409': {description: 幂等冲突}
+components:
+  schemas:
+    Command:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type: {type: string, const: iam.user.disable}
+        payload:
+          type: object
+          required: [account_id]
+          properties:
+            account_id: {type: string, format: uuid}
+        idempotency_key: {type: string, minLength: 1}

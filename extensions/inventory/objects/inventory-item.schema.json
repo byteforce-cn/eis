@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/inventory/object/inventory-item/v1",
+  "title": "InventoryItem",
+  "description": "库存物品。核心元字段通过 allOf 引用（冻结）。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["sku", "name", "unit"],
+      "properties": {
+        "sku": {
+          "type": "string",
+          "description": "库存单位编码"
+        },
+        "name": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string",
+          "description": "计量单位，如 \"件\"、\"kg\""
+        },
+        "category": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  ]
+}

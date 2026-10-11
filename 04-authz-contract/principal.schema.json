@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://core/principal/v1",
+  "title": "Principal",
+  "description": "参与者主体：人、组织、系统、代理。带双时间轴，授权判定必须可按历史时点重建。",
+  "type": "object",
+  "required": ["id", "type", "key", "valid_from", "recorded_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["person", "organization", "system", "proxy"]
+    },
+    "key": {
+      "type": "string",
+      "description": "业务唯一标识，如工号、组织编码"
+    },
+    "attributes": {
+      "type": "object",
+      "description": "主体属性"
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_to": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "superseded_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

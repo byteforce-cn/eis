@@ -1,0 +1,9 @@
+rule:
+  id: iam.no_self_grant
+  name: 禁止自我授权
+  statement: 操作者不得向本人或本人代理授予角色
+  applies_to: [operations/binding-grant.openapi.yaml]
+  on_violation:
+    enforcement: prevent
+    error_code: IAM-403-001
+    error_message: 不得向本人或本人代理授予角色

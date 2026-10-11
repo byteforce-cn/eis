@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://core/object/v1",
+  "title": "BusinessObject",
+  "description": "所有业务对象的元结构（冻结）：身份 + 乐观锁版本 + 双时间轴 + 审计字段。领域扩展以 allOf 方式追加领域字段。",
+  "type": "object",
+  "required": ["id", "version", "valid_from", "recorded_at", "created_by", "created_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUIDv7，全局唯一，时间有序"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "乐观锁版本号，每次更新 +1"
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date-time",
+      "description": "业务生效时间（UTC）"
+    },
+    "valid_to": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "业务失效时间，NULL 表示当前有效"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "系统记录时间（UTC）"
+    },
+    "superseded_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "系统替代时间，NULL 表示当前记录"
+    },
+    "created_by": {
+      "type": "string",
+      "format": "uuid",
+      "description": "创建者 ID"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_by": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

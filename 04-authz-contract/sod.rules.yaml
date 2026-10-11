@@ -1,0 +1,43 @@
+# sod.rules.yaml — 职责分离（SoD）规则（Spec v1.0.0，冻结）
+# 语义：同一主体不得在同一作用域内同时持有冲突权限
+# enforcement: prevent（阻止）/ warn（告警）
+version: "1.0.0"
+
+sod_rules:
+  - id: SOD-001
+    name: "采购申请与审批分离"
+    conflicting_permissions:
+      - "purchase.request.create"
+      - "purchase.request.approve"
+    scope: "same_department"
+    enforcement: "prevent"
+
+  - id: SOD-002
+    name: "付款与审批分离"
+    conflicting_permissions:
+      - "payment.create"
+      - "payment.approve"
+    scope: "same_organization"
+    enforcement: "prevent"
+
+  - id: SOD-003
+    name: "库存盘点与调整分离"
+    conflicting_permissions:
+      - "inventory.count"
+      - "inventory.adjust"
+    scope: "same_warehouse"
+    enforcement: "warn"
+
+# ---------------------------------------------------------------------------
+# 语义（冻结）：
+# 1. 冲突判定：主体（含代理展开，见 proxy.schema.json）在同一作用域内同时持有
+#    conflicting_permissions 中的多个权限 → 触发冲突。
+# 2. 作用域解析（作用域取值来源为 bindings[].scope）：
+#    - same_department   → 冲突权限的绑定 scope.department 相等
+#    - same_organization → 冲突权限的绑定 scope.organization 相等
+#    - same_warehouse    → 冲突权限的绑定 scope.warehouse 相等
+# 3. 强制方式：
+#    - prevent：/check 返回 allowed=false，reason_code=SOD-xxx；绑定授予时 SHOULD 预先拒绝
+#    - warn：/check 返回 allowed=true，并在 /resolve 的 sod_warnings 中上报
+# 4. 时点：SoD 判定使用与授权解析相同的 as_of（历史时点的冲突在历史时点判定）
+# ---------------------------------------------------------------------------

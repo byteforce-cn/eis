@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""compatibility-checker — EIS 兼容性检查（v1.0.0 参考实现）
+
+用途: 新旧 JSON Schema diff → 依据 06-evolution-contract/compatibility.rules.yaml
+      判定 MAJOR / MINOR / PATCH，并列出所需配套动作（migration / dual_write / rollback 等）
+
+用法:
+  compatibility-checker --old A.schema.json --new B.schema.json [--json] [--fail-on MAJOR|MINOR]
+  compatibility-checker --self-test
+
+退出码: 0 通过（未触发 --fail-on）/ 1 触发 --fail-on 阈值或判定失败 / 2 用法或输入错误
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from eis_common import ROOT, load_json, load_yaml  # noqa: E402
+
+RULES_PATH = ROOT / "06-evolution-contract" / "compatibility.rules.yaml"
+LEVEL_ORDER = {"PATCH": 0, "MINOR": 1, "MAJOR": 2}
+
+# kind → (规则表 scope, 规则名)——命中 rules 文件时取 requires
+KIND_TO_RULE = {
+    "字段删除": ("data", "字段删除"),
+    "字段类型变更": ("data", "字段类型变更"),
+    "可选字段新增": ("data", "可选字段新增"),
+    "必填字段新增": ("data", "必填字段新增"),
+}
+# 规则表未覆盖的变更（工具扩展判定，默认配套动作在 EXTRA_REQUIRES）
+EXTRA_REQUIRES = {
+    "枚举取值收缩": ["migration"],
+    "枚举取值扩展": [],
+    "必填放宽": [],
+}
+
+
+def load_rule_index() -> dict:
+    rules = load_yaml(RULES_PATH)
+    idx = {}
+    for scope in ("data", "operation", "event"):
+        for r in rules.get("compatibility", {}).get(scope, []):
+            idx[(scope, r["rule"])] = r
+    return idx
+
+
+def norm_type(prop: dict):
+    t = prop.get("type")
+    if isinstance(t, list):
+        t = tuple(sorted(map(str, t)))
+    return (t, prop.get("format"))
+
+
+def diff_schemas(old: dict, new: dict) -> list[dict]:
+    changes = []
+    op, np_ = old.get("properties", {}), new.get("properties", {})
+    oreq, nreq = set(old.get("required", [])), set(new.get("required", []))
+
+    for name, oprop in op.items():
+        if name not in np_:
+            changes.append({"kind": "字段删除", "prop": name, "level": "MAJOR"})
+            continue
+        nprop = np_[name]
+        if norm_type(oprop) != norm_type(nprop):
+            changes.append({
+                "kind": "字段类型变更", "prop": name, "level": "MAJOR",
+                "detail": f"{oprop.get('type')} → {nprop.get('type')}",
+            })
+        else:
+            oenum = {str(v) for v in oprop.get("enum", [])}
+            nenum = {str(v) for v in nprop.get("enum", [])}
+            if oenum and nenum and (oenum - nenum):
+                changes.append({"kind": "枚举取值收缩", "prop": name, "level": "MAJOR",
+                                "detail": f"移除取值 {sorted(oenum - nenum)}"})
+            elif nenum - oenum:
+                changes.append({"kind": "枚举取值扩展", "prop": name, "level": "MINOR",
+                                "detail": f"新增取值 {sorted(nenum - oenum)}"})
+        if name in oreq and name not in nreq:
+            changes.append({"kind": "必填放宽", "prop": name, "level": "MINOR"})
+        if name not in oreq and name in nreq:
+            changes.append({"kind": "必填字段新增", "prop": name, "level": "MAJOR"})
+
+    for name in np_:
+        if name not in op:
+            if name in nreq:
+                changes.append({"kind": "必填字段新增", "prop": name, "level": "MAJOR"})
+            else:
+                changes.append({"kind": "可选字段新增", "prop": name, "level": "MINOR"})
+    return changes
+
+
+def classify(changes: list[dict], rule_index: dict) -> dict:
+    for ch in changes:
+        key = KIND_TO_RULE.get(ch["kind"])
+        if key and key in rule_index:
+            ch["requires"] = list(rule_index[key].get("requires", []))
+        else:
+            ch["requires"] = list(EXTRA_REQUIRES.get(ch["kind"], []))
+    overall = "PATCH"
+    if changes:
+        overall = max((ch["level"] for ch in changes), key=lambda x: LEVEL_ORDER[x])
+    return {"overall": overall, "changes": changes}
+
+
+def run_check(old_path: str, new_path: str) -> dict:
+    old, new = load_json(old_path), load_json(new_path)
+    changes = diff_schemas(old, new)
+    return classify(changes, load_rule_index())
+
+
+def cmd_self_test(args) -> int:
+    ok = True
+
+    def report(name, cond):
+        nonlocal ok
+        print(f"[{'ok  ' if cond else 'FAIL'}] {name}")
+        ok = ok and cond
+
+    with tempfile.TemporaryDirectory() as tmp:
+        def write(name, doc):
+            p = Path(tmp) / name
+            p.write_text(json.dumps(doc), encoding="utf-8")
+            return str(p)
+
+        base = {
+            "properties": {
+                "a": {"type": "integer"},
+                "b": {"type": "string"},
+            },
+            "required": ["a", "b"],
+        }
+        # 1) 字段删除 + 类型变更 → MAJOR，且 requires 完整
+        new1 = {
+            "properties": {
+                "b": {"type": "integer"},          # 类型变更
+                "c": {"type": "string"},           # 可选新增
+            },
+            "required": ["b"],
+        }
+        r = run_check(write("old1.json", base), write("new1.json", new1))
+        kinds = {ch["kind"] for ch in r["changes"]}
+        report("检出字段删除", "字段删除" in kinds)
+        report("检出类型变更", "字段类型变更" in kinds)
+        report("判定整体 MAJOR", r["overall"] == "MAJOR")
+        by_kind = {ch["kind"]: ch for ch in r["changes"]}
+        report("字段删除要求 migration/dual_write/rollback",
+               set(by_kind["字段删除"]["requires"]) == {"migration", "dual_write", "rollback"})
+        # 2) 仅可选新增 → MINOR
+        new2 = {"properties": dict(base["properties"], z={"type": "string"}), "required": ["a", "b"]}
+        r = run_check(write("old2.json", base), write("new2.json", new2))
+        report("仅可选新增判定 MINOR", r["overall"] == "MINOR")
+        # 3) 完全一致 → PATCH（无变更）
+        r = run_check(write("old3.json", base), write("new3.json", base))
+        report("无变更判定 PATCH", r["overall"] == "PATCH" and not r["changes"])
+        # 4) 必填新增 → MAJOR + 需要 backfill
+        new4 = {"properties": dict(base["properties"], n={"type": "string"}), "required": ["a", "b", "n"]}
+        r = run_check(write("old4.json", base), write("new4.json", new4))
+        ch = next(ch for ch in r["changes"] if ch["kind"] == "必填字段新增")
+        report("必填新增要求 backfill", "backfill" in ch["requires"])
+    print(f"自测结果: {'通过' if ok else '失败'}")
+    return 0 if ok else 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="compatibility-checker", description="EIS 兼容性检查（参考实现）")
+    parser.add_argument("--old", help="旧 Schema（JSON）")
+    parser.add_argument("--new", dest="new", help="新 Schema（JSON）")
+    parser.add_argument("--json", action="store_true", help="JSON 输出")
+    parser.add_argument("--fail-on", choices=list(LEVEL_ORDER), dest="fail_on",
+                        help="达到该级别（含）时退出码为 1")
+    parser.add_argument("--self-test", action="store_true", help="自测")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        return cmd_self_test(args)
+    if not (args.old and args.new):
+        parser.print_usage(sys.stderr)
+        return 2
+    try:
+        result = run_check(args.old, args.new)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"输入错误: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"判定: {result['overall']}（{len(result['changes'])} 处变更）")
+        for ch in result["changes"]:
+            req = f" requires={','.join(ch['requires'])}" if ch["requires"] else ""
+            detail = f"（{ch['detail']}）" if ch.get("detail") else ""
+            print(f"  [{ch['level']}] {ch['kind']}: {ch['prop']}{detail}{req}")
+    if args.fail_on and LEVEL_ORDER[result["overall"]] >= LEVEL_ORDER[args.fail_on] and result["changes"]:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

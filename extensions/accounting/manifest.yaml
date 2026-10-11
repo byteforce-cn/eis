@@ -1,0 +1,35 @@
+# manifest.yaml — 会计域扩展（v1.0.0）
+extension:
+  id: "accounting"
+  name: "会计域扩展"
+  version: "1.0.0"
+  core_version: "1.0.0"
+
+  dependencies: []
+  conflicts: []
+
+  objects:
+    - name: "Account"
+      schema: "objects/account.schema.json"
+    - name: "Voucher"
+      schema: "objects/voucher.schema.json"
+    - name: "Balance"
+      schema: "objects/balance.schema.json"
+
+  operations:
+    - name: "postVoucher"
+      contract: "operations/post-voucher.openapi.yaml"
+    - name: "closePeriod"
+      contract: "operations/close-period.openapi.yaml"
+
+  rules:
+    - name: "double_entry"
+      file: "rules/double-entry.yaml"
+    - name: "period_lock"
+      file: "rules/period-lock.yaml"
+
+  invariants:
+    - name: "借贷平衡"
+      expression: "sum(debit) == sum(credit)"
+    - name: "期间锁定"
+      expression: "posted_at not in locked_periods"

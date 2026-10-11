@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/inventory/object/stock-balance/v1",
+  "title": "StockBalance",
+  "description": "库存余额（物品 × 仓库）。读模型：由 StockMovement 投射，可重复构建。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["item_id", "warehouse", "quantity", "unit"],
+      "properties": {
+        "item_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "warehouse": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)?$",
+          "description": "当前数量（不变量：>= 0）"
+        },
+        "unit": {
+          "type": "string"
+        }
+      }
+    }
+  ]
+}
