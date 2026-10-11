@@ -319,6 +319,78 @@ tests:
         - {kind: command-redacted, step: T1, fields: [id_number_hash]}
         - {kind: idempotency, step: T1}
 
+  - name: "主组织由主岗派生，不得直接改写"
+    kind: scenario
+    scenario:
+      id: hr.employee-org-derived
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: D010, name: 研发部, unit_type: department}
+        - id: T2
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: D011, name: 另一个部门, unit_type: department}
+        - id: T3
+          actor: hr_admin
+          command: hr.position.define
+          payload: {code: P400, title: 工程师, org_unit_id: "${steps.T1.created.id}"}
+        - id: T4
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 冯十二, hire_date: "2026-10-09"}
+        - id: T5
+          actor: hr_admin
+          command: hr.assignment.assign
+          payload: {employee_id: "${steps.T4.created.id}", position_id: "${steps.T3.created.id}", is_primary: true}
+        - id: T6
+          actor: hr_admin
+          command: hr.employee.activate
+          payload: {employee_id: "${steps.T4.created.id}"}
+        - id: T7
+          actor: hr_admin
+          command: hr.employee.update
+          payload: {employee_id: "${steps.T4.created.id}", org_unit_id: "${steps.T2.created.id}"}
+          expect_status: rejected
+          expect_code: HR-409-006
+      assert:
+        - {kind: object-field, type: hr_employee, id: "${steps.T4.created.id}", field: org_unit_id, expect: "${steps.T1.created.id}"}
+
+  - name: "上级组织与上级岗位必须启用"
+    kind: scenario
+    scenario:
+      id: hr.parent-active-required
+      authz: *authz
+      setup:
+        objects:
+          - type: hr_organization_unit
+            id: "01900000-0000-7000-8000-00000000d001"
+            data: {code: DX01, name: 停用部门, unit_type: department, parent_id: null, status: inactive}
+          - type: hr_organization_unit
+            id: "01900000-0000-7000-8000-00000000d002"
+            data: {code: D001, name: 启用部门, unit_type: department, parent_id: null, status: active}
+          - type: hr_position
+            id: "01900000-0000-7000-8000-00000000f001"
+            data: {code: PF01, title: 冻结岗位, org_unit_id: "01900000-0000-7000-8000-00000000d002", reports_to_position_id: null, status: frozen}
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: D003, name: 子部门, unit_type: department, parent_id: "01900000-0000-7000-8000-00000000d001"}
+          expect_status: rejected
+          expect_code: HR-409-006
+        - id: T2
+          actor: hr_admin
+          command: hr.position.define
+          payload: {code: P900, title: 岗位, org_unit_id: "01900000-0000-7000-8000-00000000d002", reports_to_position_id: "01900000-0000-7000-8000-00000000f001"}
+          expect_status: rejected
+          expect_code: HR-409-006
+      assert:
+        - {kind: object-count, type: hr_organization_unit, where: {code: D003}, expect: 0}
+        - {kind: object-count, type: hr_position, where: {code: P900}, expect: 0}
+
   - name: "供给动作与员工状态不匹配必须拒绝"
     kind: scenario
     scenario:

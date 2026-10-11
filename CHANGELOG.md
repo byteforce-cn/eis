@@ -18,7 +18,7 @@
 ### 变更
 
 - `tools/e2e-runner`：`object-field`/`object-count` 断言支持 `${...}` 令牌；`kind: authz` 支持属性快照与条件断言；
-- 用例 85/85（新增 32 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
+- 用例 87/87（新增 34 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
 
 ## [1.0.0] — 2026-10-08（开源首发）
 

@@ -158,6 +158,7 @@ def update_org_unit(api, payload, actor, command_id):
         parent_id = payload["parent_id"]
         if parent_id is not None:
             _assert_acyclic(api, "hr_organization_unit", "parent_id", parent_id, unit_id)
+            _org_unit(api, parent_id)  # 上级必须启用
         updates["parent_id"] = parent_id
     if "status" in payload:
         if payload["status"] not in ("active", "inactive"):
@@ -211,6 +212,7 @@ def update_position(api, payload, actor, command_id):
         reports_to = payload["reports_to_position_id"]
         if reports_to is not None:
             _assert_acyclic(api, "hr_position", "reports_to_position_id", reports_to, position_id)
+            _position(api, reports_to)  # 上级岗位必须启用
         updates["reports_to_position_id"] = reports_to
     if "grade" in payload:
         updates["grade"] = payload["grade"]
@@ -274,6 +276,9 @@ def update_employee(api, payload, actor, command_id):
     if "org_unit_id" in payload:
         if payload["org_unit_id"] is not None:
             _org_unit(api, payload["org_unit_id"])
+            primary = _primary_assignment(api, employee["id"])
+            if primary is not None and primary["org_unit_id"] != payload["org_unit_id"]:
+                raise api.reject("HR-409-006", "主组织由主岗派生：请通过任职调整，不得直接改写")
         updates["org_unit_id"] = payload["org_unit_id"]
     if not updates:
         raise api.reject("HR-400-001", "至少提供一个可更新字段")

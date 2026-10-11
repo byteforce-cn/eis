@@ -1,11 +1,12 @@
-# attributes.api.yaml — EIS 授权属性快照 API 契约（Spec v1.0.0 加法演进，MINOR）
+# attributes.api.yaml — EIS 授权属性快照 API 契约（ADR-0004 加法演进，MINOR）
 # 依据：00-freeze/adr/0004-authz-attributes-ownership.md、04-authz-contract/attribute.rules.yaml
+# 版本：工件 info.version=1.0.0（本文件为新增加法工件）；核心发布窗口按 version-policy 统一升版
 # 属主：人事域（extensions/hr）；消费方：授权引擎/ABAC 条件求值/审批条件参与。
 # 语义：按 principal + as_of 返回权威属性快照；失败必须 fail-closed（见 ATR-006）。
 openapi: 3.1.0
 info:
   title: EIS Authorization Attributes API
-  version: 1.0.1
+  version: 1.0.0
   description: |
     主体属性拉取协议（规范路径）：
     - GET /principals/{principal_id}/attributes?as_of=...&recorded_as_of=...
