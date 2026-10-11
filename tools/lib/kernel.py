@@ -174,6 +174,8 @@ class Kernel:
             "id": command_id, "type": cmd_type, "issued_at": ts(self.now()),
             "issuer": principal, "payload": stored_payload, "idempotency_key": idem_key,
             "status": "pending", "event_ids": [],
+            # 幂等指纹基于脱敏前的原始载荷（存储/展示仍为脱敏载荷）
+            "payload_fingerprint": fingerprint,
         }
         self.idem[idem_key] = (fingerprint, command_id)
         self.commands[command_id] = record
@@ -816,6 +818,8 @@ def run_scenario(scenario, report_lines: list[str] | None = None) -> dict:
             "created": result.get("created") or {},
             "result": result,
             "at": at_start,
+            # 保留首次提交的原始（未脱敏）载荷，供幂等重放以同原文重提
+            "payload": command["payload"],
         }
         expect_status = step.get("expect_status", "accepted")
         if result["status"] != expect_status:
@@ -945,7 +949,9 @@ def _run_assertion(kernel: Kernel, assertion: dict, context: dict):
     if kind == "idempotency":
         step = context["steps"][assertion["step"]]
         original = kernel.commands[step["result"]["command_id"]]
-        replay = kernel.submit({"type": original["type"], "payload": original["payload"],
+        # 幂等指纹基于原始载荷：重放必须提交首次的原文，而非脱敏后的存储载荷
+        # （脱敏存储的载荷会被重算出不同指纹，导致凭证类命令被误判 conflict）
+        replay = kernel.submit({"type": original["type"], "payload": step["payload"],
                                 "idempotency_key": original["idempotency_key"]}, original["issuer"])
         if replay["command_id"] != original["id"] or replay.get("replayed") is not True:
             return False, "幂等重放未返回原结果"
@@ -1021,6 +1027,53 @@ def _self_test() -> bool:
     report("selftest 场景全部通过", result["ok"])
     for err in result["errors"]:
         print(f"      {err}")
+
+    # 凭证类命令：脱敏存储不得影响幂等重放（场景断言 idempotency）
+    account_id = "01900000-0000-7000-8000-000000000902"
+    cred_payload = {"account_id": account_id,
+                    "old_secret_hash": "$2a$old-hash", "new_secret_hash": "$2a$new-hash"}
+    cred_fixture = {
+        "scenario": {
+            "id": "kernel.credential-idempotency",
+            "setup": {"objects": [
+                {"type": "iam_user_account", "id": account_id,
+                 "data": {"username": "member", "status": "active"}},
+                {"type": "iam_credential", "id": "01900000-0000-7000-8000-000000000914",
+                 "data": {"account_id": account_id, "type": "password",
+                          "secret_hash": "$2a$old-hash", "status": "active", "must_change": True}},
+            ]},
+            "steps": [
+                {"id": "T1", "actor": account_id, "command": "iam.credential.rotate",
+                 "payload": cred_payload, "events": ["iam.credential.rotated"]},
+            ],
+            "assert": [
+                {"kind": "command-redacted", "step": "T1",
+                 "fields": ["old_secret_hash", "new_secret_hash", "secret_hash"]},
+                {"kind": "idempotency", "step": "T1"},
+            ],
+        }
+    }
+    cred_result = run_scenario(copy.deepcopy(cred_fixture))
+    report("凭证命令幂等重放（脱敏不误判冲突）", cred_result["ok"])
+    for err in cred_result["errors"]:
+        print(f"      {err}")
+
+    # 同键同原文 → replay；同键异原文 → conflict（指纹基于原始载荷）
+    k2 = Kernel()
+    k2.seed("iam_user_account", account_id, {"username": "member", "status": "active"}, account_id)
+    k2.seed("iam_credential", "01900000-0000-7000-8000-000000000914",
+            {"account_id": account_id, "type": "password", "secret_hash": "$2a$old-hash",
+             "status": "active", "must_change": True}, account_id)
+    r1 = k2.submit({"type": "iam.credential.rotate", "payload": dict(cred_payload),
+                    "idempotency_key": "cred-1"}, account_id)
+    report("凭证命令首次受理", r1["status"] == "accepted")
+    r2 = k2.submit({"type": "iam.credential.rotate", "payload": dict(cred_payload),
+                    "idempotency_key": "cred-1"}, account_id)
+    report("同键同原文重放", r2.get("replayed") is True and r2["command_id"] == r1["command_id"])
+    different = dict(cred_payload, new_secret_hash="$2a$other-hash")
+    r3 = k2.submit({"type": "iam.credential.rotate", "payload": different,
+                    "idempotency_key": "cred-1"}, account_id)
+    report("同键不同原文冲突", r3["status"] == "conflict" and r3.get("code") == "EIS-409-001")
 
     # 篡改检出
     kernel = Kernel()
