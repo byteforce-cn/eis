@@ -139,7 +139,7 @@
 - **现状与证据**：`coord-agent/src/services/transit.rs`——`TransitService` 只有一把 `hmac_key`（由主材料 HKDF 派生）；历史材料循环注释明确「仅派生解密用 KEK（不参与加密/HMAC）」；`apis/contracts/proto/coord/transit/v1/transit.proto` 的 `TransitHmacSignRequest` 只有 `data/algorithm`，签名无 key_id，`HmacVerify` 只能按主材料复算。因此 KEK 轮换会让存量 HMAC 全部不可复算；`Rewrap` 只处理 DEK（G-TR-1），HMAC 无迁移路径。
 - **请求的能力**：① `HmacSign/HmacVerify` 增加用途/密钥名参数（按用途派生、互不可验；未声明用途 fail-closed）；② 签名携带 `key_id`（或 `HmacVerify` 接受历史材料/指定 key），给定 key_id 可跨材料轮换复算；③ 轮换口径文档：新签名用主材料、旧签名在历史材料注入期可验，窗口结束 fail-loud；④ 跨 agent 材料一致性要求写入契约。
 - **验收口径**：a) 两把用途密钥互不可验（负控制）；b) 轮换材料后旧签名在历史材料窗口内 `HmacVerify` 为 true，材料下线后 fail-loud（明确错误）；c) 同集群任一 agent 对同一 (用途, data, key_id) 结果一致；d) 文档给出旧材料下线流程与回退路径。
-- **备注**：本项不阻塞 EIS v1——ADR-0005 参考实现采用注入式密钥环（`EIS_FIELD_HASH_KEYS`），coord Transit 仅列为可选平台映射（见 `eis/docs/IMPLEMENTATION.md`）；本项落地后可把域密钥托管切到 transit，契约与用例不变。
+- **备注**：本项不阻塞 EIS v1——ADR-0005 参考实现采用注入式密钥环（`EIS_FIELD_HASH_KEYS`），coord Transit 仅列为可选平台映射（见 `eis/docs/IMPLEMENTATION.md`）；本项落地后可把域密钥托管切到 transit，契约与用例不变。已提 [coord#54](https://github.com/byteforce-cn/coord/issues/54)。
 
 ### G-X-1【P1·文档】消费方路由与鉴权指南
 
