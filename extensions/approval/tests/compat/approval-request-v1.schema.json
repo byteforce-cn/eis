@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/approval/object/approval-request/v1",
+  "title": "ApprovalRequest",
+  "description": "审批申请。核心元字段通过 allOf 引用（冻结）。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["operation", "target", "requester", "status"],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.]*$",
+          "description": "被审批的操作类型，如 \"accounting.voucher.post\""
+        },
+        "target": {
+          "type": "object",
+          "required": ["type", "id"],
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "description": "被审批的目标业务对象"
+        },
+        "requester": {
+          "type": "string",
+          "format": "uuid",
+          "description": "申请人"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "summary": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  ]
+}

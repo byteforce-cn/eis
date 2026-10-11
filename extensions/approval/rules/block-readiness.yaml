@@ -1,0 +1,20 @@
+# rules/block-readiness.yaml — 区块就绪 ⟺ 单据完成（approval v1.0.0）
+rule:
+  id: "approval.block_readiness"
+  name: "全部区块就绪则单据完成"
+  statement: "区块模式下，approval_request.status == approved 当且仅当全部 ApprovalSection.state ∈ (confirmed, not_applicable)；条件不适用的区块以 not_applicable 计为就绪，不阻塞"
+  applies_to:
+    - "operations/section-confirm.openapi.yaml"
+    - "operations/section-reject.openapi.yaml"
+    - "operations/section-complete.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "APR-409-003"
+    error_message: "单据/区块状态不允许该操作: {state}"
+  tests:
+    - name: "最后一个待确认区块确认后单据完成"
+      input: "sections=[hr(confirmed), finance(pending)]，确认 finance"
+      expect: "request.status=approved，事件 approval.request.completed"
+    - name: "不适用区块不阻塞完成"
+      input: "sections=[hr(pending), pm(applicable=false)]，确认 hr"
+      expect: "request.status=approved"

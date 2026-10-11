@@ -1,0 +1,18 @@
+# rules/withdraw-timing.yaml — 撤回时序（approval v1.0.0）
+rule:
+  id: "approval.withdraw_timing"
+  name: "无人确认前可撤回"
+  statement: "发起方仅在单据 pending 且没有任何区块 confirmed 时可 withdraw；一旦有区块确认，撤回必须被拒绝（打回后重提是唯一回退路径）"
+  applies_to:
+    - "operations/request-withdraw.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "APR-409-005"
+    error_message: "已有 {count} 个区块确认，不可撤回"
+  tests:
+    - name: "无人确认可撤回"
+      input: "sections 全部 pending/not_applicable，requester 撤回"
+      expect: "accepted，request.status=withdrawn"
+    - name: "有人确认后撤回必须拒绝"
+      input: "sections=[hr(confirmed)]，requester 撤回"
+      expect: "rejected code=APR-409-005"

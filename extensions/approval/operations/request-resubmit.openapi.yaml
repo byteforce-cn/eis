@@ -1,0 +1,61 @@
+# operations/request-resubmit.openapi.yaml — 申请 — 重提（approval v1.0.0 加法演进）
+# 遵循核心命令 API 元结构：02-operation-contract/command.openapi.yaml
+openapi: 3.1.0
+info:
+  title: 审批域 — 申请 — 重提
+  version: 1.0.1
+  description: '命令 approval.request.resubmit。
+
+    打回后由发起方重提：全部已确认/已打回区块重置为 pending（不得残留已确认区块）。
+
+    事件：approval.request.resubmitted'
+paths:
+  /commands/approval.request.resubmit:
+    post:
+      operationId: resubmitRequest
+      summary: 申请 — 重提
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResubmitRequestCommand'
+      responses:
+        '202':
+          description: 已接受
+        '400':
+          description: 参数非法
+        '403': APR-403-003 仅发起方可重提
+        '409':
+          description: APR-409-002 非区块流程 / APR-409-004 仅已驳回单据可重提 / EIS-409-001 幂等冲突
+components:
+  schemas:
+    ResubmitRequestCommand:
+      type: object
+      required:
+      - type
+      - payload
+      - idempotency_key
+      properties:
+        type:
+          type: string
+          const: approval.request.resubmit
+        payload:
+          type: object
+          required:
+          - request_id
+          properties:
+            request_id:
+              type: string
+              format: uuid
+            comment:
+              type:
+              - string
+              - 'null'
+        idempotency_key:
+          type: string
+        targets:
+          type: array
+          items:
+            type: string
+            format: uuid

@@ -1,0 +1,18 @@
+# rules/resubmit-reset.yaml — 重提后全部重新确认（approval v1.0.0）
+rule:
+  id: "approval.resubmit_reset"
+  name: "重提后不得存在已确认区块"
+  statement: "approval.request.resubmit 仅适用于 rejected 单据；重提时全部 confirmed/rejected 区块必须重置为 pending（not_applicable 保持不适用），确保所有节点重新确认"
+  applies_to:
+    - "operations/request-resubmit.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "APR-409-004"
+    error_message: "仅已驳回单据可重提: {status}"
+  tests:
+    - name: "打回后重提清空确认"
+      input: "sections=[hr(confirmed), finance(rejected)]，resubmit"
+      expect: "两个区块均为 pending，request.status=pending"
+    - name: "未驳回不可重提"
+      input: "request.status=pending"
+      expect: "rejected code=APR-409-004"

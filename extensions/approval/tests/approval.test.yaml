@@ -6,12 +6,21 @@ x-common:
     principals:
       - {id: "01900000-0000-7000-8000-000000000501", type: person, key: buyer, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
       - {id: "01900000-0000-7000-8000-000000000502", type: person, key: manager, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000503", type: person, key: hr_owner, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000504", type: person, key: fin_owner, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000505", type: system, key: sys_bot, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
     roles:
-      - {id: "01900000-0000-7000-8000-0000000005a1", key: requester, permissions: [approval.request.submit, approval.request.decide], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000005a1", key: requester, permissions: [approval.request.submit, approval.request.decide, approval.request.resubmit, approval.request.withdraw], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
       - {id: "01900000-0000-7000-8000-0000000005a2", key: approver, permissions: [approval.request.decide], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000005a3", key: hr-confirmer, permissions: [approval.section.confirm.hr], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000005a4", key: fin-confirmer, permissions: [approval.section.confirm.finance], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000005a5", key: sys-writer, permissions: [approval.section.complete], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
     bindings:
       - {id: "01900000-0000-7000-8000-0000000005b1", principal: "01900000-0000-7000-8000-000000000501", role: "01900000-0000-7000-8000-0000000005a1", scope: {department: D001}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
       - {id: "01900000-0000-7000-8000-0000000005b2", principal: "01900000-0000-7000-8000-000000000502", role: "01900000-0000-7000-8000-0000000005a2", scope: {department: D001}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000005b3", principal: "01900000-0000-7000-8000-000000000503", role: "01900000-0000-7000-8000-0000000005a3", scope: {department: D001}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000005b4", principal: "01900000-0000-7000-8000-000000000504", role: "01900000-0000-7000-8000-0000000005a4", scope: {department: D001}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000005b5", principal: "01900000-0000-7000-8000-000000000505", role: "01900000-0000-7000-8000-0000000005a5", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
 
 tests:
   - name: "提交与审批通过（他人审批）"
@@ -86,3 +95,251 @@ tests:
       assert:
         - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: approved}
         - {kind: audit-chain, expect: valid, min_entries: 2}
+
+  - name: "区块正常流转：全部就绪则单据完成"
+    kind: scenario
+    scenario:
+      id: approval.section-flow
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c201"}
+            sections:
+              - {key: master, title: 员工主数据, owner: hr}
+              - {key: cost, title: 成本与薪酬, owner: finance}
+              - {key: account, title: 建号与权限, owner: system}
+          events: [approval.request.submitted]
+        - id: T2
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.master}"}
+          events: [approval.section.confirmed]
+        - id: T3
+          actor: fin_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.cost}"}
+          events: [approval.section.confirmed]
+        - id: T4
+          actor: sys_bot
+          command: approval.section.complete
+          payload: {section_id: "${steps.T1.created.sections.account}"}
+          events: [approval.section.completed, approval.request.completed]
+      assert:
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: approved}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.master}", field: state, expect: confirmed}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.cost}", field: state, expect: confirmed}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.account}", field: state, expect: confirmed}
+        - {kind: audit-chain, expect: valid, min_entries: 4}
+
+  - name: "条件不适用（not_applicable）不阻塞完成"
+    kind: scenario
+    scenario:
+      id: approval.section-not-applicable
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c202"}
+            sections:
+              - {key: master, title: 员工主数据, owner: hr}
+              - {key: project, title: 项目归属, owner: pm, applicable: false}
+          events: [approval.request.submitted]
+        - id: T2
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.master}"}
+          events: [approval.section.confirmed, approval.request.completed]
+      assert:
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: approved}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.project}", field: state, expect: not_applicable}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.project}", field: applicable, expect: false}
+
+  - name: "重提后不得残留已确认区块"
+    kind: scenario
+    scenario:
+      id: approval.resubmit-reset
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c203"}
+            sections:
+              - {key: master, title: 员工主数据, owner: hr}
+              - {key: cost, title: 成本与薪酬, owner: finance}
+        - id: T2
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.master}"}
+        - id: T3
+          actor: fin_owner
+          command: approval.section.reject
+          payload: {section_id: "${steps.T1.created.sections.cost}", comment: 成本口径不符}
+          events: [approval.section.rejected, approval.request.rejected]
+        - id: T4
+          actor: buyer
+          command: approval.request.resubmit
+          payload: {request_id: "${steps.T1.created.id}"}
+          events: [approval.request.resubmitted]
+      assert:
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: pending}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.master}", field: state, expect: pending}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.master}", field: confirmer, expect: null}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.cost}", field: state, expect: pending}
+        - {kind: events, absent: [approval.request.completed]}
+
+  - name: "打回→重提→全部重新确认后完成"
+    kind: scenario
+    scenario:
+      id: approval.resubmit-recomplete
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c204"}
+            sections:
+              - {key: master, title: 员工主数据, owner: hr}
+              - {key: cost, title: 成本与薪酬, owner: finance}
+        - id: T2
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.master}"}
+        - id: T3
+          actor: fin_owner
+          command: approval.section.reject
+          payload: {section_id: "${steps.T1.created.sections.cost}"}
+        - id: T4
+          actor: buyer
+          command: approval.request.resubmit
+          payload: {request_id: "${steps.T1.created.id}"}
+        - id: T5
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.master}"}
+        - id: T6
+          actor: fin_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.cost}"}
+          events: [approval.section.confirmed, approval.request.completed]
+      assert:
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: approved}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.master}", field: state, expect: confirmed}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.cost}", field: state, expect: confirmed}
+        - {kind: audit-chain, expect: valid, min_entries: 6}
+
+  - name: "有人确认后撤回必须拒绝"
+    kind: scenario
+    scenario:
+      id: approval.withdraw-after-confirm
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c205"}
+            sections:
+              - {key: master, title: 员工主数据, owner: hr}
+              - {key: cost, title: 成本与薪酬, owner: finance}
+        - id: T2
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.master}"}
+        - id: T3
+          actor: buyer
+          command: approval.request.withdraw
+          payload: {request_id: "${steps.T1.created.id}"}
+          expect_status: rejected
+          expect_code: APR-409-005
+      assert:
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: pending}
+        - {kind: events, absent: [approval.request.withdrawn]}
+
+  - name: "无人确认前可撤回"
+    kind: scenario
+    scenario:
+      id: approval.withdraw-before-confirm
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c206"}
+            sections:
+              - {key: master, title: 员工主数据, owner: hr}
+        - id: T2
+          actor: buyer
+          command: approval.request.withdraw
+          payload: {request_id: "${steps.T1.created.id}", reason: 信息有误}
+          events: [approval.request.withdrawn]
+      assert:
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: withdrawn}
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: withdrawn_reason, expect: 信息有误}
+
+  - name: "区块属主不匹配必须拒绝（APR-403-002）"
+    kind: scenario
+    scenario:
+      id: approval.section-owner-mismatch
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c207"}
+            sections:
+              - {key: cost, title: 成本与薪酬, owner: finance}
+        - id: T2
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.cost}"}
+          expect_status: rejected
+          expect_code: APR-403-002
+      assert:
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.cost}", field: state, expect: pending}
+
+  - name: "区块流程不得走简单 decide（APR-409-002）"
+    kind: scenario
+    scenario:
+      id: approval.decide-on-block
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c208"}
+            sections:
+              - {key: master, title: 员工主数据, owner: hr}
+        - id: T2
+          actor: manager
+          command: approval.request.decide
+          payload: {request_id: "${steps.T1.created.id}", outcome: approve}
+          expect_status: rejected
+          expect_code: APR-409-002
+      assert:
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: pending}
+
+  - name: "区块级加法演进对 ApprovalRequest 判定 MINOR"
+    kind: compat
+    old: extensions/approval/tests/compat/approval-request-v1.schema.json
+    new: extensions/approval/objects/approval-request.schema.json
+    expect_level: MINOR
+    expect_kinds: ["可选字段新增", "枚举取值扩展"]

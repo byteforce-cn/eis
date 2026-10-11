@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: 审批域 — 审批决定
-  version: 1.0.0
+  version: 1.0.1
   description: |
     命令 approval.request.decide：对审批申请作出决定。
     校验：

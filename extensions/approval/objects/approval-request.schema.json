@@ -37,7 +37,20 @@
         },
         "status": {
           "type": "string",
-          "enum": ["pending", "approved", "rejected"]
+          "enum": ["pending", "approved", "rejected", "withdrawn"],
+          "description": "状态：待审 / 通过 / 驳回 / 发起方撤回"
+        },
+        "section_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "区块级流转关联的 ApprovalSection ID（简单模式省略）"
+        },
+        "withdrawn_reason": {
+          "type": ["string", "null"],
+          "description": "撤回原因（仅 withdrawn 时有意义）"
         },
         "summary": {
           "type": ["string", "null"]

@@ -10,7 +10,7 @@ composition:
     - id: "inventory"
       version: "1.0.0"
     - id: "approval"
-      version: "1.0.0"
+      version: "1.0.1"
 
   conflicts: []
 

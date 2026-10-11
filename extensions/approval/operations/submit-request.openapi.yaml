@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: 审批域 — 提交申请
-  version: 1.0.0
+  version: 1.0.1
   description: |
     命令 approval.request.submit：提交审批申请（operation + target）。
     事件：approval.request.submitted
@@ -54,5 +54,25 @@ components:
                   format: uuid
             summary:
               type: [string, 'null']
+            sections:
+              type: array
+              description: |
+                新区块级流转（可选，加法演进）：按属主分区确认。
+                区块属主权限标识 approval.section.confirm.<owner>；
+                applicable=false 表示条件不适用（state=not_applicable，不阻塞完成）。
+              items:
+                type: object
+                required: [key, title, owner]
+                properties:
+                  key:
+                    type: string
+                    pattern: '^[a-z][a-z0-9_-]*$'
+                  title:
+                    type: string
+                  owner:
+                    type: string
+                  applicable:
+                    type: boolean
+                    default: true
         idempotency_key:
           type: string

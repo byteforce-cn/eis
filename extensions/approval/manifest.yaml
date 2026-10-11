@@ -2,7 +2,7 @@
 extension:
   id: "approval"
   name: "审批域扩展"
-  version: "1.0.0"
+  version: "1.0.1"
   core_version: "1.0.0"
 
   dependencies: []
@@ -13,17 +13,41 @@ extension:
       schema: "objects/approval-request.schema.json"
     - name: "ApprovalDecision"
       schema: "objects/approval-decision.schema.json"
+    - name: "ApprovalSection"
+      schema: "objects/approval-section.schema.json"
 
   operations:
     - name: "submitRequest"
       contract: "operations/submit-request.openapi.yaml"
     - name: "decideRequest"
       contract: "operations/decide.openapi.yaml"
+    - name: "confirmSection"
+      contract: "operations/section-confirm.openapi.yaml"
+    - name: "rejectSection"
+      contract: "operations/section-reject.openapi.yaml"
+    - name: "completeSection"
+      contract: "operations/section-complete.openapi.yaml"
+    - name: "resubmitRequest"
+      contract: "operations/request-resubmit.openapi.yaml"
+    - name: "withdrawRequest"
+      contract: "operations/request-withdraw.openapi.yaml"
 
   rules:
     - name: "no_self_approval"
       file: "rules/no-self-approval.yaml"
+    - name: "block_readiness"
+      file: "rules/block-readiness.yaml"
+    - name: "resubmit_reset"
+      file: "rules/resubmit-reset.yaml"
+    - name: "withdraw_timing"
+      file: "rules/withdraw-timing.yaml"
 
   invariants:
     - name: "禁止自审"
       expression: "decision.decider != request.requester"
+    - name: "全部区块就绪 ⟺ 单据完成"
+      expression: "request.status == approved implies all(section.state in (confirmed, not_applicable))"
+    - name: "重提后不得存在已确认区块"
+      expression: "after request.resubmit: forall(section, section.state != confirmed)"
+    - name: "无人确认前可撤回"
+      expression: "request.withdraw allowed iff no section.state == confirmed"
