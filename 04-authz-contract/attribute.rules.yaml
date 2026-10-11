@@ -46,6 +46,12 @@ attribute_rules:
     statement: "属性条件求值不匹配时拒绝，reason_code=ATTRIBUTE_MISMATCH；拒绝原因必须包含未满足的条件键（不得泄漏敏感属性值全文，必要时脱敏）。"
     error_code: "ATTRIBUTE_MISMATCH"
 
+  - id: "ATR-008"
+    name: "属性端点仅限服务间调用"
+    level: "MUST"
+    statement: "GET /principals/{id}/attributes 是判定链路内部协议：调用方必须是受信后端服务（授权引擎、审批条件求值、域服务），以服务身份（system principal）认证并持有属主声明的 hr.attributes.read；不得经 BFF/SPA 暴露给浏览器会话；无权限/身份不符必须 fail-closed（401/403），不得降级为匿名或用户可读。"
+    error_code: "ATTRIBUTE_CALLER_VIOLATION"
+
 snapshot_lifecycle:
   states:
     - { state: "fresh", meaning: "快照在有效期内，可用于条件求值" }

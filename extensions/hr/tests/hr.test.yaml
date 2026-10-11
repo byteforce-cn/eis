@@ -466,3 +466,64 @@ tests:
         - {kind: object-count, type: hr_provisioning_task, where: {employee_id: "${steps.T1.created.id}"}, expect: 1}
         - {kind: object-field, type: hr_provisioning_task, id: "${steps.T3.created.id}", field: status, expect: succeeded}
         - {kind: object-field, type: hr_provisioning_task, id: "${steps.T3.created.id}", field: attempts, expect: "1"}
+
+  # ---- 读取面权限目录（ADR-0006）：声明即判据，参考实现按声明执行 ----
+  - name: "读取面权限：hr.employee.read 授予具备该权限的角色"
+    kind: authz
+    fixture: extensions/hr/tests/fixtures-authz.yaml
+    op: check
+    principal: hr-admin
+    permission: hr.employee.read
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: true
+
+  - name: "读取面权限：无权限主体拒绝（fail-closed）"
+    kind: authz
+    fixture: extensions/hr/tests/fixtures-authz.yaml
+    op: check
+    principal: hr-employee
+    permission: hr.employee.read
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: false
+    expect_code: NO_PERMISSION
+
+  - name: "属性快照仅限服务间：系统主体允许"
+    kind: authz
+    fixture: extensions/hr/tests/fixtures-authz.yaml
+    op: check
+    principal: hr-service
+    permission: hr.attributes.read
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: true
+
+  - name: "属性快照仅限服务间：用户主体拒绝"
+    kind: authz
+    fixture: extensions/hr/tests/fixtures-authz.yaml
+    op: check
+    principal: hr-admin
+    permission: hr.attributes.read
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: false
+    expect_code: NO_PERMISSION
+
+  - name: "同部门范围（ABAC）：属性条件匹配允许"
+    kind: authz
+    fixture: extensions/hr/tests/fixtures-authz.yaml
+    op: check
+    principal: hr-admin
+    permission: hr.employee.read
+    as_of: "2026-10-15T12:00:00Z"
+    require_attributes: {primary_position.org_unit_code: D001}
+    expect_allowed: true
+    expect_attribute_state: fresh
+
+  - name: "同部门范围（ABAC）：属性条件不匹配拒绝"
+    kind: authz
+    fixture: extensions/hr/tests/fixtures-authz.yaml
+    op: check
+    principal: hr-admin
+    permission: hr.employee.read
+    as_of: "2026-10-15T12:00:00Z"
+    require_attributes: {primary_position.org_unit_code: D999}
+    expect_allowed: false
+    expect_code: ATTRIBUTE_MISMATCH

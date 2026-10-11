@@ -93,3 +93,14 @@ python3 tools/e2e-runner extensions/hr/tests/hr.test.yaml
 - 快照形状：`primary_position`（单值主岗）+ `positions`（多岗集合）+ `organization_units` + `reporting_chain`；
 - 属性缺失/过期/属主不可达由消费方 fail-closed（ATR-006），本域不提供“默认可放行”路径；
 - 参考实现：`tools/authz-resolver attributes` 与 `--require-attribute`（夹具见 `04-authz-contract/tests/fixtures-attributes.yaml`）。
+
+## 9. 读取面权限（ADR-0006）
+
+`manifest.yaml` 的 `permissions` 是唯一权限来源（11 命令 + 2 读取）：
+
+- `hr.employee.read`（read）：名册/详情读取；`scope: same_department` 为可选 ABAC 条件
+  （读取方主组织 = 目标员工主组织，用 04 属性快照求值）；未声明条件即全量读取，需显式授予；
+- `hr.attributes.read`（service）：属性快照仅限服务间（system principal），不得授予用户会话，
+  不得经 BFF/SPA 暴露（ATR-008）；
+- 消费方（ims-hr）按声明接入 `/check`，不得自造权限标识；判定用例见 `tests/fixtures-authz.yaml`
+  与 `hr.test.yaml` 的 `kind: authz` 用例。

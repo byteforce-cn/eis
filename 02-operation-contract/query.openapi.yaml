@@ -11,6 +11,12 @@ info:
     - recorded_as_of：返回系统记录时间切点处的版本
     - 组合使用：双时间轴联合查询
 
+    读面授权口径（ADR-0006）：
+    - 本通用查询 API 是内部/服务面，由资源服务器认证 + 部署网络策略保护，不设域级 permission；
+      部署方不得直接暴露给浏览器；
+    - 领域扩展的自有读面必须在 manifest.permissions 声明 read 权限并经 /check 判定；
+      消费方只使用契约声明的权限标识。
+
 paths:
   /objects/{objectType}/{id}:
     get:

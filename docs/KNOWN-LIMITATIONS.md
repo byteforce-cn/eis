@@ -106,7 +106,9 @@
 - 【已核实】多租户隔离：`01-data-contract/object.schema.json` 无 tenant/租户字段。
 - 【已核实】outbox 投递语义：仅见于落地文档（`docs/LANDING-IAM.md` §3.4.2），非契约。
 - 【已核实】状态机：对象契约无状态迁移约束，状态流转由内核按业务域手写。
-- 【已核实】权限目录：`04-authz-contract` 定义主体/角色/绑定/代理，不含权限项目录（catalog）。
+- 【已核实】权限目录：`04-authz-contract` 定义主体/角色/绑定/代理，不含**全局**权限项目录；
+  扩展级目录已由 ADR-0006 落地（`manifest.permissions`，`hr` 已声明 11 命令 + 2 读取权限，
+  由 `contract-checker` 校验未声明引用）；核心通用查询 API 仍以部署边界保护，无域级 permission。
 - 【已核实】数据分类与留存：无分类分级/留存期元数据。
 
 - 影响：这些能力需实现方在扩展或实现层自行设计。

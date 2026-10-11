@@ -27,6 +27,7 @@ extensions/{domain}/
 | `operations` | 操作清单（name → 契约路径） |
 | `rules` | 业务规则清单（name → 文件路径） |
 | `invariants` | 不变量（name → 表达式） |
+| `permissions` | 权限目录（可选；`command`/`read`/`service`，见 §7） |
 
 所有清单项引用的文件必须存在（引用完整性由组合校验检查）。
 
@@ -112,3 +113,22 @@ def handle_action(api, payload, actor, command_id):
   `api.check_permission` 做细粒度判定（如区块属主权限）。
 
 加载按扩展目录名排序；命令处理器重复注册会立即报错（快速失败）。
+
+## 7. 权限目录（manifest.permissions，ADR-0006）
+
+扩展（含读取面）的权限标识必须在 manifest 声明，消费方与参考实现只使用已声明的标识：
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 全局唯一，必须以 `<extension.id>.` 开头（如 `hr.employee.read`） |
+| `kind` | `command`（命令）/ `read`（读取面）/ `service`（仅服务间，如属性快照拉取） |
+| `description` | 权限语义（中文一句话） |
+| `scope` | 可选：行级范围语义（如 `same_department`），以属性快照 ABAC 条件求值（ADR-0004） |
+
+纪律：
+
+- 未声明即不可用：消费方不得自造 `<extension>.*` 权限；测试中引用的权限必须全部在目录内
+  （`tools/contract-checker` 校验，未声明引用即失败）；
+- 读取面接入 `/check`（fail-closed）；命令面沿用内核命令级预检；
+- `kind: service` 的权限不得授予用户会话或经 BFF/SPA 暴露；
+- 核心通用查询 API 由部署边界保护，不要求域级权限（ADR-0006）。

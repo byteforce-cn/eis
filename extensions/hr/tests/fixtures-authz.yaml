@@ -1,0 +1,47 @@
+# 授权夹具（hr 读取面，ADR-0006）：读取权限目录的可执行判据。
+# - hr-admin：人事管理员（person，有 hr.employee.read；带属性快照演示 same_department 条件）；
+# - hr-employee：普通员工（person，无读取权限）→ 必须拒绝；
+# - hr-service：系统主体（system，有 hr.attributes.read）→ 属性快照仅服务间可拉取。
+fixtures:
+  principals:
+    - {id: "01900000-0000-7000-8000-000000000d01", type: person, key: hr-employee, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    - {id: "01900000-0000-7000-8000-000000000d02", type: person, key: hr-admin, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    - {id: "01900000-0000-7000-8000-000000000d03", type: system, key: hr-service, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+
+  roles:
+    - {id: "01900000-0000-7000-8000-000000000da1", key: hr-admin, permissions: [hr.employee.read], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    - {id: "01900000-0000-7000-8000-000000000da2", key: hr-service, permissions: [hr.attributes.read], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+
+  bindings:
+    - {id: "01900000-0000-7000-8000-000000000db1", principal: "01900000-0000-7000-8000-000000000d02", role: "01900000-0000-7000-8000-000000000da1", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    - {id: "01900000-0000-7000-8000-000000000db2", principal: "01900000-0000-7000-8000-000000000d03", role: "01900000-0000-7000-8000-000000000da2", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+
+  attributes:
+    - principal: "hr-admin"
+      as_of: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+      expires_at: "2030-01-01T00:00:00Z"
+      source: "hr"
+      source_version: "1.0.0"
+      snapshot:
+        employee_status: "active"
+        employment_type: "full_time"
+        primary_position:
+          position_id: "01900000-0000-7000-8000-000000000dd1"
+          code: "P001"
+          title: "人事专员"
+          grade: "P5"
+          org_unit_id: "01900000-0000-7000-8000-000000000de1"
+          org_unit_code: "D001"
+          is_primary: true
+        positions:
+          - position_id: "01900000-0000-7000-8000-000000000dd1"
+            code: "P001"
+            title: "人事专员"
+            grade: "P5"
+            org_unit_id: "01900000-0000-7000-8000-000000000de1"
+            org_unit_code: "D001"
+            is_primary: true
+        organization_units:
+          - { id: "01900000-0000-7000-8000-000000000de1", code: "D001", name: "人力资源部", unit_type: "department" }
+        reporting_chain: ["01900000-0000-7000-8000-000000000dd1"]

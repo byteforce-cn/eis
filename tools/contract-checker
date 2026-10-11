@@ -336,9 +336,67 @@ def check_error_codes(report: Report) -> None:
         report.ok(f"{rel(path)}: 错误码检查（{len(seen)} 个）")
 
 
-def check_manifests(report: Report) -> None:
+PERMISSION_KINDS = {"command", "read", "service"}
+PERMISSION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
+
+
+def collect_permission_refs(node, refs: set) -> None:
+    """递归收集测试文档中的 permission / permissions 引用。"""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "permission" and isinstance(value, str):
+                refs.add(value)
+            elif key == "permissions" and isinstance(value, list):
+                refs.update(v for v in value if isinstance(v, str))
+            else:
+                collect_permission_refs(value, refs)
+    elif isinstance(node, list):
+        for item in node:
+            collect_permission_refs(item, refs)
+
+
+def check_manifest_permissions(path: Path, ext_id: str, ext: dict) -> list[str]:
+    """校验扩展权限目录（若声明）：命名空间/唯一性/kind/描述，以及测试引用不得自造。"""
+    problems: list[str] = []
+    perms = ext.get("permissions")
+    if perms is None:
+        return problems
+    if not isinstance(perms, list):
+        return ["permissions 必须为数组"]
+    ids: set[str] = set()
+    for entry in perms:
+        if not isinstance(entry, dict):
+            problems.append(f"permissions 条目必须为对象: {entry!r}")
+            continue
+        pid = entry.get("id")
+        if not isinstance(pid, str) or not pid:
+            problems.append(f"permissions 条目缺 id: {entry!r}")
+            continue
+        if not pid.startswith(f"{ext_id}."):
+            problems.append(f"权限 id 必须以扩展命名空间 {ext_id}. 开头: {pid}")
+        if not PERMISSION_ID_RE.match(pid):
+            problems.append(f"权限 id 命名不合规: {pid}")
+        if pid in ids:
+            problems.append(f"权限 id 重复: {pid}")
+        ids.add(pid)
+        if entry.get("kind") not in PERMISSION_KINDS:
+            problems.append(f"权限 {pid} 的 kind 非法（command/read/service）: {entry.get('kind')!r}")
+        if not entry.get("description"):
+            problems.append(f"权限 {pid} 缺少 description")
+    used: set[str] = set()
+    tests_dir = path.parent / "tests"
+    if tests_dir.is_dir():
+        for test_path in sorted(tests_dir.glob("*.yaml")):
+            collect_permission_refs(load_yaml(test_path), used)
+    undeclared = sorted(p for p in used if p not in ids)
+    if undeclared:
+        problems.append(f"测试引用了未声明的权限: {undeclared}")
+    return problems
+
+
+def check_manifests(report: Report, root: Path = ROOT) -> dict:
     manifests: dict[str, dict] = {}
-    for path in sorted((ROOT / "extensions").glob("*/manifest.yaml")):
+    for path in sorted((root / "extensions").glob("*/manifest.yaml")):
         doc = load_yaml(path)
         ext = doc.get("extension", {})
         problems = []
@@ -356,6 +414,8 @@ def check_manifests(report: Report) -> None:
                 ref_file = entry.get("schema") or entry.get("contract") or entry.get("file")
                 if ref_file and not (path.parent / ref_file).exists():
                     problems.append(f"{section} 引用不存在: {ref_file}")
+        if ext_id:
+            problems.extend(check_manifest_permissions(path, ext_id, ext))
         if problems:
             report.fail(f"{rel(path)}: 扩展清单检查", "\n".join(problems))
         else:
@@ -477,6 +537,35 @@ def cmd_self_test(args) -> int:
             report.ok("自测：非保留字字段不受影响")
         else:
             report.fail("自测：非保留字字段被误拒绝")
+
+    # 扩展权限目录：未声明引用必须被拒；非命名空间 id 必须被拒
+    import tempfile as _tempfile
+
+    import yaml as _yaml
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        ext_dir = Path(tmp) / "extensions" / "demo"
+        (ext_dir / "tests").mkdir(parents=True)
+        (ext_dir / "manifest.yaml").write_text(
+            _yaml.safe_dump({
+                "extension": {
+                    "id": "demo", "version": "1.0.0", "core_version": "1.0.0",
+                    "permissions": [
+                        {"id": "demo.thing.read", "kind": "read", "description": "读事物"},
+                        {"id": "other.thing.read", "kind": "read", "description": "越界"},
+                    ],
+                },
+            }, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        (ext_dir / "tests" / "demo.test.yaml").write_text(
+            _yaml.safe_dump({"tests": [{"kind": "authz", "permission": "demo.thing.write"}]},
+                            allow_unicode=True, sort_keys=False), encoding="utf-8")
+        tmp_report = Report("tmp")
+        check_manifests(tmp_report, root=Path(tmp))
+        detail = "\n".join(str(d) for _, _, d in tmp_report.failures)
+        if tmp_report.success or "未声明" not in detail or "命名空间" not in detail:
+            report.fail("自测：扩展权限目录校验未生效（应报未声明引用与非命名空间 id）")
+        else:
+            report.ok("自测：扩展权限未声明引用与非命名空间 id 被拒")
     report.print()
     return 0 if report.success else 1
 
