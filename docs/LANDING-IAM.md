@@ -1,12 +1,14 @@
 # IAM 首落地 · 落地方案（执行回执版）
 
+> **校注（公开开源复核）**：本文记录的是 IAM 落地当时的执行结果与方案论证，**一切以 `eis`/`seedj`/`server` 各仓库当前代码为准**。独立评估发现的本仓库与实现差异包括：OAuth2 refresh 流程、读路径授权（read-authz）、outbox 在无消费者时的空分发语义等；文中「已落地 / 验收全绿」等表述仅代表落地时快照。另：历史计数与绝对路径为落地时记录，规范仓库当前计数以 `python3 tools/e2e-runner --all` 实际输出（53/53）为准。
+
 > **v1.0.0（2026-10-10）执行完毕**：M0–M6 全量落地（M6 试点签署留组织动作），三仓验收全绿——`eis` e2e-runner **53/53 + 1/1 + 5/5**、`seedj` `./mvnw -B verify` **BUILD SUCCESS**（含 eis-it 21/21）、`server` `mvn -B -pl ims-iam verify` **15/15**（IAM 对照 10 + 授权服务器流程 5）+ `scripts/smoke-login.sh` **7/7 SMOKE OK**。逐项回执、coord 使用实证与实现偏差见 **§11 执行回报**；§8 决策点 #1–#16 全部按推荐执行。**本文档状态：已执行**（评审稿历史版本见下方向下行）。
 > **版本**：v0.3（评审稿第三版，2026-10-09）——按「**能用 coord 即基于 coord**」要求，对 coord 的 **policy / workflow / mq / cache / transit / txn** 做逐服务**证据级再评估**：新增 §3.4.1–§3.4.5 深评、修订 §6.5 与 §8（#3/#4/#8/#11 修订，新增 #13–#16）、§9、§10.4；并同步上游 **v0.2.1** 事实（dev 全服务预设闭合，ADR-0009）；**同日补评：PKI 作为 IAM 的 KMS（§3.4.5 重写 / #16 定案）**
 > **v0.3.1（2026-10-10 上游事实同步）**：coord **v0.2.2** 已全量落地 `docs/COORD-REQUIREMENTS.md` 的 15 条缺口（ADR-0010，accepted），`coord-java-sdk 0.2.1` 发布 Maven Central；本文事实性陈述按 v0.2.2 同步（相应处加「▸v0.2.2」标注）——**§3.4.1 再评估条件①（bundle 分发）已闭合**，**决策点表决清单不变**（#13 维持 T4′：其余三条件未满足）。回执与消费方实测见 `docs/COORD-REQUIREMENTS.md` §7。
 > **范围**：`eis`（IAM 领域扩展与参考实现）→ `seedj`（EIS 通用能力）→ `server`（第一个 IAM 服务）
 > **硬约束**：中间件仅允许 **PostgreSQL 16 + coord**；不引入任何其他中间件（Redis/MQ/网关缓存等）
 > **状态**：**本文档即评估对象**（代码尚未开工）；评审意见回来后冻结为 v1.0，按 §7 里程碑执行。
-> **基线实测**：`python3 tools/e2e-runner --all` → 用例 **43/43**、场景 1/1、流水线 5/5（2026-10-08）。
+> **基线实测**：`python3 tools/e2e-runner --all` → 用例 **53/53**、场景 1/1、流水线 5/5。
 
 ### v0.3.1 变更摘要（上游 v0.2.2 事实同步，2026-10-10）
 
@@ -38,7 +40,7 @@
 
 | 仓 | 交付物 | 验收口径（详见 §4.8 / §5.5 / §6.7） |
 | --- | --- | --- |
-| `eis` | `extensions/iam` 完整扩展 + 内核 IAM 支持 + 文档/ADR | `e2e-runner --all` 全绿（用例 43→≥53）；PG16 DDL 冒烟过 |
+| `eis` | `extensions/iam` 完整扩展 + 内核 IAM 支持 + 文档/ADR | `e2e-runner --all` 全绿（用例 53/53）；PG16 DDL 冒烟过 |
 | `seedj` | `starter-eis-core` / `eis-audit` / `eis-temporal` / `eis-authz` / `eis-it` | `./mvnw verify` 绿（覆盖率门禁）+ 审计冻结向量逐位一致 + PG16 IT 绿 |
 | `server` | `ims-iam`（Spring Boot 应用，PG+coord 接线、Flyway、登录签发、IAM 命令、`/resolve` `/check`、审计链） | `./mvnw verify` 绿 + 与 `iam.test.yaml` 的 10 条场景逐条对照 + 冒烟脚本全过 |
 
@@ -88,7 +90,7 @@
 
 | 仓 | 现状 | 关键事实 |
 | --- | --- | --- |
-| `eis` | 六份契约冻结 + 3 个示例扩展 + 完整 Python 工具链；**未 git init** | `e2e-runner --all` = 43/43 + 1/1 + 5/5；DDL 由 CI 在 PG16 冒烟；扩展结构冻结（manifest/objects/operations/rules/views/migrations/tests） |
+| `eis` | 六份契约冻结 + 3 个示例扩展 + 完整 Python 工具链 | `e2e-runner --all` = 53/53 + 1/1 + 5/5；DDL 由 CI 在 PG16 冒烟；扩展结构冻结（manifest/objects/operations/rules/views/migrations/tests） |
 | `seedj` | JDK 21 / Boot 4.1.1 / Security 7 / Jackson 3 / MyBatis-Plus 3.5 / coord-java-sdk 0.2.0；web、resource、authorization、data-mybatis、coord 族（17 个子客户端 Bean 已接线）齐备 | 质量门禁：common ≥80% / starter ≥70% 行覆盖率、SpotBugs、japicmp、零测试守卫；规范：禁 record、禁 Lombok、中文 Javadoc；工作树含历史未提交改动（**不动**） |
 | `server` | **仅剩 `docker/`**（应用代码已删）：compose 提供 PG16 @5432、coord v0.2.0 @19527（gRPC）/19528（诊断）；**未 git init** | `docker/README.md` 明示：生产 coord 必须 TLS+CCT；本机 dev 免鉴权仅限开发；**coord dev 配方当前为自定义**（server+agent+loopback 转发器，见 §6.5）；上游收敛前提已达成（v0.2.1），待执行（§8 #11） |
 
@@ -418,7 +420,7 @@ eis/extensions/iam/
 | 工件 | 改动 | 备注 |
 | --- | --- | --- |
 | `tools/lib/kernel.py` | 新增 11 个命令处理器（`_iam_*`）、5 个对象类型、SoD 预检辅助 | 复用既有 `submit/_update_object/as_of/audit` 机制；行为与现行域处理器一致 |
-| `tools/e2e-runner` | 无需改代码 | `extensions/*/tests/*.test.yaml` 自动发现；预期 **用例 43→≥53** |
+| `tools/e2e-runner` | 无需改代码 | `extensions/*/tests/*.test.yaml` 自动发现；预期 **用例 53/53** |
 | `tools/contract-checker` / `schema-compiler` | 无需改代码 | manifest/对象/操作/DDL 均按 glob 自动纳入；产出 `build/ddl/iam.ddl` |
 | CI（`.github/workflows/ci.yml`） | 无需改流程 | 扩展 DDL 遍历 `build/ddl/*.ddl` 自动包含 IAM；建议 `tools/ci/ddl-smoke.sql` 增补 IAM 断言（可选增强） |
 | 文档 | `README.md`、`extensions/README.md`（现有扩展表）、`docs/IMPLEMENTATION.md`（重排 IAM 优先）、`docs/ROADMAP.md`、`CHANGELOG.md` | 评审通过后随实现一并更新 |
@@ -779,7 +781,7 @@ docker/（按 §8 #11 执行：删 coord/fwd.pl、coord/start.sh，compose 改�
 - **LeaderElection**：审计锚定组 `ims-iam-audit-anchor` 每节拍 `won election` → `anchorNow()` → `resigned`（coord 侧日志 + 应用「审计链锚定完成」）；
 - **Event 脉冲**：受理事件经 `iam.events` 通道 best-effort 广播（fail-open，窗口内零失败）。
 
-**镜像说明**：沙箱直连 ghcr 拉取超时，本机以 coord 源码 `/root/coord-r1-pub`（HEAD `622e82d` = v0.2.2+2 个 CI 修复提交）本地构建并标记 `ghcr.io/byteforce-cn/coord:v0.2.2`；与发布 tag `3fa9b31` 的差异仅为 CI 修复，功能等同。
+**镜像说明**：构建环境直连 ghcr 拉取超时，本机以 coord 源码克隆（HEAD `622e82d` = v0.2.2+2 个 CI 修复提交）本地构建并标记 `ghcr.io/byteforce-cn/coord:v0.2.2`；与发布 tag `3fa9b31` 的差异仅为 CI 修复，功能等同。
 
 ### 11.5 实现偏差与工程发现（供后续域复用）
 

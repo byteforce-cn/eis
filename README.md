@@ -17,11 +17,12 @@
 ```bash
 pip install pyyaml jsonschema
 python3 tools/e2e-runner --all
-# 预期：用例 43/43；场景 1/1；流水线 5/5；总判定：通过
+# 预期：用例 53/53；场景 1/1；流水线 5/5；总判定：通过
 ```
 
 - 审计链验证（可直接运行）：`05-audit-contract/verify.tool --self-test`
 - 合规等级与自验命令：[docs/CONFORMANCE.md](docs/CONFORMANCE.md)
+- 已知限制与规范缺口：[docs/KNOWN-LIMITATIONS.md](docs/KNOWN-LIMITATIONS.md)
 - 实现落地（seedj / server 映射）：[docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md)
 - 版本与规划：[docs/ROADMAP.md](docs/ROADMAP.md)、[CHANGELOG.md](CHANGELOG.md)
 
@@ -31,12 +32,13 @@ python3 tools/e2e-runner --all
 
 每条契约必须满足：
 
-1. **可实例化**：能生成 DDL、OpenAPI、JSON Schema、代码骨架
-2. **可验证**：能生成测试用例，通过/失败有明确判定
+1. **可实例化**：契约以具体工件落地——数据契约经 `schema-compiler` 编译为 DDL，
+   操作/事件契约以 OpenAPI/AsyncAPI 文件提供并由 `contract-checker` 校验
+2. **可验证**：契约带有可执行测试用例，通过/失败有明确判定
 3. **可演进**：能定义兼容性规则与迁移路径
 
 这三条不是口号：`tools/` 提供参考实现，一条命令即可验证本仓库全部契约——
-`python3 tools/e2e-runner --all`（43 条用例 + 端到端场景 + 工具链流水线；
+`python3 tools/e2e-runner --all`（53 条用例 + 端到端场景 + 工具链流水线；
 DDL 由 CI 在 PostgreSQL 16 上冒烟断言）。
 
 ---
@@ -109,7 +111,7 @@ eis/
 ├── .github/workflows/ci.yml         # CI：规范校验 + PostgreSQL 16 DDL 冒烟
 ├── CHANGELOG.md / CONTRIBUTING.md / SECURITY.md / CODE_OF_CONDUCT.md
 ├── LICENSE / NOTICE                 # Apache-2.0
-└── acceptance.yaml                  # 验收标准（已全部可执行化）
+└── acceptance.yaml                  # 验收标准（core 项已可执行化；pilot 项为人工签署）
 ```
 
 ---
@@ -146,7 +148,7 @@ eis/
 
 | 工件 | 状态 |
 |------|------|
-| 契约 Schema / OpenAPI / AsyncAPI / DDL / 测试用例 | 已实例化；43 条用例全部可执行 |
+| 契约 Schema / OpenAPI / AsyncAPI / DDL / 测试用例 | 已实例化；53 条用例全部可执行 |
 | `tools/*` 工具链（8 件） | ✅ 参考实现全部可用（Python，仅 PyYAML/jsonschema 依赖） |
 | 参考内核 `tools/lib/kernel.py` | ✅ 可执行端到端语义（命令→规则→事件→审计链→双时间轴） |
 | `05-audit-contract/verify.tool` | ✅ 冻结测试向量经实现验证一致 |

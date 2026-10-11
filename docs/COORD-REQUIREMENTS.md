@@ -202,7 +202,7 @@
 | G-EV-1 | 持久化游标：`EventSubscribeRequest.cursor` + `CloudEventMessage.seq`；默认实时不补投、显式游标保留窗口内补投；边界更新 | `coord/tests/event_cursor_replay_test.rs` |
 | G-SC-1 | `KvSchedulerStore`（CAS 认领）+ result 随任务持久化（首个结果为准、幂等） | `test_complete_persists_result_across_restart_and_is_idempotent` |
 
-> 验证环境：本机克隆 `/root/coord-r1-pub` @ `v0.2.2`（`3fa9b31`）；`CARGO_TARGET_DIR=/root/coord-r1/target cargo test --offline`；另跑 `apis/contracts/scripts/check-wire-sync.sh`（exit 0）与 `scripts/check-gate-drills.sh`（15 告警↔runbook 一一对应，exit 0）。
+> 验证环境：本机克隆 coord 源码 @ `v0.2.2`（`3fa9b31`）；`cargo test --offline`（构建目录可自定义）；另跑 `apis/contracts/scripts/check-wire-sync.sh`（exit 0）与 `scripts/check-gate-drills.sh`（15 告警↔runbook 一一对应，exit 0）。
 
 ### 7.3 遗留与消费方后续动作
 
