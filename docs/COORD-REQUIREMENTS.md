@@ -12,7 +12,7 @@
 - **现状澄清**（避免误读为「coord 全部不可用」）：
   - **已在用（T1）**：registry / config / lock / ratelimiter / observability；
   - **已采用（T2）**：event（失效/唤醒脉冲）、leader election（单例任务）；
-  - **已指定（T4）**：mq（跨服务事件通道）、pki（IAM 非对称密钥 KMS）、transit（可选加固）；
+  - **已指定（T4）**：mq（跨服务事件通道）、pki（IAM 非对称密钥 KMS）、transit（可选加固；写入专用散列托管为候选，见 G-TR-3）；
   - **暂缓接入**：policy / workflow / cache / scheduler —— 原因即本文件的各项缺口。（v1.1 注：本文件所列缺口已全部闭环，见 §7；各项接入结论以 `LANDING-IAM.md` 重评/表决为准。）
 - **消费方接入纪律**（优先级依据）：正确性权威 = PG + EIS 契约；coord 只做协调、失败可降级。因此下列缺口**不阻塞 IAM v1**，但阻塞「**生产多实例化**」与「**组织级推广**」。
 - **优先级定义**：**P1** = 阻塞已指定采纳路径的生产化；**P2** = 阻塞组织级复用/演进；**P3** = 观察或产品决策。
@@ -33,6 +33,7 @@
 | G-WF-1 | workflow | DSL 解释器 + Saga 补偿执行器未交付（模块头标注为蓝图）；实例 append-only 无保留策略 | P2 | 组织多域长流程 | 2027-03-31（请确认） |
 | G-TR-1 | transit | KEK 材料轮换无内建流程（B-SE-6：换材料后旧密文不可读） | P2 | transit 作为密钥包裹的生产化 | 2026-12-31 |
 | G-TR-2 | transit | 无非对称签名（不能做「私钥不出域」的签名服务） | P3 | 产品决策（org KMS 方向） | 待定 |
+| G-TR-3 | transit | HMAC 无用途化密钥与 key_id：无法按域隔离，KEK 轮换后存量签名不可复算 | P2 | EIS 写入专用散列托管到 transit（eis#6，ADR-0005 DRV-002/005） | 2026-12-31 |
 | G-X-1 | 全服务 | 消费方路由/鉴权指南缺失（每服务：任一 agent / Leader 专属 / 本地态 + 能力清单） | P1（文档） | 组织接入成本 | 2026-11 前 |
 | G-EV-1 | event | 持久化游标（补投）未落地（v1.2 候选）——观察 | P3 | 轻量可补投通道 | 观察 |
 | G-SC-1 | scheduler | result 不留档、KV 存储验收未过——观察 | P3 | coord 原生调度 | 2027-03-31 |
@@ -132,6 +133,14 @@
 - **现状**：transit 仅 `Encrypt/Decrypt/HmacSign/HmacVerify`，无 Sign——不能做「私钥不出域」的签名服务。
 - **请求**：若组织 KMS 方向需要远程签名（token/审计锚点等），评估新增 ES256 签名能力或独立 KMS 服务；IAM 当前接受「密钥交付持有方」（PKI）模型，故仅列为产品决策。
 
+### G-TR-3【P2】transit：HMAC 用途化密钥与轮换窗口（存量签名可复算）
+
+- **业务需求**：EIS 写入专用派生字段（如 hr 的 `id_number_hash` 防重散列）需要一个稳定、可轮换的 HMAC 生产面。`eis#6`/ADR-0005 规定：密钥按用途隔离、新写入用主密钥、防重比对覆盖轮换窗口内全部接受密钥（DRV-002/DRV-005）。若由 coord Transit 托管密钥，必须满足这两条；否则只能停留在域服务自持注入密钥。
+- **现状与证据**：`coord-agent/src/services/transit.rs`——`TransitService` 只有一把 `hmac_key`（由主材料 HKDF 派生）；历史材料循环注释明确「仅派生解密用 KEK（不参与加密/HMAC）」；`apis/contracts/proto/coord/transit/v1/transit.proto` 的 `TransitHmacSignRequest` 只有 `data/algorithm`，签名无 key_id，`HmacVerify` 只能按主材料复算。因此 KEK 轮换会让存量 HMAC 全部不可复算；`Rewrap` 只处理 DEK（G-TR-1），HMAC 无迁移路径。
+- **请求的能力**：① `HmacSign/HmacVerify` 增加用途/密钥名参数（按用途派生、互不可验；未声明用途 fail-closed）；② 签名携带 `key_id`（或 `HmacVerify` 接受历史材料/指定 key），给定 key_id 可跨材料轮换复算；③ 轮换口径文档：新签名用主材料、旧签名在历史材料注入期可验，窗口结束 fail-loud；④ 跨 agent 材料一致性要求写入契约。
+- **验收口径**：a) 两把用途密钥互不可验（负控制）；b) 轮换材料后旧签名在历史材料窗口内 `HmacVerify` 为 true，材料下线后 fail-loud（明确错误）；c) 同集群任一 agent 对同一 (用途, data, key_id) 结果一致；d) 文档给出旧材料下线流程与回退路径。
+- **备注**：本项不阻塞 EIS v1——ADR-0005 参考实现采用注入式密钥环（`EIS_FIELD_HASH_KEYS`），coord Transit 仅列为可选平台映射（见 `eis/docs/IMPLEMENTATION.md`）；本项落地后可把域密钥托管切到 transit，契约与用例不变。
+
 ### G-X-1【P1·文档】消费方路由与鉴权指南
 
 - **业务需求**：组织内多团队接入 coord 的认知成本必须降下来：每服务「任一 agent 可用 / 分区 Leader 专属 / agent 本地态」的差异、能力清单（CCT）与 SDK 推荐用法要一目了然。
@@ -215,6 +224,7 @@
 
 - v1.0（2026-10-09）：初稿（15 条缺口）。
 - v1.1（2026-10-10）：新增本章落地回执与消费方验证（coord 全量承接 + v0.2.2/SDK 0.2.1 发布；逐条实测通过）。
+- v1.2（2026-10-11）：新增 G-TR-3（HMAC 用途化密钥与轮换窗口，来源 `eis#6` / ADR-0005）。
 
 ## 附录 A：证据锚点（coord v0.2.1 @ `2c61f23`，缺口成立性证据；落地证据见 §7）
 
@@ -225,6 +235,7 @@
 | G-PKI-1..3 | `coord-agent/src/pki.rs`（`issue_cert` 过期路径 / `rotate_cert` / `get_cert_by_cn` / `is_expiring_soon`）、`coord-agent/src/pki_store.rs`（CAS / `replace_active_cert` / list 过滤）、`coord-agent/tests/agent_pki_test.rs`、`coord-core/src/grpc_auth.rs` L233–240 |
 | G-WF-1 | `coord-agent/src/services/workflow.rs`（模块头）、`docs/production/ops/boundaries.md` B-WF-1..4 |
 | G-TR-1/2 | `coord-agent/src/services/transit.rs`（模块头 KEK/DEK/无不对称签名）、boundaries B-SE-2 / B-SE-6 |
+| G-TR-3 | `coord-agent/src/services/transit.rs`（`hmac_key` 单把、历史材料「不参与加密/HMAC」注释、`TransitKekKeyring`）、`apis/contracts/proto/coord/transit/v1/transit.proto`（HmacSign 仅 data/algorithm、响应无 key_id） |
 | G-EV-1 | `apis/contracts/proto/coord/event/v1/*.proto`（断线不补投） |
 | 消费方评估全文 | `eis/docs/LANDING-IAM.md` v0.3 §3.4（逐服务证据表、再评估条件） |
 
