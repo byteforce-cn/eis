@@ -11,7 +11,9 @@
 
 说明:
   - SQL 为草案：破坏性变更（删除列）需先完成双写下线与对账，见 migration.template.sql
-  - 必填新增列生成三步：ADD COLUMN → 回填（占位）→ SET NOT NULL
+  - 必填新增列：有 default → ADD COLUMN ... DEFAULT <default> NOT NULL（PG 11+ 安全）；
+    无 default → 只生成可空 ADD COLUMN + 回填提示，**不自动** 执行 SET NOT NULL（需回填后再执行）
+  - 可空新增列 → ADD COLUMN ...（默认可空）
 
 退出码: 0 生成成功 / 1 用例失败（--self-test）/ 2 用法或输入错误
 """
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -53,6 +56,20 @@ def map_type(prop: dict) -> str:
     return "TEXT"
 
 
+MISSING = object()
+
+
+def sql_literal(value) -> str:
+    """将 JSON Schema default 值转为 SQL 字面量。"""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if value is None:
+        return "NULL"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def generate(old: dict, new: dict, table: str, version: str) -> tuple[str, str]:
     op, np_ = old.get("properties", {}), new.get("properties", {})
     oreq, nreq = set(old.get("required", [])), set(new.get("required", []))
@@ -79,13 +96,18 @@ def generate(old: dict, new: dict, table: str, version: str) -> tuple[str, str]:
             continue
         has_change = True
         sql_type = map_type(prop)
-        if name in nreq:
-            mig.append(f"-- 必填新增列（三步：加列 → 回填 → NOT NULL）")
+        default = prop.get("default", MISSING)
+        if name in nreq and default is not MISSING:
+            mig.append("-- 必填新增列（提供 default，可直接 NOT NULL；PG 11+ 常量默认不重写表）")
+            mig.append(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type} "
+                       f"DEFAULT {sql_literal(default)} NOT NULL;")
+        elif name in nreq:
+            mig.append("-- 必填新增列（无 default，两阶段：先加可空列，回填后再加非空约束）")
             mig.append(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type};")
-            mig.append(f"UPDATE {table} SET {name} = NULL /* TODO 回填值 */ WHERE {name} IS NULL;")
-            mig.append(f"ALTER TABLE {table} ALTER COLUMN {name} SET NOT NULL;")
+            mig.append(f"-- 必须先回填非空值，再执行 SET NOT NULL（本迁移不自动执行）：")
+            mig.append(f"--   ALTER TABLE {table} ALTER COLUMN {name} SET NOT NULL")
         else:
-            mig.append(f"-- 可选新增列")
+            mig.append("-- 可选新增列（默认可空）")
             mig.append(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type};")
         mig.append("")
         roll.append(f"ALTER TABLE {table} DROP COLUMN IF EXISTS {name};")
@@ -146,11 +168,22 @@ def cmd_self_test(args) -> int:
            "required": ["b", "d"]}
     with tempfile.TemporaryDirectory() as tmp:
         mig, roll = generate(old, new, "t_demo", "1.2.0")
-        report("生成 ADD COLUMN（可选）", "ADD COLUMN c TEXT;" in mig)
-        report("生成必填三步（含回填）", "SET NOT NULL" in mig and "回填" in mig and "ADD COLUMN d TIMESTAMPTZ(6);" in mig)
+        report("生成 ADD COLUMN（可选，不含 NOT NULL）",
+               "ADD COLUMN c TEXT;" in mig and not re.search(r"ADD COLUMN c TEXT[^;]*NOT NULL", mig))
+        report("必填无 default 不输出 SET NOT NULL 语句",
+               not re.search(r"ALTER COLUMN d SET NOT NULL;", mig))
+        report("必填无 default 输出回填提示", "回填" in mig and "ADD COLUMN d TIMESTAMPTZ(6);" in mig)
         report("生成 DROP COLUMN", "DROP COLUMN a;" in mig)
         report("回滚含反向 DROP", "DROP COLUMN IF EXISTS c;" in roll)
         report("回滚含反向 ADD", "ADD COLUMN a BIGINT;" in roll)
+
+        # 必填 + default → 单句可执行（DEFAULT ... NOT NULL）
+        old_def = {"properties": {"a": {"type": "integer"}}, "required": ["a"]}
+        new_def = {"properties": {"a": {"type": "integer"}, "d": {"type": "string", "default": "x"}},
+                   "required": ["a", "d"]}
+        mig_def, _ = generate(old_def, new_def, "t_demo", "1.3.0")
+        report("必填有 default 单句直接 NOT NULL",
+               "ADD COLUMN d TEXT DEFAULT 'x' NOT NULL;" in mig_def)
         out = Path(tmp) / "migration"
         out.mkdir()
         (out / f"V1.2.0__t_demo.sql").write_text(mig, encoding="utf-8")

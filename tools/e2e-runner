@@ -381,28 +381,35 @@ def run_pipeline(verbose: bool) -> list[dict]:
 
 
 def cmd_all(args) -> int:
-    pipelined = run_pipeline(args.verbose)
-    print()
-    file_results = [run_test_file(path, args.verbose) for path in discover_test_files()]
+    # --json：stdout 仅输出 JSON；人类可读信息改走 stderr，保证可被管道解析
+    human_out = sys.stdout
+    if args.json:
+        sys.stdout = sys.stderr
+    try:
+        pipelined = run_pipeline(args.verbose)
+        print()
+        file_results = [run_test_file(path, args.verbose) for path in discover_test_files()]
 
-    # 试点场景（cases/*/scenarios/*.yaml）
-    scenario_results = []
-    for scenario_path in sorted((ROOT / "cases").glob("*/scenarios/*.yaml")):
-        result = kernel_mod.run_scenario(scenario_path)
-        scenario_results.append({"file": rel(scenario_path), "ok": result["ok"], "result": result})
-        print(f"[{'ok  ' if result['ok'] else 'FAIL'}] 场景 {rel(scenario_path)}"
-              f"（{len(result['steps'])} 步 / {len(result['asserts'])} 断言 / 审计 {result['audit_entries']} 条）")
-        for err in result["errors"]:
-            print(f"        {err}")
+        # 试点场景（cases/*/scenarios/*.yaml）
+        scenario_results = []
+        for scenario_path in sorted((ROOT / "cases").glob("*/scenarios/*.yaml")):
+            result = kernel_mod.run_scenario(scenario_path)
+            scenario_results.append({"file": rel(scenario_path), "ok": result["ok"], "result": result})
+            print(f"[{'ok  ' if result['ok'] else 'FAIL'}] 场景 {rel(scenario_path)}"
+                  f"（{len(result['steps'])} 步 / {len(result['asserts'])} 断言 / 审计 {result['audit_entries']} 条）")
+            for err in result["errors"]:
+                print(f"        {err}")
 
-    total_ok = sum(r["passed"] for r in file_results)
-    total = sum(r["total"] for r in file_results)
-    all_ok = (all(s["ok"] for s in pipelined) and all(r["ok"] for r in file_results)
-              and all(s["ok"] for s in scenario_results))
-    print()
-    print(f"== 汇总：用例 {total_ok}/{total}；场景 {sum(s['ok'] for s in scenario_results)}/"
-          f"{len(scenario_results)}；流水线 {sum(s['ok'] for s in pipelined)}/{len(pipelined)} ==")
-    print(f"== 总判定：{'通过' if all_ok else '失败'} ==")
+        total_ok = sum(r["passed"] for r in file_results)
+        total = sum(r["total"] for r in file_results)
+        all_ok = (all(s["ok"] for s in pipelined) and all(r["ok"] for r in file_results)
+                  and all(s["ok"] for s in scenario_results))
+        print()
+        print(f"== 汇总：用例 {total_ok}/{total}；场景 {sum(s['ok'] for s in scenario_results)}/"
+              f"{len(scenario_results)}；流水线 {sum(s['ok'] for s in pipelined)}/{len(pipelined)} ==")
+        print(f"== 总判定：{'通过' if all_ok else '失败'} ==")
+    finally:
+        sys.stdout = human_out
 
     if args.json:
         print(json.dumps({
@@ -413,8 +420,14 @@ def cmd_all(args) -> int:
 
 
 def cmd_files(args) -> int:
-    results = [run_test_file(Path(p), args.verbose) for p in args.files]
-    all_ok = all(r["ok"] for r in results)
+    human_out = sys.stdout
+    if args.json:
+        sys.stdout = sys.stderr
+    try:
+        results = [run_test_file(Path(p), args.verbose) for p in args.files]
+        all_ok = all(r["ok"] for r in results)
+    finally:
+        sys.stdout = human_out
     if args.json:
         print(json.dumps({"ok": all_ok, "files": results}, ensure_ascii=False, indent=2))
     else:
