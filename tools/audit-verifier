@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 """audit-verifier — EIS 审计链验证（v1.0.0 参考实现）
 
-用途: 哈希链完整性（序列连续、链接衔接、逐条重算）——规范权威见
+用途: 哈希链完整性（Schema 校验 + 序列连续、链接衔接、逐条重算）——规范权威见
       05-audit-contract/hash-chain.spec.md，参考实现为 05 的 verify.tool。
       本工具封装 verify.tool，并提供：冻结测试向量校验、测试夹具批量验证。
+      验证流程：先按 05-audit-contract/audit.schema.json 逐条校验（schema_invalid），
+      再做哈希/链校验；畸形输入转为结构化错误。
 
 用法:
   audit-verifier CHAIN.json [--json]     验证单个链文件
@@ -58,7 +60,11 @@ def verify_file(vt, path: Path) -> dict:
         entries = vt.load_entries(str(path))
     except (OSError, ValueError) as exc:
         return {"file": rel(path), "valid": False, "error": f"读取失败: {exc}"}
-    errors = vt.verify_chain(entries)
+    try:
+        errors = vt.verify_chain(entries)
+    except (ValueError, TypeError, KeyError) as exc:
+        return {"file": rel(path), "valid": False,
+                "error": f"验证异常（输入畸形）: {type(exc).__name__}: {exc}"}
     return {"file": rel(path), "valid": not errors, "entries": len(entries), "errors": errors}
 
 
@@ -107,6 +113,25 @@ def cmd_self_test(args) -> int:
     broken[2]["hash"] = vt.compute_hash(broken[2])
     report("断链检出（prev_hash_mismatch）",
            any(e["type"] == "prev_hash_mismatch" for e in vt.verify_chain(broken)))
+
+    # 负例：缺必填字段但哈希自洽 → schema_invalid（仅重算哈希会漏判为 valid）
+    missing = copy.deepcopy(chain)
+    del missing[0]["action"]
+    missing[0]["hash"] = vt.compute_hash(missing[0])
+    missing_errors = vt.verify_chain(missing)
+    report("缺必填字段检出（schema_invalid）",
+           any(e["type"] == "schema_invalid" for e in missing_errors)
+           and any(e.get("path") for e in missing_errors if e["type"] == "schema_invalid"))
+
+    # 负例：畸形 timestamp → 结构化错误而非 traceback
+    bad_ts = copy.deepcopy(chain)
+    bad_ts[1]["timestamp"] = "not-a-date"
+    try:
+        bad_ts_errors = vt.verify_chain(bad_ts)
+        report("畸形 timestamp 结构化报错",
+               any(e["type"] in ("schema_invalid", "invalid_hash") for e in bad_ts_errors))
+    except Exception as exc:  # noqa: BLE001
+        report(f"畸形 timestamp 结构化报错（抛出 {type(exc).__name__}）", False)
     print(f"自测结果: {'通过' if ok else '失败'}")
     return 0 if ok else 1
 

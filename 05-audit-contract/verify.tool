@@ -12,6 +12,10 @@
   1  验证失败（链无效 / 自测失败）
   2  用法或输入错误
 
+验证流程：先按 05-audit-contract/audit.schema.json（Draft 2020-12）逐条 Schema 校验
+（错误类型 schema_invalid，含条目 index/sequence 与 JSON 路径），再做哈希/链校验
+（sequence_gap / prev_hash_mismatch / invalid_hash）。畸形输入转为结构化错误，不抛异常。
+
 规范化规则（权威定义见 05-audit-contract/hash-chain.spec.md）:
   canonical = "\\n".join([
       id(uuid, 小写), sequence(十进制字符串),
@@ -31,8 +35,27 @@ import hashlib
 import json
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
+
+try:
+    from jsonschema import Draft202012Validator, FormatChecker
+except ImportError:  # pragma: no cover — jsonschema 缺失时降级为仅哈希校验
+    Draft202012Validator = None
+    FormatChecker = None
 
 GENESIS_PREV_HASH = "0" * 64
+AUDIT_SCHEMA_PATH = Path(__file__).resolve().parent / "audit.schema.json"
+
+
+def _load_entry_validator():
+    if Draft202012Validator is None:
+        return None
+    with open(AUDIT_SCHEMA_PATH, encoding="utf-8") as fh:
+        schema = json.load(fh)
+    return Draft202012Validator(schema, format_checker=FormatChecker())
+
+
+_ENTRY_VALIDATOR = _load_entry_validator()
 
 
 # ---------------------------------------------------------------------------
@@ -80,15 +103,40 @@ def compute_hash(entry: dict) -> str:
 # 验证
 # ---------------------------------------------------------------------------
 
+def schema_errors(entries: list) -> list:
+    """逐条按 audit.schema.json 校验（先于哈希/链校验）；返回 schema_invalid 错误列表。"""
+    if _ENTRY_VALIDATOR is None:
+        return []
+    errors = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            errors.append({"sequence": None, "index": index, "type": "schema_invalid",
+                           "path": "$", "message": "条目不是 JSON 对象"})
+            continue
+        seq = entry.get("sequence")
+        for err in _ENTRY_VALIDATOR.iter_errors(entry):
+            path = "$" + "".join(
+                f"[{part}]" if isinstance(part, int) else f".{part}" for part in err.absolute_path)
+            errors.append({"sequence": seq, "index": index, "type": "schema_invalid",
+                           "path": path, "message": f"{path}: {err.message}"})
+    return errors
+
+
 def verify_chain(entries: list) -> list:
-    """返回错误列表；空列表表示验证通过。"""
+    """返回错误列表；空列表表示验证通过。先 Schema 校验，后哈希/链校验。"""
     errors = []
     if not entries:
         return [{"sequence": None, "type": "empty_chain", "message": "审计链为空"}]
 
+    errors.extend(schema_errors(entries))
+
     expected_seq = 1
     prev_hash = GENESIS_PREV_HASH
     for e in entries:
+        if not isinstance(e, dict):
+            errors.append({"sequence": None, "type": "malformed_entry",
+                           "message": "条目不是 JSON 对象，无法进行链校验"})
+            continue
         seq = e.get("sequence")
 
         if seq != expected_seq:
@@ -109,8 +157,17 @@ def verify_chain(entries: list) -> list:
             })
 
         stored_hash = str(e.get("hash", "")).lower()
-        computed = compute_hash(e)
-        if stored_hash != computed:
+        try:
+            computed = compute_hash(e)
+        except (ValueError, TypeError) as exc:
+            errors.append({
+                "sequence": seq,
+                "type": "invalid_hash",
+                "actual": stored_hash,
+                "message": f"条目字段畸形，无法计算哈希: {exc}",
+            })
+            computed = None
+        if computed is not None and stored_hash != computed:
             errors.append({
                 "sequence": seq,
                 "type": "invalid_hash",
@@ -119,7 +176,7 @@ def verify_chain(entries: list) -> list:
                 "message": "记录内容与哈希不符（可能被篡改）",
             })
 
-        prev_hash = stored_hash or computed
+        prev_hash = stored_hash or computed or prev_hash
         expected_seq = seq + 1 if isinstance(seq, int) else expected_seq + 1
 
     return errors
@@ -221,6 +278,34 @@ def self_test(verbose: bool = True) -> bool:
             print("[FAIL] 断链未被检出: %s" % errors)
     elif verbose:
         print("[ok]   断链被检出（prev_hash_mismatch）")
+
+    # 5) 缺必填字段但哈希自洽 → schema_invalid（仅重算哈希会漏判）
+    missing = copy.deepcopy(chain)
+    del missing[0]["action"]
+    missing[0]["hash"] = compute_hash(missing[0])
+    errors = verify_chain(missing)
+    if not any(x["type"] == "schema_invalid" for x in errors):
+        ok = False
+        if verbose:
+            print("[FAIL] 缺必填字段未被检出: %s" % errors)
+    elif verbose:
+        print("[ok]   缺必填字段被检出（schema_invalid）")
+
+    # 6) 畸形 timestamp → 结构化错误（不抛异常）
+    bad_ts = copy.deepcopy(chain)
+    bad_ts[1]["timestamp"] = "not-a-date"
+    try:
+        errors = verify_chain(bad_ts)
+        if not any(x["type"] in ("schema_invalid", "invalid_hash") for x in errors):
+            ok = False
+            if verbose:
+                print("[FAIL] 畸形 timestamp 未报错: %s" % errors)
+        elif verbose:
+            print("[ok]   畸形 timestamp 返回结构化错误")
+    except Exception as exc:  # noqa: BLE001 — 任何异常都视为未按结构化处理
+        ok = False
+        if verbose:
+            print("[FAIL] 畸形 timestamp 抛出异常: %r" % exc)
 
     if verbose:
         print("自测结果: %s" % ("通过" if ok else "失败"))
