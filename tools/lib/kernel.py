@@ -14,10 +14,19 @@
   - 审计契约：哈希链（复用 05 的 verify.tool 规范化与验证）
   - 演进契约：不涉及（工具域）
 
+扩展机制（新增领域无需修改内核源码）：
+  - 命令处理器按扩展注册：`extensions/<id>/handlers.py`
+  - 模块提供 `register(api) -> {command_type: handler}`（或 `COMMANDS` 映射）；
+    handler 签名 `(api, payload, actor, command_id) -> (events, created)`；
+  - 可选 `SENSITIVE_FIELDS = {command_type: (field, ...)}` 声明命令记录脱敏字段；
+  - 可选 `DEFERRED_AUTHZ = {command_type, ...}` 声明处理器内部做细粒度权限判定
+    （如区块属主权限 `approval.section.confirm.<owner>`），内核跳过命令级预检；
+  - 处理器只通过 `ExtensionAPI`（见下）访问内核能力。
+
 明确不做（参考实现的边界，生产实现需补齐）：
   - 持久化（内存）、并发控制、真实时钟、分区与索引优化
-  - 规则引擎的通用化：仅实现本仓库扩展声明的规则（double-entry / period-lock /
-    non-negative / no-self-approval）
+  - 通用规则引擎：领域规则由各扩展处理器自行实现（参考 accounting / inventory /
+    approval / iam 的 handlers.py）
 
 使用：run_scenario(scenario_dict_or_path) → 场景报告；Kernel 类可直接嵌入测试。
 """
@@ -94,6 +103,129 @@ def load_authz_module():
     return module
 
 
+# ---------------------------------------------------------------------------
+# 扩展 API 与处理器注册
+# ---------------------------------------------------------------------------
+class ExtensionAPI:
+    """扩展处理器可用的内核能力面（受控接缝，不直接触碰 Kernel 内部实现）。"""
+
+    def __init__(self, kernel: "Kernel"):
+        self._kernel = kernel
+
+    # -- 时钟 / 标识 / 值转换 -------------------------------------------
+    def now(self) -> datetime:
+        return self._kernel.now()
+
+    def advance(self, seconds: int = 60) -> None:
+        self._kernel.advance(seconds)
+
+    def new_id(self) -> str:
+        return self._kernel.new_id()
+
+    def ts(self, dt: datetime) -> str:
+        return ts(dt)
+
+    def parse_ts(self, value) -> datetime:
+        return parse_ts(value)
+
+    def dec(self, value) -> Decimal:
+        return dec(value)
+
+    def dec_eq(self, a, b) -> bool:
+        return dec_eq(a, b)
+
+    # -- 拒绝 -----------------------------------------------------------
+    def reject(self, code: str, reason: str, reason_code: str | None = None):
+        """拒绝当前命令（抛出内核统一捕获的 Rejected）。"""
+        raise Rejected(code, reason, reason_code)
+
+    # -- 对象（双时间轴） -----------------------------------------------
+    def create_object(self, obj_type: str, data: dict, actor: str) -> dict:
+        return self._kernel._create_object(obj_type, data, actor)
+
+    def update_object(self, obj_type: str, obj_id: str, updates: dict, actor: str,
+                      extra=None) -> dict:
+        return self._kernel._update_object(obj_type, obj_id, updates, actor, extra)
+
+    def find_current(self, obj_type: str, pred) -> dict | None:
+        return self._kernel._find_current(obj_type, pred)
+
+    def objects(self, obj_type: str) -> list[dict]:
+        """某类型的全部版本行（append-only，含已封口版本）。"""
+        return self._kernel.objects.get(obj_type, [])
+
+    def current_objects(self, obj_type: str) -> list[dict]:
+        return [r for r in self._kernel.objects.get(obj_type, []) if r["superseded_at"] is None]
+
+    def as_of(self, obj_type: str, obj_id: str, valid_at=None, recorded_at=None) -> dict | None:
+        return self._kernel.as_of(obj_type, obj_id, valid_at, recorded_at)
+
+    def history(self, obj_type: str, obj_id: str) -> list[dict]:
+        return self._kernel.history(obj_type, obj_id)
+
+    # -- 事件 -----------------------------------------------------------
+    def event(self, event_type: str, actor: str, subjects, payload) -> dict:
+        return self._kernel._event(event_type, actor, subjects, payload)
+
+    # -- 读模型 / 领域状态 ----------------------------------------------
+    def stock(self, item_id: str, warehouse: str) -> str:
+        return self._kernel.stock(item_id, warehouse)
+
+    @property
+    def locked_periods(self) -> set:
+        return self._kernel.locked_periods
+
+    # -- 授权 -----------------------------------------------------------
+    @property
+    def authz(self):
+        return self._kernel.authz
+
+    def principal_of(self, actor: str) -> str:
+        return self._kernel.principal_of(actor)
+
+    def check_permission(self, actor: str, permission: str, as_of=None) -> dict:
+        """处理器内细粒度权限检查（区块属主等动态权限用）。"""
+        if self._kernel.authz is None:
+            return {"allowed": True, "reason": "未装载授权夹具", "reason_code": "ALLOWED"}
+        moment = ts(parse_ts(as_of)) if as_of else ts(self._kernel.now())
+        return self._kernel.authz.check(self._kernel.principal_of(actor), permission, moment)
+
+
+def load_extension_handlers(kernel: "Kernel") -> dict[str, callable]:
+    """加载 `extensions/*/handlers.py` 的命令处理器。
+
+    新增扩展只需自带 handlers.py，无需修改内核源码即可执行契约用例。
+    """
+    handlers: dict[str, callable] = {}
+    ext_root = ROOT / "extensions"
+    if not ext_root.is_dir():
+        return handlers
+    for ext_dir in sorted(p for p in ext_root.iterdir() if p.is_dir()):
+        path = ext_dir / "handlers.py"
+        if not path.exists():
+            continue
+        loader = SourceFileLoader(f"eis_handlers_{ext_dir.name}", str(path))
+        module = module_from_spec(spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        if hasattr(module, "register"):
+            registry = module.register(kernel.api)
+        else:
+            registry = getattr(module, "COMMANDS", None)
+        if not isinstance(registry, dict):
+            raise RuntimeError(f"{path}: handlers.py 必须提供 register(api) 或 COMMANDS 映射")
+        for cmd_type, handler in registry.items():
+            if not callable(handler):
+                raise RuntimeError(f"{path}: {cmd_type} 的处理器不可调用")
+            if cmd_type in handlers:
+                raise RuntimeError(f"命令处理器重复注册: {cmd_type}（{path}）")
+            handlers[cmd_type] = handler
+        for cmd_type, fields in (getattr(module, "SENSITIVE_FIELDS", None) or {}).items():
+            kernel.register_sensitive(cmd_type, fields)
+        for cmd_type in (getattr(module, "DEFERRED_AUTHZ", None) or ()):
+            kernel.deferred_authz.add(cmd_type)
+    return handlers
+
+
 class Kernel:
     """EIS 参考内核：命令受理 → 规则 → 事件 → 审计链 → 双时间轴对象。"""
 
@@ -119,6 +251,12 @@ class Kernel:
             for p in authz_fixtures.get("principals", []):
                 self.authz_by_key[p.get("key", p["id"])] = p["id"]
 
+        # 扩展机制：处理器注册、脱敏字段、延迟授权
+        self.sensitive_fields: dict[str, tuple[str, ...]] = {}
+        self.deferred_authz: set[str] = set()
+        self.api = ExtensionAPI(self)
+        self.command_handlers: dict[str, callable] = load_extension_handlers(self)
+
     # ------------------------------------------------------------------
     # 时钟与 ID
     # ------------------------------------------------------------------
@@ -140,6 +278,12 @@ class Kernel:
 
     def principal_of(self, actor: str) -> str:
         return self.authz_by_key.get(actor, actor)
+
+    def register_sensitive(self, command_type: str, fields) -> None:
+        """登记命令记录的脱敏字段（处理器模块通过 SENSITIVE_FIELDS 声明）。"""
+        merged = set(self.sensitive_fields.get(command_type, ()))
+        merged.update(fields)
+        self.sensitive_fields[command_type] = tuple(sorted(merged))
 
     # ------------------------------------------------------------------
     # 命令受理
@@ -168,9 +312,8 @@ class Kernel:
         principal = self.principal_of(actor)
         command_id = self.new_id()
         stored_payload = copy.deepcopy(payload)
-        if cmd_type.startswith("iam.credential."):
-            for field in ("secret_hash", "old_secret_hash", "new_secret_hash"):
-                stored_payload.pop(field, None)
+        for field in self.sensitive_fields.get(cmd_type, ()):
+            stored_payload.pop(field, None)
         record = {
             "id": command_id, "type": cmd_type, "issued_at": ts(self.now()),
             "issuer": principal, "payload": stored_payload, "idempotency_key": idem_key,
@@ -182,8 +325,8 @@ class Kernel:
         self.commands[command_id] = record
 
         try:
-            # 授权（若装载）
-            if self.authz is not None:
+            # 授权（若装载）：命令级预检；DEFERRED_AUTHZ 命令由处理器内部细粒度判定
+            if self.authz is not None and cmd_type not in self.deferred_authz:
                 decision = self.authz.check(principal, cmd_type, ts(self.now()))
                 if not decision["allowed"]:
                     raise Rejected(decision.get("reason_code", "EIS-403-001"), decision["reason"])
@@ -208,386 +351,13 @@ class Kernel:
                 "event_ids": [e["id"] for e in events], "created": created}
 
     # ------------------------------------------------------------------
-    # 命令处理器
+    # 命令分发（处理器由 extensions/*/handlers.py 注册）
     # ------------------------------------------------------------------
     def _handle(self, cmd_type: str, payload: dict, actor: str, command_id: str):
-        handler = {
-            "accounting.voucher.post": self._post_voucher,
-            "accounting.period.close": self._close_period,
-            "inventory.stock.receive": self._receive_stock,
-            "approval.request.submit": self._submit_request,
-            "approval.request.decide": self._decide_request,
-            "iam.user.create": self._iam_user_create,
-            "iam.user.update": self._iam_user_update,
-            "iam.user.disable": self._iam_user_disable,
-            "iam.user.enable": self._iam_user_enable,
-            "iam.credential.rotate": self._iam_credential_rotate,
-            "iam.credential.reset": self._iam_credential_reset,
-            "iam.role.define": self._iam_role_define,
-            "iam.binding.grant": self._iam_binding_grant,
-            "iam.binding.revoke": self._iam_binding_revoke,
-            "iam.session.issue": self._iam_session_issue,
-            "iam.session.revoke": self._iam_session_revoke,
-        }.get(cmd_type)
+        handler = self.command_handlers.get(cmd_type)
         if handler is None:
             raise Rejected("EIS-400-001", f"未知命令类型: {cmd_type}")
-        return handler(payload, actor, command_id)
-
-    # -- accounting -----------------------------------------------------
-    def _post_voucher(self, payload, actor, command_id):
-        voucher_id = payload.get("voucher_id")
-        post_date = payload.get("post_date")
-        if not voucher_id or not post_date:
-            raise Rejected("EIS-400-001", "缺少 voucher_id 或 post_date")
-        row = self.as_of("voucher", voucher_id)
-        if row is None:
-            raise Rejected("EIS-404-001", f"凭证不存在: {voucher_id}")
-        if row["status"] != "draft":
-            raise Rejected("EIS-400-002", f"凭证状态不可过账: {row['status']}")
-        period = str(post_date)[:7]
-        # 规则 double_entry：按币种分组借贷平衡
-        groups: dict[str, dict[str, Decimal]] = {}
-        for line in row["lines"]:
-            cur = line.get("currency", "CNY")
-            g = groups.setdefault(cur, {"debit": Decimal(0), "credit": Decimal(0)})
-            g["debit"] += dec(line.get("debit", "0"))
-            g["credit"] += dec(line.get("credit", "0"))
-        for cur, g in groups.items():
-            if g["debit"] != g["credit"]:
-                raise Rejected("ACC-400-001",
-                               f"凭证借贷不平衡（{cur}）：借方 {g['debit']}，贷方 {g['credit']}")
-        # 规则 period_lock
-        if period in self.locked_periods:
-            raise Rejected("ACC-409-001", f"会计期间 {period} 已锁定")
-        # 接受：状态变更 + 事件
-        self._update_object("voucher", voucher_id, {"status": "posted", "posted_at": ts(self.now())}, actor)
-        event = self._event("accounting.voucher.posted", actor,
-                            subjects=[voucher_id],
-                            payload={"voucher_id": voucher_id, "number": row["number"],
-                                     "period": period, "lines": row["lines"]})
-        return [event], {"type": "voucher", "id": voucher_id}
-
-    def _close_period(self, payload, actor, command_id):
-        period = payload.get("period")
-        if not period or not re.match(r"^\d{4}-\d{2}$", str(period)):
-            raise Rejected("EIS-400-001", "缺少合法 period（YYYY-MM）")
-        if period in self.locked_periods:
-            raise Rejected("ACC-409-002", f"会计期间 {period} 已关闭")
-        for row in self.objects.get("voucher", []):
-            if row["superseded_at"] is not None:
-                continue
-            if row.get("status") == "draft" and str(row.get("voucher_date", ""))[:7] == period:
-                raise Rejected("ACC-400-002", f"期间 {period} 存在未过账凭证: {row['number']}")
-        self.locked_periods.add(period)
-        event = self._event("accounting.period.closed", actor, subjects=[],
-                            payload={"period": period})
-        return [event], {"type": "period", "id": period}
-
-    # -- inventory ------------------------------------------------------
-    def _receive_stock(self, payload, actor, command_id):
-        item_id = payload.get("item_id")
-        warehouse = payload.get("warehouse")
-        quantity = payload.get("quantity")
-        if not (item_id and warehouse and quantity):
-            raise Rejected("EIS-400-001", "缺少 item_id / warehouse / quantity")
-        qty = dec(quantity)
-        if qty <= 0:
-            raise Rejected("INV-400-001", f"收货数量必须 > 0：{quantity}")
-        # 规则 non_negative：应用后余额 >= 0（receipt 恒增，此处仍校验）
-        balance = dec(self.stock(item_id, warehouse)) + qty
-        if balance < 0:
-            raise Rejected("INV-400-001", f"库存不足：余额 {balance}")
-        # 更新库存余额对象 + 记录变动对象
-        row = self._find_current("stock_balance", lambda r: r["item_id"] == item_id and r["warehouse"] == warehouse)
-        if row is None:
-            self._create_object("stock_balance", {
-                "item_id": item_id, "warehouse": warehouse,
-                "quantity": str(qty), "unit": payload.get("unit", "EA"),
-            }, actor)
-        else:
-            self._update_object("stock_balance", row["id"], {"quantity": str(balance)}, actor)
-        movement = self._create_object("stock_movement", {
-            "item_id": item_id, "warehouse": warehouse, "movement_type": "receipt",
-            "quantity": str(qty), "reference": payload.get("reference"),
-        }, actor)
-        event = self._event("inventory.stock.received", actor, subjects=[item_id],
-                            payload={"item_id": item_id, "warehouse": warehouse,
-                                     "quantity": str(qty), "reference": payload.get("reference")})
-        return [event], {"type": "stock_movement", "id": movement["id"]}
-
-    # -- approval -------------------------------------------------------
-    def _submit_request(self, payload, actor, command_id):
-        operation = payload.get("operation")
-        target = payload.get("target") or {}
-        if not operation or not target.get("type") or not target.get("id"):
-            raise Rejected("EIS-400-001", "缺少 operation / target")
-        request = self._create_object("approval_request", {
-            "operation": operation, "target": target, "requester": actor,
-            "status": "pending", "summary": payload.get("summary"),
-        }, actor)
-        event = self._event("approval.request.submitted", actor, subjects=[request["id"]],
-                            payload={"request_id": request["id"], "operation": operation, "target": target})
-        return [event], {"type": "approval_request", "id": request["id"]}
-
-    def _decide_request(self, payload, actor, command_id):
-        request_id = payload.get("request_id")
-        outcome = payload.get("outcome")
-        if not request_id or outcome not in ("approve", "reject"):
-            raise Rejected("EIS-400-001", "缺少 request_id 或 outcome 非法")
-        row = self.as_of("approval_request", request_id)
-        if row is None:
-            raise Rejected("EIS-404-001", f"审批申请不存在: {request_id}")
-        if row["status"] != "pending":
-            raise Rejected("EIS-409-001", f"申请已处理: {row['status']}")
-        # 规则 no_self_approval
-        if row["requester"] == actor:
-            raise Rejected("APR-403-001", "禁止自审：申请人与决定人相同")
-        status = "approved" if outcome == "approve" else "rejected"
-        self._update_object("approval_request", request_id, {"status": status}, actor,
-                            extra={"decided_by": actor, "decided_at": ts(self.now())})
-        event = self._event(f"approval.request.{status}", actor, subjects=[request_id],
-                            payload={"request_id": request_id, "outcome": outcome})
-        return [event], {"type": "approval_request", "id": request_id}
-
-    # -- iam ------------------------------------------------------------
-    def _iam_user_create(self, payload, actor, command_id):
-        username = payload.get("username")
-        display_name = payload.get("display_name")
-        if not isinstance(username, str) or not username.strip() or not isinstance(display_name, str) or not display_name.strip():
-            raise Rejected("IAM-400-001", "username 与 display_name 均为必填")
-        if self._find_current("iam_user_account", lambda r: r["username"] == username):
-            raise Rejected("IAM-409-001", f"用户名已存在: {username}")
-        account = self._create_object("iam_user_account", {
-            "username": username, "display_name": display_name, "status": "active",
-            "org_code": payload.get("org_code"), "contact": payload.get("contact"),
-            "built_in": False,
-        }, actor)
-        event = self._event("iam.user.created", actor, [account["id"]],
-                            {"account_id": account["id"], "username": username})
-        return [event], {"type": "iam_user_account", "id": account["id"]}
-
-    def _iam_user_update(self, payload, actor, command_id):
-        account_id = payload.get("account_id")
-        account = self.as_of("iam_user_account", account_id) if account_id else None
-        if account is None:
-            raise Rejected("IAM-404-001", f"账户不存在: {account_id}")
-        updates = {key: payload[key] for key in ("display_name", "org_code", "contact") if key in payload}
-        if not updates:
-            raise Rejected("IAM-400-001", "至少提供一个可更新字段")
-        if "display_name" in updates and (not isinstance(updates["display_name"], str) or not updates["display_name"].strip()):
-            raise Rejected("IAM-400-001", "display_name 不能为空")
-        self._update_object("iam_user_account", account_id, updates, actor)
-        event = self._event("iam.user.updated", actor, [account_id], {"account_id": account_id})
-        return [event], {"type": "iam_user_account", "id": account_id}
-
-    def _iam_user_disable(self, payload, actor, command_id):
-        account_id = payload.get("account_id")
-        account = self.as_of("iam_user_account", account_id) if account_id else None
-        if account is None:
-            raise Rejected("IAM-404-001", f"账户不存在: {account_id}")
-        if account.get("built_in") or account.get("username") == "root":
-            raise Rejected("IAM-403-002", "内置 root 账户不可禁用")
-        now = ts(self.now())
-        events = []
-        for session in list(self.objects.get("iam_auth_session", [])):
-            if session["superseded_at"] is None and session["account_id"] == account_id and session["status"] == "active":
-                self._update_object("iam_auth_session", session["id"], {"status": "revoked"}, actor)
-                events.append(self._event("iam.session.revoked", actor, [session["id"]],
-                                          {"session_id": session["id"], "reason": "account_disabled"}))
-        self._update_object("iam_user_account", account_id, {"status": "disabled"}, actor)
-        events.append(self._event("iam.user.disabled", actor, [account_id],
-                                  {"account_id": account_id, "disabled_at": now}))
-        return events, {"type": "iam_user_account", "id": account_id}
-
-    def _iam_user_enable(self, payload, actor, command_id):
-        account_id = payload.get("account_id")
-        account = self.as_of("iam_user_account", account_id) if account_id else None
-        if account is None:
-            raise Rejected("IAM-404-001", f"账户不存在: {account_id}")
-        if account.get("status") == "locked":
-            raise Rejected("IAM-403-002", "锁定账户须经解锁流程处理")
-        self._update_object("iam_user_account", account_id, {"status": "active"}, actor)
-        event = self._event("iam.user.enabled", actor, [account_id], {"account_id": account_id})
-        return [event], {"type": "iam_user_account", "id": account_id}
-
-    def _iam_active_credential(self, account_id):
-        return self._find_current(
-            "iam_credential",
-            lambda r: r["account_id"] == account_id and r["type"] == "password" and r["status"] == "active",
-        )
-
-    def _iam_revoke_sessions(self, account_id, actor, reason):
-        events = []
-        for session in list(self.objects.get("iam_auth_session", [])):
-            if session["superseded_at"] is None and session["account_id"] == account_id and session["status"] == "active":
-                self._update_object("iam_auth_session", session["id"], {"status": "revoked"}, actor)
-                events.append(self._event("iam.session.revoked", actor, [session["id"]],
-                                          {"session_id": session["id"], "reason": reason}))
-        return events
-
-    def _iam_credential_rotate(self, payload, actor, command_id):
-        account_id = payload.get("account_id")
-        if actor != account_id:
-            raise Rejected("IAM-403-001", "本人凭证轮换只能操作自身账户")
-        account = self.as_of("iam_user_account", account_id)
-        credential = self._iam_active_credential(account_id)
-        if account is None or account.get("status") != "active" or credential is None:
-            raise Rejected("IAM-403-002", "账户不可用或不存在有效凭证")
-        if payload.get("old_secret_hash") != credential.get("secret_hash"):
-            raise Rejected("IAM-400-002", "旧凭证校验失败")
-        new_hash = payload.get("new_secret_hash")
-        if not isinstance(new_hash, str) or not new_hash or new_hash == credential["secret_hash"]:
-            raise Rejected("IAM-400-001", "新凭证无效")
-        self._update_object("iam_credential", credential["id"], {
-            "secret_hash": new_hash, "must_change": False, "rotated_at": ts(self.now()),
-        }, actor)
-        events = self._iam_revoke_sessions(account_id, actor, "credential_rotated")
-        events.append(self._event("iam.credential.rotated", actor, [credential["id"]],
-                                  {"account_id": account_id, "credential_id": credential["id"]}))
-        return events, {"type": "iam_credential", "id": credential["id"]}
-
-    def _iam_credential_reset(self, payload, actor, command_id):
-        account_id = payload.get("account_id")
-        if actor == account_id:
-            raise Rejected("IAM-403-001", "管理员不得通过重置命令自我提权")
-        account = self.as_of("iam_user_account", account_id) if account_id else None
-        new_hash = payload.get("new_secret_hash")
-        if account is None or account.get("status") != "active":
-            raise Rejected("IAM-403-002", "账户不可用或不存在")
-        if not isinstance(new_hash, str) or not new_hash:
-            raise Rejected("IAM-400-001", "新凭证无效")
-        credential = self._iam_active_credential(account_id)
-        if credential is None:
-            credential = self._create_object("iam_credential", {
-                "account_id": account_id, "type": "password", "secret_hash": new_hash,
-                "status": "active", "must_change": True, "rotated_at": ts(self.now()),
-            }, actor)
-        else:
-            credential = self._update_object("iam_credential", credential["id"], {
-                "secret_hash": new_hash, "must_change": True, "rotated_at": ts(self.now()),
-            }, actor)
-        events = self._iam_revoke_sessions(account_id, actor, "credential_reset")
-        events.append(self._event("iam.credential.reset", actor, [account_id],
-                                  {"account_id": account_id, "credential_id": credential["id"]}))
-        return events, {"type": "iam_credential", "id": credential["id"]}
-
-    def _iam_role_define(self, payload, actor, command_id):
-        key, name, permissions = payload.get("key"), payload.get("name"), payload.get("permissions")
-        if not isinstance(key, str) or not key or not isinstance(name, str) or not name or not isinstance(permissions, list):
-            raise Rejected("IAM-400-001", "key、name、permissions 格式非法")
-        duplicate = self._find_current("iam_role", lambda r: r["key"] == key)
-        role_id = payload.get("role_id")
-        if duplicate is not None and duplicate["id"] != role_id:
-            raise Rejected("IAM-409-002", f"角色 key 已存在: {key}")
-        if role_id:
-            current = self.as_of("iam_role", role_id)
-            if current is None:
-                raise Rejected("IAM-404-001", f"角色不存在: {role_id}")
-            row = self._update_object("iam_role", role_id, {
-                "key": key, "name": name, "permissions": sorted(set(permissions)),
-            }, actor)
-            event_type = "iam.role.updated"
-        else:
-            row = self._create_object("iam_role", {
-                "key": key, "name": name, "permissions": sorted(set(permissions)), "built_in": False,
-            }, actor)
-            event_type = "iam.role.defined"
-        event = self._event(event_type, actor, [row["id"]], {"role_id": row["id"], "key": key})
-        return [event], {"type": "iam_role", "id": row["id"]}
-
-    def _iam_binding_grant(self, payload, actor, command_id):
-        principal, role_id, scope = payload.get("principal"), payload.get("role_id"), payload.get("scope")
-        role = self.as_of("iam_role", role_id) if role_id else None
-        if not principal or role is None or not isinstance(scope, dict):
-            raise Rejected("IAM-400-001", "principal、有效 role_id 与 scope 为必填")
-        if principal == actor or (self.authz is not None and any(
-            p.get("agent") == actor and p.get("principal") == principal for p in self.authz.proxies
-        )):
-            raise Rejected("IAM-403-001", "不得向本人或本人代理授予角色")
-        account = self.as_of("iam_user_account", principal)
-        if account is None or account.get("status") != "active":
-            raise Rejected("IAM-403-002", "授权主体不存在或不可用")
-        canonical_scope = json.dumps(scope, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        duplicate = self._find_current("iam_role_binding", lambda r:
-            r["principal"] == principal and r["role"] == role_id and r["status"] == "active"
-            and json.dumps(r.get("scope") or {}, sort_keys=True, separators=(",", ":"), ensure_ascii=False) == canonical_scope
-        )
-        if duplicate:
-            raise Rejected("IAM-409-001", "相同主体、角色与作用域已有有效绑定")
-        warning_rules = []
-        if self.authz is not None:
-            sod_rules = self.authz.sod_rules
-            existing_roles = []
-            for binding in self.objects.get("iam_role_binding", []):
-                if binding["superseded_at"] is None and binding.get("status") == "active" and binding["principal"] == principal:
-                    bound_role = self.as_of("iam_role", binding["role"])
-                    if bound_role:
-                        existing_roles.append((bound_role, binding.get("scope") or {}))
-            proposed_roles = [*existing_roles, (role, scope)]
-            for rule in sod_rules:
-                scope_key = {"same_department": "department", "same_organization": "organization",
-                             "same_warehouse": "warehouse"}.get(rule.get("scope"))
-                perms_in_scope = set()
-                for held_role, held_scope in proposed_roles:
-                    if scope_key and held_scope.get(scope_key) != scope.get(scope_key):
-                        continue
-                    perms_in_scope.update(held_role.get("permissions", []))
-                conflicts = set(rule.get("conflicting_permissions", []))
-                if len(conflicts.intersection(perms_in_scope)) > 1:
-                    if rule.get("enforcement") == "prevent":
-                        raise Rejected("IAM-403-003", f"SoD 冲突: {rule['id']}", rule["id"])
-                    warning_rules.append(rule["id"])
-        binding = self._create_object("iam_role_binding", {
-            "principal": principal, "role": role_id, "scope": copy.deepcopy(scope), "status": "active",
-        }, actor)
-        event = self._event("iam.binding.granted", actor, [binding["id"]], {
-            "binding_id": binding["id"], "principal": principal, "role_id": role_id,
-            "sod_warnings": warning_rules,
-        })
-        return [event], {"type": "iam_role_binding", "id": binding["id"]}
-
-    def _iam_binding_revoke(self, payload, actor, command_id):
-        binding_id = payload.get("binding_id")
-        binding = self.as_of("iam_role_binding", binding_id) if binding_id else None
-        if binding is None or binding.get("status") != "active":
-            raise Rejected("IAM-404-001", f"有效角色绑定不存在: {binding_id}")
-        self._update_object("iam_role_binding", binding_id, {"status": "revoked"}, actor)
-        event = self._event("iam.binding.revoked", actor, [binding_id], {"binding_id": binding_id})
-        return [event], {"type": "iam_role_binding", "id": binding_id}
-
-    def _iam_session_issue(self, payload, actor, command_id):
-        account_id = payload.get("account_id")
-        account = self.as_of("iam_user_account", account_id) if account_id else None
-        expires_at = payload.get("expires_at")
-        try:
-            expires = parse_ts(expires_at)
-        except (TypeError, ValueError):
-            raise Rejected("IAM-400-001", "expires_at 必须为合法时间")
-        if account is None or account.get("status") != "active":
-            raise Rejected("IAM-403-002", "账户不可用或不存在")
-        if expires <= self.now() or not payload.get("client_id") or not payload.get("jti"):
-            raise Rejected("IAM-400-001", "会话字段非法或已过期")
-        session = self._create_object("iam_auth_session", {
-            "account_id": account_id, "client_id": payload["client_id"],
-            "auth_method": payload.get("auth_method", "password"), "jti": payload["jti"],
-            "status": "active", "expires_at": ts(expires),
-        }, actor)
-        event = self._event("iam.session.issued", actor, [session["id"]], {
-            "session_id": session["id"], "account_id": account_id, "jti": session["jti"],
-            "expires_at": session["expires_at"],
-        })
-        return [event], {"type": "iam_auth_session", "id": session["id"]}
-
-    def _iam_session_revoke(self, payload, actor, command_id):
-        session_id = payload.get("session_id")
-        session = self.as_of("iam_auth_session", session_id) if session_id else None
-        if session is None:
-            raise Rejected("IAM-404-001", f"会话不存在: {session_id}")
-        if session.get("status") != "active":
-            raise Rejected("IAM-409-003", f"会话状态不可吊销: {session.get('status')}")
-        self._update_object("iam_auth_session", session_id, {"status": "revoked"}, actor)
-        event = self._event("iam.session.revoked", actor, [session_id], {"session_id": session_id})
-        return [event], {"type": "iam_auth_session", "id": session_id}
+        return handler(self.api, payload, actor, command_id)
 
     # ------------------------------------------------------------------
     # 对象存储（双时间轴）

@@ -65,3 +65,45 @@ composition:
 | `accounting` | 1.0.0 | 科目/凭证/余额；过账、关账；借贷平衡、期间锁定 | 完整示例（含可执行用例） |
 | `inventory` | 1.0.0 | 物品/出入库/库存余额；收货；库存非负 | 完整（含可执行用例） |
 | `approval` | 1.0.0 | 审批申请/审批决定；提交与决定；禁止自审 | 完整（含可执行用例） |
+
+## 6. 命令处理器注册（可执行用例）
+
+命令契约的行为由扩展自带的 `handlers.py` 提供；参考内核通过
+`tools/lib/kernel.py` 的 `load_extension_handlers()` 自动加载 `extensions/*/handlers.py`，
+**新增扩展无需修改内核源码**即可让 `tools/e2e-runner` 执行自己的契约用例。
+
+```python
+# extensions/{domain}/handlers.py
+COMMANDS = {}
+
+def register(api):
+    return {"domain.object.action": handle_action}
+
+def handle_action(api, payload, actor, command_id):
+    # 校验 / 规则 / 不变量；用 api.reject 拒绝（携带扩展错误码）
+    if not payload.get("name"):
+        raise api.reject("DOM-400-001", "name 必填")
+    row = api.create_object("domain_object", {"name": payload["name"]}, actor)
+    event = api.event("domain.object.action-done", actor, [row["id"]], {"object_id": row["id"]})
+    return [event], {"type": "domain_object", "id": row["id"]}
+```
+
+处理器签名固定为 `(api, payload, actor, command_id) -> (events, created)`，只能通过 `api`
+访问内核能力：
+
+| 能力 | 方法 |
+|------|------|
+| 时钟/标识/值转换 | `now` `advance` `new_id` `ts` `parse_ts` `dec` `dec_eq` |
+| 拒绝命令 | `reject(code, reason, reason_code=None)`（抛出内核统一捕获的异常） |
+| 双时间轴对象 | `create_object` `update_object` `find_current` `objects` `current_objects` `as_of` `history` |
+| 事件 | `event(event_type, actor, subjects, payload)` |
+| 读模型/状态 | `stock(item_id, warehouse)` `locked_periods` |
+| 授权 | `authz` `principal_of(actor)` `check_permission(actor, permission)` |
+
+可选模块级声明：
+
+- `SENSITIVE_FIELDS = {"domain.cmd": ("secret",)}`：命令记录脱敏（幂等指纹仍基于原文）；
+- `DEFERRED_AUTHZ = {"domain.cmd"}`：内核跳过命令级预检，处理器用
+  `api.check_permission` 做细粒度判定（如区块属主权限）。
+
+加载按扩展目录名排序；命令处理器重复注册会立即报错（快速失败）。

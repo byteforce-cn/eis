@@ -20,7 +20,7 @@ python3 tools/e2e-runner --all
 |------|------|------|
 | 缺陷修复（工具/文档/测试） | 直接提 PR | 需通过 `e2e-runner --all` |
 | **契约变更**（数据/操作/时间/授权/审计/演进） | ADR → 可执行工件 → 验证 → PR | 模板 `00-freeze/adr/template.md`；兼容性判定依据 `06-evolution-contract/compatibility.rules.yaml`；无工件的变更一律拒绝 |
-| 新增领域扩展 | `extensions/{domain}/` 按结构提交 + manifest + 用例 | 不得修改核心契约；错误码使用自有前缀（如 `Xxx-400-001`） |
+| 新增领域扩展 | `extensions/{domain}/` 按结构提交 + manifest + handlers + 用例 | 不得修改核心契约；错误码使用自有前缀（如 `Xxx-400-001`） |
 | 新增应用案例 | `cases/{case}/`（composition + scenarios） | 场景须可由 `tools/e2e-runner` 执行 |
 | 新增测试 | 按 `tools/e2e-runner` 的 kind 语义编写 | 测试必须可执行、可复现（确定性时钟/数据） |
 
@@ -30,7 +30,9 @@ python3 tools/e2e-runner --all
 2. **可验证**：契约变更必须附带工件（Schema/DDL/测试/工具变更清单）；
 3. **可演进**：破坏性变更必须给出迁移 + 回滚 + 对账路径（模板见 `06-evolution-contract/`）；
 4. **确定性**：测试不得依赖真实时钟、网络与外部数据库（DDL 冒烟由 CI 的 PostgreSQL 任务覆盖）；
-5. **命名**：命令/事件类型形如 `^[a-z][a-z0-9_.]*$`；核心错误码 `EIS-` 前缀不可占用。
+5. **命名**：命令/事件类型形如 `^[a-z][a-z0-9_.]*$`；核心错误码 `EIS-` 前缀不可占用；
+6. **扩展自包含**：命令处理器注册于 `extensions/{domain}/handlers.py`（见 `extensions/README.md` §6），
+   新增扩展不得要求修改内核或其他工具源码。
 
 ## 4. 提交规范
 

@@ -30,3 +30,21 @@ tests:
     target: 02-operation-contract/command.openapi.yaml
     check: present
     pattern: "CommandStatus"
+
+  - name: "内核不得按扩展硬编码命令处理器（扩展注册机制）"
+    kind: static
+    target: tools/lib/kernel.py
+    check: absent
+    pattern: '"iam\.[a-z.]+\":\s*self\._'
+
+  - name: "内核必须提供扩展处理器加载入口"
+    kind: static
+    target: tools/lib/kernel.py
+    check: present
+    pattern: "def load_extension_handlers"
+
+  - name: "每个扩展必须自带 handlers.py 注册表"
+    kind: static
+    target: extensions/iam/handlers.py
+    check: present
+    pattern: 'def register\(api\)'
