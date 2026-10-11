@@ -17,13 +17,18 @@
   | 字段类型变更        | MAJOR | 字段类型变更     | type/format 变化（任意嵌套层级）           |
   | 可选字段新增        | MINOR | 可选字段新增     | new 新增属性且非 required                  |
   | 必填字段新增        | MAJOR | 必填字段新增     | new 新增/收紧 required                     |
-  规则表未单列约束关键词，下列为工具扩展，级别沿用规则表的“域收缩=MAJOR / 域扩张=MINOR”：
+  规则表未单列约束关键词，下列为工具扩展，级别沿用 00-freeze/version-policy.md §2 的
+  “破坏性=MAJOR（字段删除/类型变更/必填新增/语义变更）/ 向后兼容新增=MINOR（可选新增等）”：
   | （扩展）约束收紧    | MAJOR | 约束收紧         | maxLength↓/minimum↑/新增 pattern 等        |
   | （扩展）约束放宽    | MINOR | 约束放宽         | maxLength↑/minimum↓/移除 pattern 等        |
   | （扩展）必填放宽    | MINOR | 必填放宽         | required 中删除字段                        |
   | （扩展）枚举取值收缩| MAJOR | 枚举取值收缩     | enum 取值集合收窄                          |
   | （扩展）枚举取值扩展| MINOR | 枚举取值扩展     | enum 取值集合扩张                          |
   | （扩展）$ref 无法解析| MAJOR| $ref 无法解析    | 本地 $ref 无法解析或循环（保守判 MAJOR）   |
+  | （扩展）递归过深    | MAJOR | 递归过深         | 超过 MAX_DIFF_DEPTH 层（防 $ref 自引用图）  |
+
+递归范围：properties / items / allOf / anyOf / oneOf 逐项下钻（本仓扩展对象 schema 的
+领域字段位于 allOf[1]，必须递归 allOf 才能判出变更）。
 """
 from __future__ import annotations
 
@@ -47,8 +52,9 @@ KIND_TO_RULE = {
     "必填字段新增": ("data", "必填字段新增"),
 }
 # 规则表未覆盖的变更（工具扩展判定，默认配套动作在 EXTRA_REQUIRES）
-# 级别依据：compatibility.rules.yaml 将“域收缩”类变更（字段删除/类型变更）定为 MAJOR，
-# “域扩张”类（可选字段新增）定为 MINOR；约束/枚举/必填的收紧与放宽沿用同一原则。
+# 级别依据：00-freeze/version-policy.md §2——破坏性变更（字段删除/类型变更/必填新增/
+# 语义变更）为 MAJOR，向后兼容的新增（可选字段新增等）为 MINOR；约束/枚举/必填的
+# 收紧与放宽、递归过深均沿用同一原则。
 EXTRA_REQUIRES = {
     "枚举取值收缩": ["migration"],
     "枚举取值扩展": [],
@@ -56,7 +62,11 @@ EXTRA_REQUIRES = {
     "约束收紧": ["migration"],
     "约束放宽": [],
     "$ref 无法解析": [],
+    "递归过深": [],
 }
+
+MAX_DIFF_DEPTH = 64
+COMBINERS = ("allOf", "anyOf", "oneOf")
 
 # 下界类：数值增大为收紧；上界类：数值减小为收紧
 LOWER_BOUNDS = ("minLength", "minimum", "exclusiveMinimum", "minItems")
@@ -164,8 +174,19 @@ def _compare_enum(old_node: dict, new_node: dict, path: str, changes: list) -> N
                         "detail": f"新增取值 {sorted(nenum - oenum)}"})
 
 
-def diff_node(old_node, new_node, path: str, old_root, new_root, changes: list) -> None:
-    """递归比较两个 Schema 节点（解析本地 $ref 后逐层下钻）。"""
+def diff_node(old_node, new_node, path: str, old_root, new_root, changes: list,
+              depth: int = 0) -> None:
+    """递归比较两个 Schema 节点（解析本地 $ref 后逐层下钻，含 allOf/anyOf/oneOf）。"""
+    if depth > MAX_DIFF_DEPTH:
+        changes.append({"kind": "递归过深", "prop": path, "level": "MAJOR",
+                        "detail": f"递归深度超过 {MAX_DIFF_DEPTH} 层，保守判 MAJOR"
+                                  f"（可能是 $ref 自引用图）"})
+        return
+    # 相同的外部（非本地）$ref：视为未变，不做跨文件解析
+    o_ref_raw = old_node.get("$ref") if isinstance(old_node, dict) else None
+    n_ref_raw = new_node.get("$ref") if isinstance(new_node, dict) else None
+    if o_ref_raw is not None and o_ref_raw == n_ref_raw and not str(o_ref_raw).startswith("#"):
+        return
     old_res, o_ref, o_err = resolve_local_ref(old_node, old_root)
     new_res, n_ref, n_err = resolve_local_ref(new_node, new_root)
     if o_err or n_err:
@@ -203,7 +224,7 @@ def diff_node(old_node, new_node, path: str, old_root, new_root, changes: list) 
         if name not in np_:
             changes.append({"kind": "字段删除", "prop": child_path, "level": "MAJOR"})
             continue
-        diff_node(op[name], np_[name], child_path, old_root, new_root, changes)
+        diff_node(op[name], np_[name], child_path, old_root, new_root, changes, depth + 1)
 
     for name in np_:
         if name in op:
@@ -224,7 +245,20 @@ def diff_node(old_node, new_node, path: str, old_root, new_root, changes: list) 
 
     if "items" in old_res or "items" in new_res:
         diff_node(old_res.get("items", {}) or {}, new_res.get("items", {}) or {},
-                  f"{path}[]", old_root, new_root, changes)
+                  f"{path}[]", old_root, new_root, changes, depth + 1)
+
+    # allOf / anyOf / oneOf：逐项递归（本仓扩展对象 schema 的领域字段在 allOf[1]）
+    for combiner in COMBINERS:
+        old_list, new_list = old_res.get(combiner), new_res.get(combiner)
+        if not isinstance(old_list, list) and not isinstance(new_list, list):
+            continue
+        old_list = old_list if isinstance(old_list, list) else []
+        new_list = new_list if isinstance(new_list, list) else []
+        for i in range(max(len(old_list), len(new_list))):
+            o_item = old_list[i] if i < len(old_list) else {}
+            n_item = new_list[i] if i < len(new_list) else {}
+            diff_node(o_item, n_item, f"{path}/{combiner}[{i}]", old_root, new_root,
+                      changes, depth + 1)
 
 
 def diff_schemas(old: dict, new: dict) -> list[dict]:
@@ -361,6 +395,38 @@ def cmd_self_test(args) -> int:
         r = run_check(write("ref_old.json", ref_old), write("ref_bad.json", ref_bad))
         report("$ref 无法解析保守判 MAJOR", r["overall"] == "MAJOR"
                and any(ch["kind"] == "$ref 无法解析" for ch in r["changes"]))
+
+        # 11-13) allOf 递归（本仓扩展对象 schema 的领域字段在 allOf[1]；allOf[0] 为同一外部 $ref）
+        ext_ref = {"$ref": "../../../01-data-contract/object.schema.json"}
+        allof_old = {"allOf": [ext_ref, {"type": "object",
+                                         "properties": {"x": {"type": "string", "maxLength": 10}}}]}
+        # 11) allOf 内字段类型变更 → MAJOR
+        allof_typenew = {"allOf": [ext_ref, {"type": "object",
+                                             "properties": {"x": {"type": "integer", "maxLength": 10}}}]}
+        r = run_check(write("allof_old.json", allof_old), write("allof_type.json", allof_typenew))
+        report("allOf 内类型变更判定 MAJOR", r["overall"] == "MAJOR"
+               and any(ch["kind"] == "字段类型变更" for ch in r["changes"]))
+        # 12) allOf 内约束收紧 → MAJOR
+        allof_tighten = {"allOf": [ext_ref, {"type": "object",
+                                              "properties": {"x": {"type": "string", "maxLength": 5}}}]}
+        r = run_check(write("allof_old.json", allof_old), write("allof_tighten.json", allof_tighten))
+        report("allOf 内约束收紧判定 MAJOR", r["overall"] == "MAJOR"
+               and any(ch["kind"] == "约束收紧" for ch in r["changes"]))
+        # 13) allOf 内可选字段新增 → MINOR
+        allof_add = {"allOf": [ext_ref, {"type": "object", "properties": {
+            "x": {"type": "string", "maxLength": 10}, "y": {"type": "string"}}}]}
+        r = run_check(write("allof_old.json", allof_old), write("allof_add.json", allof_add))
+        report("allOf 内可选字段新增判定 MINOR", r["overall"] == "MINOR"
+               and any(ch["kind"] == "可选字段新增" for ch in r["changes"]))
+
+        # 14) $ref 自引用图 → 深度上限防 RecursionError，保守判 MAJOR
+        selfref = {"$defs": {"Node": {"type": "object",
+                                        "properties": {"child": {"$ref": "#/$defs/Node"}},
+                                        "required": ["child"]}},
+                   "properties": {"root": {"$ref": "#/$defs/Node"}}, "required": ["root"]}
+        r = run_check(write("selfref.json", selfref), write("selfref2.json", selfref))
+        report("$ref 自引用图触发深度上限（保守 MAJOR）", r["overall"] == "MAJOR"
+               and any(ch["kind"] == "递归过深" for ch in r["changes"]))
     print(f"自测结果: {'通过' if ok else '失败'}")
     return 0 if ok else 1
 

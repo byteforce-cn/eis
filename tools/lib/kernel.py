@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import uuid
@@ -174,8 +175,8 @@ class Kernel:
             "id": command_id, "type": cmd_type, "issued_at": ts(self.now()),
             "issuer": principal, "payload": stored_payload, "idempotency_key": idem_key,
             "status": "pending", "event_ids": [],
-            # 幂等指纹基于脱敏前的原始载荷（存储/展示仍为脱敏载荷）
-            "payload_fingerprint": fingerprint,
+            # 幂等指纹基于脱敏前的原始载荷；命令记录只存不可逆摘要（存储/展示仍为脱敏载荷）
+            "payload_fingerprint": hashlib.sha256(fingerprint.encode("utf-8")).hexdigest(),
         }
         self.idem[idem_key] = (fingerprint, command_id)
         self.commands[command_id] = record
@@ -855,6 +856,18 @@ def run_scenario(scenario, report_lines: list[str] | None = None) -> dict:
     return result
 
 
+def _collect_keys(node, keys: set) -> set:
+    """递归收集节点内所有 dict 键（用于整条记录扫描敏感字段）。"""
+    if isinstance(node, dict):
+        keys.update(node.keys())
+        for value in node.values():
+            _collect_keys(value, keys)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_keys(item, keys)
+    return keys
+
+
 def _run_assertion(kernel: Kernel, assertion: dict, context: dict):
     kind = assertion.get("kind")
     if kind == "audit-chain":
@@ -890,7 +903,9 @@ def _run_assertion(kernel: Kernel, assertion: dict, context: dict):
     if kind == "command-redacted":
         step = context["steps"][assertion["step"]]
         record = kernel.commands[step["result"]["command_id"]]
-        leaked = set(assertion.get("fields", [])).intersection(record.get("payload", {}))
+        # 扫描整条命令记录（含 payload 外的字段），而非仅 payload
+        present = _collect_keys(record, set())
+        leaked = set(assertion.get("fields", [])).intersection(present)
         if leaked:
             return False, f"命令记录泄漏敏感字段: {sorted(leaked)}"
         return True, "命令记录不包含敏感字段"
@@ -1074,6 +1089,14 @@ def _self_test() -> bool:
     r3 = k2.submit({"type": "iam.credential.rotate", "payload": different,
                     "idempotency_key": "cred-1"}, account_id)
     report("同键不同原文冲突", r3["status"] == "conflict" and r3.get("code") == "EIS-409-001")
+
+    # 记录级脱敏：原始凭证不得出现在任何字段，指纹只存不可逆摘要
+    record1 = k2.commands[r1["command_id"]]
+    serialized = json.dumps(record1, ensure_ascii=False, sort_keys=True)
+    report("命令记录不泄漏原始凭证", "$2a$old-hash" not in serialized
+           and "$2a$new-hash" not in serialized)
+    report("payload_fingerprint 为不可逆摘要",
+           bool(re.fullmatch(r"[0-9a-f]{64}", record1.get("payload_fingerprint", ""))))
 
     # 篡改检出
     kernel = Kernel()

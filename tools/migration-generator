@@ -97,12 +97,21 @@ def generate(old: dict, new: dict, table: str, version: str) -> tuple[str, str]:
         has_change = True
         sql_type = map_type(prop)
         default = prop.get("default", MISSING)
-        if name in nreq and default is not MISSING:
-            mig.append("-- 必填新增列（提供 default，可直接 NOT NULL；PG 11+ 常量默认不重写表）")
+        # default 仅在为标量（str/int/float/bool）时可安全内联为 DEFAULT；
+        # null 视同无 default，list/dict 等非标量必须人工回填。
+        scalar_default = default is not MISSING and isinstance(default, (str, int, float, bool))
+        if name in nreq and scalar_default:
+            mig.append("-- 必填新增列（提供标量 default，可直接 NOT NULL；PG 11+ 常量默认不重写表）")
             mig.append(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type} "
                        f"DEFAULT {sql_literal(default)} NOT NULL;")
         elif name in nreq:
-            mig.append("-- 必填新增列（无 default，两阶段：先加可空列，回填后再加非空约束）")
+            if default is None:
+                reason = "default 为 null，视同无 default"
+            elif default is not MISSING and not isinstance(default, (str, int, float, bool)):
+                reason = "default 为非标量（list/dict），不生成可执行 DEFAULT"
+            else:
+                reason = "无 default"
+            mig.append(f"-- 必填新增列（{reason}，两阶段：先加可空列，回填后再加非空约束）")
             mig.append(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type};")
             mig.append(f"-- 必须先回填非空值，再执行 SET NOT NULL（本迁移不自动执行）：")
             mig.append(f"--   ALTER TABLE {table} ALTER COLUMN {name} SET NOT NULL")
@@ -184,6 +193,26 @@ def cmd_self_test(args) -> int:
         mig_def, _ = generate(old_def, new_def, "t_demo", "1.3.0")
         report("必填有 default 单句直接 NOT NULL",
                "ADD COLUMN d TEXT DEFAULT 'x' NOT NULL;" in mig_def)
+
+        # 必填 + default=null → 视同无 default，走两阶段、不输出可执行 SET NOT NULL
+        new_null = {"properties": {"a": {"type": "integer"}, "d": {"type": "string", "default": None}},
+                    "required": ["a", "d"]}
+        mig_null, _ = generate(old_def, new_null, "t_demo", "1.4.0")
+        report("必填 default=null 走两阶段",
+               "ADD COLUMN d TEXT;" in mig_null
+               and not re.search(r"ADD COLUMN d \w+ DEFAULT", mig_null)
+               and not re.search(r"ALTER COLUMN d SET NOT NULL;", mig_null)
+               and "default 为 null" in mig_null)
+
+        # 必填 + 非标量 default（list）→ 两阶段 + 注释说明，不内联 DEFAULT
+        new_non = {"properties": {"a": {"type": "integer"}, "d": {"type": "array", "default": [1, 2]}},
+                   "required": ["a", "d"]}
+        mig_non, _ = generate(old_def, new_non, "t_demo", "1.5.0")
+        report("必填非标量 default 走两阶段并注释",
+               "非标量" in mig_non
+               and not re.search(r"ADD COLUMN d \w+ DEFAULT", mig_non)
+               and not re.search(r"ALTER COLUMN d SET NOT NULL;", mig_non))
+
         out = Path(tmp) / "migration"
         out.mkdir()
         (out / f"V1.2.0__t_demo.sql").write_text(mig, encoding="utf-8")

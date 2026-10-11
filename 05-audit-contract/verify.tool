@@ -56,6 +56,14 @@ def _load_entry_validator():
 
 
 _ENTRY_VALIDATOR = _load_entry_validator()
+SCHEMA_VALIDATION_ENABLED = _ENTRY_VALIDATOR is not None
+
+
+def warn_if_degraded() -> None:
+    """jsonschema 不可用时向 stderr 打一行明确警告；不影响退出码语义。"""
+    if not SCHEMA_VALIDATION_ENABLED:  # pragma: no cover
+        print("警告: 未安装 jsonschema，审计链验证已降级为仅哈希校验；"
+              "Schema 完整性未验证（请 pip install jsonschema）", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -280,16 +288,19 @@ def self_test(verbose: bool = True) -> bool:
         print("[ok]   断链被检出（prev_hash_mismatch）")
 
     # 5) 缺必填字段但哈希自洽 → schema_invalid（仅重算哈希会漏判）
-    missing = copy.deepcopy(chain)
-    del missing[0]["action"]
-    missing[0]["hash"] = compute_hash(missing[0])
-    errors = verify_chain(missing)
-    if not any(x["type"] == "schema_invalid" for x in errors):
-        ok = False
-        if verbose:
-            print("[FAIL] 缺必填字段未被检出: %s" % errors)
-    elif verbose:
-        print("[ok]   缺必填字段被检出（schema_invalid）")
+    if SCHEMA_VALIDATION_ENABLED:
+        missing = copy.deepcopy(chain)
+        del missing[0]["action"]
+        missing[0]["hash"] = compute_hash(missing[0])
+        errors = verify_chain(missing)
+        if not any(x["type"] == "schema_invalid" for x in errors):
+            ok = False
+            if verbose:
+                print("[FAIL] 缺必填字段未被检出: %s" % errors)
+        elif verbose:
+            print("[ok]   缺必填字段被检出（schema_invalid）")
+    elif verbose:  # pragma: no cover
+        print("[skip] 缺必填字段检测（jsonschema 缺失，Schema 校验已降级）")
 
     # 6) 畸形 timestamp → 结构化错误（不抛异常）
     bad_ts = copy.deepcopy(chain)
@@ -326,6 +337,8 @@ def main(argv=None) -> int:
     parser.add_argument("--self-test", action="store_true", help="运行自测")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
     args = parser.parse_args(argv)
+
+    warn_if_degraded()
 
     if args.self_test:
         return 0 if self_test(verbose=not args.quiet) else 1

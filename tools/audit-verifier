@@ -48,6 +48,10 @@ def load_verify_module():
     loader = SourceFileLoader("eis_verify_tool", str(VERIFY_TOOL))
     module = module_from_spec(spec_from_loader("eis_verify_tool", loader))
     loader.exec_module(module)
+    # 透传 verify.tool 的降级警告（jsonschema 缺失 → 仅哈希校验）
+    warn = getattr(module, "warn_if_degraded", None)
+    if callable(warn):
+        warn()
     return module
 
 
@@ -115,13 +119,16 @@ def cmd_self_test(args) -> int:
            any(e["type"] == "prev_hash_mismatch" for e in vt.verify_chain(broken)))
 
     # 负例：缺必填字段但哈希自洽 → schema_invalid（仅重算哈希会漏判为 valid）
-    missing = copy.deepcopy(chain)
-    del missing[0]["action"]
-    missing[0]["hash"] = vt.compute_hash(missing[0])
-    missing_errors = vt.verify_chain(missing)
-    report("缺必填字段检出（schema_invalid）",
-           any(e["type"] == "schema_invalid" for e in missing_errors)
-           and any(e.get("path") for e in missing_errors if e["type"] == "schema_invalid"))
+    if getattr(vt, "SCHEMA_VALIDATION_ENABLED", True):
+        missing = copy.deepcopy(chain)
+        del missing[0]["action"]
+        missing[0]["hash"] = vt.compute_hash(missing[0])
+        missing_errors = vt.verify_chain(missing)
+        report("缺必填字段检出（schema_invalid）",
+               any(e["type"] == "schema_invalid" for e in missing_errors)
+               and any(e.get("path") for e in missing_errors if e["type"] == "schema_invalid"))
+    else:  # pragma: no cover
+        print("[skip] 缺必填字段检出（jsonschema 缺失，Schema 校验已降级）")
 
     # 负例：畸形 timestamp → 结构化错误而非 traceback
     bad_ts = copy.deepcopy(chain)
