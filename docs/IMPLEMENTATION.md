@@ -43,6 +43,17 @@ starter-eis-temporal  时点查询支持（SQL 模板 → MyBatis/Spring Data �
 > 参考内核 `tools/lib/kernel.py` 是这四个构件的**行为基准**：Java 移植时逐方法对齐
 > （受理→规则→事件→审计→版本封口的顺序、拒绝码、时间轴边界）。
 
+### 写入专用派生字段的密钥服务映射（ADR-0005 / DRV-*）
+
+- 规范路径：命令载荷携带原始值（`writeOnly`），字段属主域服务在写路径派生后落库，
+  原始值与派生值在读投影/命令记录/日志剔除；密钥由部署侧注入（参考内核环境变量
+  `EIS_FIELD_HASH_KEYS`，逗号分隔、首为主），轮换按密钥环窗口执行（DRV-005）。
+- seedj/server：由 `starter-eis-core` 落派生与投影剔除；密钥从环境/密钥注入读取，不落仓、不入镜像、
+  不进浏览器或通用 BFF。
+- coord Transit（**可选映射，非 v1 默认**）：`Transit/HmacSign` 可充当受信密钥服务，但当前为
+  单实例单 HMAC 密钥、签名无 key_id、历史材料不参与 HMAC（KEK 轮换后存量散列不可复算），
+  暂不满足 DRV-002/DRV-005；前置需求见 `docs/COORD-REQUIREMENTS.md` G-TR-3。
+
 ## 2. 扩展 → server 应用映射
 
 > server 现有项目已全部删除（仅保留 `docker/`），重建时按下表对应。

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "eis://extensions/hr/object/employee/v1",
   "title": "Employee",
-  "description": "员工主数据。employee_no 由服务端生成；id_number_hash 为写入专用散列，任何读投影均须剔除。",
+  "description": "员工主数据。employee_no 由服务端生成；id_number_hash 为服务端派生的写入专用散列（载荷以原始 id_number 写入，写路径派生；任何读投影/命令记录均须剔除）。",
   "allOf": [
     {
       "$ref": "../../../01-data-contract/object.schema.json"
@@ -47,7 +47,7 @@
           "type": ["string", "null"],
           "pattern": "^[0-9a-f]{64}$",
           "writeOnly": true,
-          "description": "证件号 HMAC-SHA256 散列（小写十六进制 64 字符；写入专用；非终态员工间唯一，允许离职返聘）"
+          "description": "证件号 HMAC-SHA256 散列（小写十六进制 64 字符；服务端由 id_number 派生；非终态员工间唯一，允许离职返聘；不落读投影/命令记录）"
         },
         "terminated_at": {
           "type": ["string", "null"],

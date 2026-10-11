@@ -33,3 +33,4 @@ EIS 的核心契约已冻结。任何修改（解冻请求）必须走以下流�
 | [0002](0002-pre-release-revisions.md) | 开源发布前定稿修订（Pre-release） | Accepted |
 | [0003](0003-iam-extension-boundary-and-audit-scope.md) | IAM 首落地：扩展边界与审计范围 | Accepted |
 | [0004](0004-authz-attributes-ownership.md) | 授权属性的属主与来源（拉取为准，推送为可选物化） | Accepted |
+| [0005](0005-write-only-derived-fields.md) | 写入专用派生字段的服务端派生与密钥托管 | Accepted |

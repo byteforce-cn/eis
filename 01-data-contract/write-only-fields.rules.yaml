@@ -1,0 +1,55 @@
+# write-only-fields.rules.yaml — 写入专用派生字段规则（Spec v1.0.0 加法演进，MINOR）
+# 依据：00-freeze/adr/0005-write-only-derived-fields.md、issue #6
+# 判定权威：写路径、读投影、命令记录与日志实现必须遵守本表；违反即合规缺陷。
+version: "1.0.0"
+
+write_only_rules:
+  - id: "DRV-001"
+    name: "服务端派生（规范路径）"
+    level: "MUST"
+    statement: "写入专用派生字段（如 id_number_hash）的原始值以 writeOnly 字段进入命令载荷（如 id_number），由字段属主域服务在写路径派生后落库；调用方不得提交派生值。浏览器只经 BFF 提交原始值，BFF 不承担域级派生语义；浏览器可见的响应与日志不得出现原始值或派生值。"
+    error_code: "WRITE_ONLY_PRODUCER_VIOLATION"
+
+  - id: "DRV-002"
+    name: "密钥托管"
+    level: "MUST"
+    statement: "派生密钥按用途隔离，仅由字段属主域服务持有，由部署侧以环境变量/密钥管理系统注入（参考实现键名 EIS_FIELD_HASH_KEYS，逗号分隔，首密钥为主）；不得写入代码仓、镜像、命令载荷或任何浏览器可见面；通用 BFF 不持有域密钥。生产环境必须注入，开发缺省值仅供参考实现与测试。"
+    error_code: "WRITE_ONLY_KEY_VIOLATION"
+
+  - id: "DRV-003"
+    name: "派生定义与域分离"
+    level: "MUST"
+    statement: "防重/匹配类派生字段使用 HMAC-SHA256，输出小写十六进制 64 字符；输入为 scope + 0x00 + 原始值，scope 形如 eis:<extension>:<object>:<field>:v1，不得省略。口令类字段允许带盐/慢哈希（算法由域声明），不要求确定性，但 custody 与剔除口径不变。"
+    error_code: "WRITE_ONLY_ALGO_VIOLATION"
+
+  - id: "DRV-004"
+    name: "原始值与派生值剔除"
+    level: "MUST"
+    statement: "原始值与派生值不得出现在读投影、命令记录、事件载荷、日志与错误响应中；幂等指纹可基于原始载荷计算，但只允许存储不可逆摘要。写路径内部（校验/规则/防重）可在内存中使用原始值。"
+    error_code: "WRITE_ONLY_LEAK"
+
+  - id: "DRV-005"
+    name: "密钥轮换窗口"
+    level: "MUST"
+    statement: "密钥按版本组织为密钥环：新写入恒用主密钥；防重/比对必须覆盖密钥环全部接受密钥的散列变体（跨轮换匹配）。主密钥替换后旧密钥仍须继续注入，直到不再存在依赖它的在库记录（或该记录的防重视野结束）；提前下线必须配套重新采集/重建流程。"
+    error_code: "WRITE_ONLY_ROTATION_VIOLATION"
+
+  - id: "DRV-006"
+    name: "凭据类字段同样适用"
+    level: "MUST"
+    statement: "Credential.secret_hash 等凭据字段适用同一 custody 与剔除口径（DRV-002/DRV-004）；在尚无原始值入口的 v1，允许由已声明的指定生产者（如引导程序）在受信后端派生并写入，但必须记录生产者与迁移到 DRV-001 的路径。"
+    error_code: "WRITE_ONLY_CREDENTIAL_VIOLATION"
+
+tests:
+  - name: "服务端派生且调用方不可复算"
+    input: "hr.employee.create 载荷 id_number=<原始值>（writeOnly）"
+    expect: "落库 id_number_hash 为 64 字符小写十六进制；命令记录与读投影均无 id_number 与 id_number_hash"
+  - name: "域分离"
+    input: "同一原始值在 scope A 与 scope B 下派生"
+    expect: "两散列不同（scope + 0x00 前缀不可省略）"
+  - name: "轮换窗口防重"
+    input: "密钥环 [new, old]，旧密钥存量散列在库，写入相同原始值"
+    expect: "rejected HR-409-002（变体命中）"
+  - name: "空原始值拒绝"
+    input: "id_number 为空串或仅空白"
+    expect: "rejected HR-400-001（派生前置校验）"

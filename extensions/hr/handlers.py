@@ -10,10 +10,19 @@ from datetime import datetime
 
 COMMANDS = {}
 
-# 证件散列只在受理时参与校验/防重，命令记录中脱敏（幂等指纹仍基于原文）
+# 证件号原始值只在受理时参与派生/防重，命令记录中脱敏（幂等指纹仍基于原文）；
+# id_number_hash 同时登记，防止任何历史/越权入参进入记录。
 SENSITIVE_FIELDS = {
-    "hr.employee.create": ("id_number_hash",),
+    "hr.employee.create": ("id_number", "id_number_hash"),
 }
+
+# 读投影剔除：id_number_hash 为写入专用派生字段（DRV-001/DRV-004）
+WRITE_ONLY_FIELDS = {
+    "hr_employee": ("id_number_hash",),
+}
+
+# 域分离上下文（DRV-003）：eis:<extension>:<object>:<field>:v1
+ID_NUMBER_CONTEXT = "eis:hr:hr_employee:id_number:v1"
 
 NON_TERMINAL = ("pending_onboarding", "active")
 TERMINAL = ("terminated", "cancelled")
@@ -238,13 +247,18 @@ def create_employee(api, payload, actor, command_id):
         raise api.reject("HR-400-001", "name 必填")
     if not _valid_date(hire_date):
         raise api.reject("HR-400-001", "hire_date 必须为 YYYY-MM-DD")
-    id_hash = payload.get("id_number_hash")
-    if id_hash is not None:
-        if not isinstance(id_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", id_hash):
-            raise api.reject("HR-400-001", "id_number_hash 必须为小写十六进制 HMAC-SHA256（64 字符）")
+    # 写入专用派生字段（DRV-001）：载荷携带原始证件号，域服务用注入密钥派生散列；
+    # 不接受调用方自算的 id_number_hash（避免非法生产者与密钥外泄）。
+    raw_id = payload.get("id_number")
+    id_hash = None
+    if raw_id is not None:
+        if not isinstance(raw_id, str) or not raw_id.strip():
+            raise api.reject("HR-400-001", "id_number 必须为非空字符串（原始证件号，服务端派生）")
+        id_hash = api.derive_write_only(ID_NUMBER_CONTEXT, raw_id)
+        variants = set(api.write_only_variants(ID_NUMBER_CONTEXT, raw_id))
         duplicate = api.find_current(
             "hr_employee",
-            lambda r: r.get("id_number_hash") == id_hash and r["status"] in NON_TERMINAL,
+            lambda r: r.get("id_number_hash") in variants and r["status"] in NON_TERMINAL,
         )
         if duplicate:
             raise api.reject("HR-409-002", f"证件散列与未终态员工重复: {duplicate['employee_no']}")

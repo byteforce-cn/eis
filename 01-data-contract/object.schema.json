@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "eis://core/object/v1",
   "title": "BusinessObject",
-  "description": "所有业务对象的元结构（冻结）：身份 + 乐观锁版本 + 双时间轴 + 审计字段。领域扩展以 allOf 方式追加领域字段。",
+  "description": "所有业务对象的元结构（冻结）：身份 + 乐观锁版本 + 双时间轴 + 审计字段。领域扩展以 allOf 方式追加领域字段。写入专用派生字段（writeOnly）的原始值/密钥/轮换口径见 01-data-contract/write-only-fields.rules.yaml（DRV-*）。",
   "type": "object",
   "required": ["id", "version", "valid_from", "recorded_at", "created_by", "created_at"],
   "properties": {

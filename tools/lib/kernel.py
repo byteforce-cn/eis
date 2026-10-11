@@ -19,6 +19,9 @@
   - 模块提供 `register(api) -> {command_type: handler}`（或 `COMMANDS` 映射）；
     handler 签名 `(api, payload, actor, command_id) -> (events, created)`；
   - 可选 `SENSITIVE_FIELDS = {command_type: (field, ...)}` 声明命令记录脱敏字段；
+  - 可选 `WRITE_ONLY_FIELDS = {object_type: (field, ...)}` 声明读投影剔除字段（writeOnly）；
+  - 可选 `derive_write_only(scope, raw)` / `write_only_variants(scope, raw)` 做服务端派生
+    （HMAC-SHA256 密钥环：首密钥为主，余为轮换接受集；见 01 数据契约 DRV-*）；
   - 可选 `DEFERRED_AUTHZ = {command_type, ...}` 声明处理器内部做细粒度权限判定
     （如区块属主权限 `approval.section.confirm.<owner>`），内核跳过命令级预检；
   - 处理器只通过 `ExtensionAPI`（见下）访问内核能力。
@@ -34,7 +37,9 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -81,6 +86,24 @@ def dec(value) -> Decimal:
 
 def dec_eq(a, b) -> bool:
     return dec(a) == dec(b)
+
+
+# 写入专用派生字段（01-data-contract/write-only-fields.rules.yaml DRV-*）。
+# 密钥环：首密钥为主（新写入），其余为轮换接受集（防重比对）；生产必须注入，
+# 缺省值仅供参考内核/测试使用。
+DEFAULT_FIELD_HASH_KEYS = ("eis-dev-field-hash-key",)
+
+
+def field_hash_keys_from_env() -> tuple[str, ...]:
+    raw = os.environ.get("EIS_FIELD_HASH_KEYS", "")
+    keys = tuple(k.strip() for k in raw.split(",") if k.strip())
+    return keys or DEFAULT_FIELD_HASH_KEYS
+
+
+def derive_hmac(keys, scope: str, raw: str) -> str:
+    """HMAC-SHA256(keys[0], scope + 0x00 + raw)，小写十六进制（域分离）。"""
+    message = scope.encode("utf-8") + b"\x00" + raw.encode("utf-8")
+    return hmac.new(keys[0].encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
 class Rejected(Exception):
@@ -133,6 +156,15 @@ class ExtensionAPI:
 
     def dec_eq(self, a, b) -> bool:
         return dec_eq(a, b)
+
+    # -- 写入专用派生字段（DRV-*） --------------------------------------
+    def derive_write_only(self, scope: str, raw: str) -> str:
+        """服务端派生写入专用字段（主密钥）。"""
+        return derive_hmac(self._kernel.field_hash_keys, scope, raw)
+
+    def write_only_variants(self, scope: str, raw: str) -> list[str]:
+        """同一原始值在密钥环全部密钥下的散列（主密钥在前），供防重跨轮换比对。"""
+        return [derive_hmac((key,), scope, raw) for key in self._kernel.field_hash_keys]
 
     # -- 拒绝 -----------------------------------------------------------
     def reject(self, code: str, reason: str, reason_code: str | None = None):
@@ -221,6 +253,8 @@ def load_extension_handlers(kernel: "Kernel") -> dict[str, callable]:
             handlers[cmd_type] = handler
         for cmd_type, fields in (getattr(module, "SENSITIVE_FIELDS", None) or {}).items():
             kernel.register_sensitive(cmd_type, fields)
+        for obj_type, fields in (getattr(module, "WRITE_ONLY_FIELDS", None) or {}).items():
+            kernel.register_write_only(obj_type, fields)
         for cmd_type in (getattr(module, "DEFERRED_AUTHZ", None) or ()):
             kernel.deferred_authz.add(cmd_type)
     return handlers
@@ -229,7 +263,8 @@ def load_extension_handlers(kernel: "Kernel") -> dict[str, callable]:
 class Kernel:
     """EIS 参考内核：命令受理 → 规则 → 事件 → 审计链 → 双时间轴对象。"""
 
-    def __init__(self, clock_start="2026-10-08T09:00:00Z", authz_fixtures: dict | None = None):
+    def __init__(self, clock_start="2026-10-08T09:00:00Z", authz_fixtures: dict | None = None,
+                 field_hash_keys: list[str] | None = None):
         self.clock = parse_ts(clock_start)
         self._id_ns = 0x0190F2E3A12C
         self._id_counter = 0
@@ -251,9 +286,13 @@ class Kernel:
             for p in authz_fixtures.get("principals", []):
                 self.authz_by_key[p.get("key", p["id"])] = p["id"]
 
-        # 扩展机制：处理器注册、脱敏字段、延迟授权
+        # 扩展机制：处理器注册、脱敏字段、延迟授权、写入专用字段
         self.sensitive_fields: dict[str, tuple[str, ...]] = {}
         self.deferred_authz: set[str] = set()
+        self.field_hash_keys: tuple[str, ...] = (
+            tuple(field_hash_keys) if field_hash_keys else field_hash_keys_from_env()
+        )
+        self.write_only_fields: dict[str, tuple[str, ...]] = {}
         self.api = ExtensionAPI(self)
         self.command_handlers: dict[str, callable] = load_extension_handlers(self)
 
@@ -284,6 +323,12 @@ class Kernel:
         merged = set(self.sensitive_fields.get(command_type, ()))
         merged.update(fields)
         self.sensitive_fields[command_type] = tuple(sorted(merged))
+
+    def register_write_only(self, obj_type: str, fields) -> None:
+        """登记读投影剔除字段（处理器模块通过 WRITE_ONLY_FIELDS 声明）。"""
+        merged = set(self.write_only_fields.get(obj_type, ()))
+        merged.update(fields)
+        self.write_only_fields[obj_type] = tuple(sorted(merged))
 
     # ------------------------------------------------------------------
     # 命令受理
@@ -438,6 +483,14 @@ class Kernel:
             return None
         return max(candidates, key=lambda r: r["version"])
 
+    def read_projection(self, obj_type: str, obj_id: str, valid_at=None, recorded_at=None) -> dict | None:
+        """读投影：剔除写入专用字段（writeOnly）后的对象视图（DRV-004）。"""
+        row = self.as_of(obj_type, obj_id, valid_at, recorded_at)
+        if row is None:
+            return None
+        excluded = self.write_only_fields.get(obj_type, ())
+        return {k: v for k, v in row.items() if k not in excluded}
+
     def history(self, obj_type: str, obj_id: str) -> list[dict]:
         rows = [r for r in self.objects.get(obj_type, []) if r["id"] == obj_id]
         return sorted(rows, key=lambda r: r["version"])
@@ -553,7 +606,8 @@ def run_scenario(scenario, report_lines: list[str] | None = None) -> dict:
     assert_results: list[dict] = []
 
     kernel = Kernel(clock_start=spec.get("clock_start", "2026-10-08T09:00:00Z"),
-                    authz_fixtures=spec.get("authz"))
+                    authz_fixtures=spec.get("authz"),
+                    field_hash_keys=spec.get("field_hash_keys"))
     context: dict = {"ids": {}, "steps": {}}
 
     # setup
@@ -662,6 +716,16 @@ def _run_assertion(kernel: Kernel, assertion: dict, context: dict):
         if actual != expect:
             return False, f"{assertion['type']}.{assertion['field']} 期望 {expect}，实际 {actual}"
         return True, f"{assertion['type']}.{assertion['field']} == {expect}"
+    if kind == "object-absent":
+        obj_id = resolve_tokens(assertion["id"], context)
+        row = kernel.read_projection(assertion["type"], obj_id)
+        if row is None:
+            return False, f"对象不存在: {assertion['type']}/{obj_id}"
+        fields = assertion.get("fields", [])
+        leaked = [field for field in fields if field in row]
+        if leaked:
+            return False, f"读投影泄漏写入专用字段: {leaked}"
+        return True, f"读投影不含字段 {fields}"
     if kind == "object-count":
         where = {key: resolve_tokens(value, context)
                  for key, value in (assertion.get("where") or {}).items()}

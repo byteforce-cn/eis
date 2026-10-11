@@ -53,6 +53,16 @@
 - 影响：事件内容被篡改时，链校验无法发现。
 - 使用者应对：如需事件级不可篡改，把事件摘要纳入审计 payload 或另行锚定。
 
+### 2.3 写入专用字段密钥的参考缺省值
+
+- 【已核实】`tools/lib/kernel.py` 的 `DEFAULT_FIELD_HASH_KEYS` 提供开发缺省密钥
+  （`eis-dev-field-hash-key`），生产必须经 `EIS_FIELD_HASH_KEYS` 注入（DRV-002）；
+  参考内核不校验部署是否注入，也没有密钥服务/轮换编排。
+- 现状：e2e 用例通过场景 `field_hash_keys` 显式钉住密钥，保证离线确定性。
+- 影响：直接把参考缺省值用于生产等于无密钥隔离；coord Transit 当前也不能替代
+  （HMAC 无用途化密钥与 key_id，轮换后存量散列不可复算，见 `docs/COORD-REQUIREMENTS.md` G-TR-3）。
+- 使用者应对：部署侧注入用途密钥并纳入密钥管理；轮换按 DRV-005 密钥环窗口执行。
+
 ## 3. 审计
 
 ### 3.1 连续序列校验依赖部署侧锚表

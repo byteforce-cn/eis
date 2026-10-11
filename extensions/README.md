@@ -101,10 +101,13 @@ def handle_action(api, payload, actor, command_id):
 | 事件 | `event(event_type, actor, subjects, payload)` |
 | 读模型/状态 | `stock(item_id, warehouse)` `locked_periods` |
 | 授权 | `authz` `principal_of(actor)` `check_permission(actor, permission)` |
+| 写入专用派生 | `derive_write_only(scope, raw)` `write_only_variants(scope, raw)` |
 
 可选模块级声明：
 
 - `SENSITIVE_FIELDS = {"domain.cmd": ("secret",)}`：命令记录脱敏（幂等指纹仍基于原文）；
+- `WRITE_ONLY_FIELDS = {"domain_object": ("secret_hash",)}`：读投影剔除（writeOnly 派生字段，
+  见 `01-data-contract/write-only-fields.rules.yaml`）；
 - `DEFERRED_AUTHZ = {"domain.cmd"}`：内核跳过命令级预检，处理器用
   `api.check_permission` 做细粒度判定（如区块属主权限）。
 

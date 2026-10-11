@@ -64,13 +64,16 @@ components:
               enum:
               - national_id
               - passport
-            id_number_hash:
+            id_number:
               type:
               - string
               - 'null'
-              pattern: ^[0-9a-f]{64}$
+              minLength: 1
               writeOnly: true
-              description: 证件号 HMAC-SHA256 散列（小写十六进制 64 字符；写入专用，不落读投影）
+              description: >-
+                原始证件号（写入专用）：由域服务用注入密钥 HMAC-SHA256 派生
+                id_number_hash 落库；任何响应/日志不得回显。密钥 custody 与轮换
+                见 01-data-contract/write-only-fields.rules.yaml（DRV-*）。
         idempotency_key:
           type: string
         targets:

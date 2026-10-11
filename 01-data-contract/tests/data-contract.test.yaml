@@ -51,3 +51,10 @@ tests:
     args: [tools/contract-checker, --self-test]
     expect_exit: 0
     stdout_contains: ["PG 保留字字段被拒绝并给出建议名"]
+
+  - name: "写入专用派生字段规则必须可执行且覆盖 DRV-001..006"
+    kind: static
+    target: 01-data-contract/write-only-fields.rules.yaml
+    check: present
+    pattern: 'id: "DRV-00[1-6]"'
+    min_matches: 6

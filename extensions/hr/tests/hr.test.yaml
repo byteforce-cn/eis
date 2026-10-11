@@ -19,6 +19,7 @@ tests:
     scenario:
       id: hr.hire-to-active
       authz: *authz
+      field_hash_keys: [eis-test-field-hash-key-v1]
       steps:
         - id: T1
           actor: hr_admin
@@ -33,7 +34,7 @@ tests:
         - id: T3
           actor: hr_admin
           command: hr.employee.create
-          payload: {name: 张三, hire_date: "2026-10-01", id_type: national_id, id_number_hash: "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"}
+          payload: {name: 张三, hire_date: "2026-10-01", id_type: national_id, id_number: "110101199001011234"}
           events: [hr.employee.created]
         - id: T4
           actor: hr_admin
@@ -48,6 +49,7 @@ tests:
       assert:
         - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: status, expect: active}
         - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: employee_no, expect: EMP-000001}
+        - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: id_number_hash, expect: 3935748e52ed27e867bf65e8bb2a97ff58d59acf1d4b8adb920513b78fc492bf}
         - {kind: object-field, type: hr_assignment, id: "${steps.T4.created.id}", field: org_unit_id, expect: "${steps.T1.created.id}"}
         - {kind: object-field, type: hr_assignment, id: "${steps.T4.created.id}", field: is_primary, expect: true}
         - {kind: audit-chain, expect: valid, min_entries: 5}
@@ -235,16 +237,17 @@ tests:
     scenario:
       id: hr.id-dedup-rehire
       authz: *authz
+      field_hash_keys: [eis-test-field-hash-key-v1]
       steps:
         - id: T1
           actor: hr_admin
           command: hr.employee.create
-          payload: {name: 周八, hire_date: "2026-10-05", id_type: national_id, id_number_hash: "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"}
+          payload: {name: 周八, hire_date: "2026-10-05", id_type: national_id, id_number: "110101198505054321"}
           events: [hr.employee.created]
         - id: T2
           actor: hr_admin
           command: hr.employee.create
-          payload: {name: 周八（重复）, hire_date: "2026-10-05", id_type: national_id, id_number_hash: "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"}
+          payload: {name: 周八（重复）, hire_date: "2026-10-05", id_type: national_id, id_number: "110101198505054321"}
           expect_status: rejected
           expect_code: HR-409-002
         - id: T3
@@ -255,11 +258,33 @@ tests:
         - id: T4
           actor: hr_admin
           command: hr.employee.create
-          payload: {name: 周八（返聘）, hire_date: "2026-11-01", id_type: national_id, id_number_hash: "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"}
+          payload: {name: 周八（返聘）, hire_date: "2026-11-01", id_type: national_id, id_number: "110101198505054321"}
           events: [hr.employee.created]
       assert:
         - {kind: object-field, type: hr_employee, id: "${steps.T1.created.id}", field: status, expect: cancelled}
-        - {kind: object-count, type: hr_employee, where: {id_number_hash: "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"}, expect: 2}
+        - {kind: object-count, type: hr_employee, where: {id_number_hash: b2c2e29c4d2a8b7921bfa84859140de18df3d8824bd5602cedd3e910f8aa357a}, expect: 2}
+
+  - name: "字段密钥轮换窗口：旧密钥存量散列仍参与防重"
+    kind: scenario
+    scenario:
+      id: hr.write-only-rotation
+      authz: *authz
+      field_hash_keys: [new-field-hash-key-v1, old-field-hash-key-v1]
+      setup:
+        objects:
+          - type: hr_employee
+            id: "01900000-0000-7000-8000-00000000e001"
+            data: {employee_no: EMP-000001, name: 旧密钥员工, status: pending_onboarding, hire_date: "2026-09-01", id_type: national_id, id_number_hash: "ef75360bccb3b5bdbd4cad8fae42bf9d1f32e43752ec0e1f36c40a3adc08879e"}
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 同证件复议, hire_date: "2026-10-05", id_type: national_id, id_number: "110101197001019999"}
+          expect_status: rejected
+          expect_code: HR-409-002
+      assert:
+        - {kind: object-count, type: hr_employee, where: {name: 同证件复议}, expect: 0}
+        - {kind: command-redacted, step: T1, fields: [id_number, id_number_hash]}
 
   - name: "结束主岗令在职员工进入终态，供给可回收账号"
     kind: scenario
@@ -309,14 +334,17 @@ tests:
     scenario:
       id: hr.sensitive-redaction
       authz: *authz
+      field_hash_keys: [eis-test-field-hash-key-v1]
       steps:
         - id: T1
           actor: hr_admin
           command: hr.employee.create
-          payload: {name: 郑十, hire_date: "2026-10-07", id_type: passport, id_number_hash: "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"}
+          payload: {name: 郑十, hire_date: "2026-10-07", id_type: passport, id_number: "E12345678"}
           events: [hr.employee.created]
       assert:
-        - {kind: command-redacted, step: T1, fields: [id_number_hash]}
+        - {kind: command-redacted, step: T1, fields: [id_number, id_number_hash]}
+        - {kind: object-field, type: hr_employee, id: "${steps.T1.created.id}", field: id_number_hash, expect: f494079650af226598071c86526aeee36487f76a6e361fc64b1e1eda9c6f45e0}
+        - {kind: object-absent, type: hr_employee, id: "${steps.T1.created.id}", fields: [id_number, id_number_hash]}
         - {kind: idempotency, step: T1}
 
   - name: "主组织由主岗派生，不得直接改写"
@@ -391,16 +419,16 @@ tests:
         - {kind: object-count, type: hr_organization_unit, where: {code: D003}, expect: 0}
         - {kind: object-count, type: hr_position, where: {code: P900}, expect: 0}
 
-  - name: "证件散列格式非法必须拒绝（HMAC-SHA256 小写十六进制 64 字符）"
+  - name: "证件号原始值不得为空（服务端派生前置校验）"
     kind: scenario
     scenario:
-      id: hr.id-hash-format
+      id: hr.id-number-required
       authz: *authz
       steps:
         - id: T1
           actor: hr_admin
           command: hr.employee.create
-          payload: {name: 蒋十三, hire_date: "2026-10-10", id_type: national_id, id_number_hash: plaintext-pii}
+          payload: {name: 蒋十三, hire_date: "2026-10-10", id_type: national_id, id_number: ""}
           expect_status: rejected
           expect_code: HR-400-001
       assert:

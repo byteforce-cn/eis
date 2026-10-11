@@ -45,9 +45,16 @@ pending_onboarding ────────────────► cancelled
 
 ## 4. 敏感字段
 
-- `Employee.id_number_hash`：证件号的 HMAC-SHA256 散列，`writeOnly`；
-  命令记录经 `handlers.py` 的 `SENSITIVE_FIELDS` 声明脱敏（幂等指纹仍基于原文）。
-- 读投影不得输出 `id_number_hash`（对齐 `Credential.secret_hash` 先例）。
+- `Employee.id_number`（载荷原始值，`writeOnly`）：仅写入路径可见；域服务用注入密钥
+  按 `eis:hr:hr_employee:id_number:v1` 域分离上下文派生 `id_number_hash`（HMAC-SHA256，
+  密钥环首密钥为主、其余为轮换接受集），命令记录经 `handlers.py` 的 `SENSITIVE_FIELDS`
+  对 `id_number`/`id_number_hash` 均脱敏（幂等指纹仍基于原文）。
+- `Employee.id_number_hash`：服务端派生的写入专用散列，读投影经 `WRITE_ONLY_FIELDS`
+  剔除（e2e 断言 `object-absent`），对齐 `Credential.secret_hash` 先例。
+- 密钥托管/轮换口径见 `01-data-contract/write-only-fields.rules.yaml`（DRV-002/DRV-005）：
+  生产由部署侧注入 `EIS_FIELD_HASH_KEYS`（逗号分隔，首为主）；浏览器与通用 BFF 不接触密钥。
+- 纯浏览器客户端（只经 BFF）的合法路径：提交 `id_number` 原始值 → 服务端派生落库；
+  BFF/SPA 不计算散列、不接收密钥。
 
 ## 5. 规则与不变量
 

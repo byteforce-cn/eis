@@ -10,6 +10,9 @@ info:
     - 重复提交（同幂等键）：返回原结果；若内容不一致 → 409
     - 结果查询：GET /commands/{id} 查询命令终态（异步语义）
     - 所有拒绝必须携带错误码（见 error-codes.yaml）
+    - 写入专用派生字段（writeOnly）：载荷携带原始值，由域属主服务在写路径派生后落库；
+      原始值与派生值不得进入命令记录/读投影/日志（见
+      01-data-contract/write-only-fields.rules.yaml）
 
 paths:
   /commands/{commandType}:
