@@ -59,3 +59,74 @@ tests:
     as_of: "2026-10-15T12:00:00Z"
     expect_allowed: false
     expect_code: SOD-001
+
+  - name: "属性快照按时点选最新且新鲜（fresh）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    op: attributes
+    principal: worker
+    as_of: "2026-10-15T12:00:00Z"
+    expect_attribute_state: fresh
+    expect_snapshot:
+      primary_position.code: P002
+      primary_position.grade: M2
+
+  - name: "属性快照过期（stale，ATR-006）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    op: attributes
+    principal: worker
+    as_of: "2026-10-25T12:00:00Z"
+    expect_attribute_state: stale
+    expect_reason_code: ATTRIBUTE_STALE
+
+  - name: "无属性快照（missing，ATR-006）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    op: attributes
+    principal: worker
+    as_of: "2026-08-01T00:00:00Z"
+    expect_attribute_state: missing
+    expect_reason_code: ATTRIBUTE_MISSING
+
+  - name: "属性条件匹配则允许（主岗语义）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    op: check
+    principal: worker
+    permission: purchase.request.approve
+    as_of: "2026-10-15T12:00:00Z"
+    require_attributes: {primary_position.grade: M2}
+    expect_allowed: true
+    expect_attribute_state: fresh
+
+  - name: "属性条件不匹配必须拒绝（ATTRIBUTE_MISMATCH）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    op: check
+    principal: worker
+    permission: purchase.request.approve
+    as_of: "2026-10-15T12:00:00Z"
+    require_attributes: {primary_position.grade: P5}
+    expect_allowed: false
+    expect_code: ATTRIBUTE_MISMATCH
+
+  - name: "依赖属性的条件在快照过期时 fail-closed"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    op: check
+    principal: worker
+    permission: purchase.request.approve
+    as_of: "2026-10-25T12:00:00Z"
+    require_attributes: {primary_position.grade: M2}
+    expect_allowed: false
+    expect_code: ATTRIBUTE_STALE
+
+  - name: "不依赖属性的判定不受属性缺失影响"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    op: check
+    principal: worker
+    permission: purchase.request.approve
+    as_of: "2026-08-01T00:00:00Z"
+    expect_allowed: true

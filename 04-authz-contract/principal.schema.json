@@ -20,7 +20,7 @@
     },
     "attributes": {
       "type": "object",
-      "description": "主体属性"
+      "description": "主体属性（只读投影/缓存，不是权威载体）。权威属主、快照形状与更新方式见 04-authz-contract/attributes.api.yaml 与 attribute.rules.yaml（ADR-0004）。"
     },
     "valid_from": {
       "type": "string",

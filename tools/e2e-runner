@@ -219,22 +219,49 @@ def kind_chain(item) -> tuple[bool, str]:
     return True, detail
 
 
+def _nested_get(node, path: str):
+    cursor = node
+    for part in path.split("."):
+        if isinstance(cursor, dict) and part in cursor:
+            cursor = cursor[part]
+        elif isinstance(cursor, list) and part.isdigit() and int(part) < len(cursor):
+            cursor = cursor[int(part)]
+        else:
+            return None
+    return cursor
+
+
 def kind_authz(item) -> tuple[bool, str]:
-    base = ["tools/authz-resolver", item["op"], "--fixtures", str(ROOT / item["fixture"]),
+    op = item["op"]
+    base = ["tools/authz-resolver", op, "--fixtures", str(ROOT / item["fixture"]),
             "--principal", item["principal"], "--as-of", item["as_of"]]
-    if item["op"] == "check":
+    if op == "check":
         base += ["--permission", item["permission"]]
+        for key, value in (item.get("require_attributes") or {}).items():
+            base += ["--require-attribute", f"{key}={value}"]
     proc = run_cli(base)
     if proc.returncode != 0:
         return False, f"authz-resolver 退出码 {proc.returncode}: {proc.stderr[:200]}"
     out = json.loads(proc.stdout)
-    if item["op"] == "check":
+    if op == "attributes":
+        if item.get("expect_attribute_state") and out.get("attribute_state") != item["expect_attribute_state"]:
+            return False, f"期望 attribute_state={item['expect_attribute_state']}，实际 {out.get('attribute_state')}"
+        if item.get("expect_reason_code") and out.get("reason_code") != item["expect_reason_code"]:
+            return False, f"期望 reason_code={item['expect_reason_code']}，实际 {out.get('reason_code')}"
+        for path, expected in (item.get("expect_snapshot") or {}).items():
+            actual = _nested_get(out.get("snapshot") or {}, path)
+            if actual != expected:
+                return False, f"快照 {path} 期望 {expected!r}，实际 {actual!r}"
+        return True, f"attribute_state={out.get('attribute_state')}"
+    if op == "check":
         if out["allowed"] != item["expect_allowed"]:
             return False, f"期望 allowed={item['expect_allowed']}，实际 {out}"
         if item.get("expect_code") and out.get("reason_code") != item["expect_code"]:
             return False, f"期望 reason_code={item['expect_code']}，实际 {out.get('reason_code')}"
+        if item.get("expect_attribute_state") and out.get("attribute_state") != item["expect_attribute_state"]:
+            return False, f"期望 attribute_state={item['expect_attribute_state']}，实际 {out.get('attribute_state')}"
         return True, f"allowed={out['allowed']} reason_code={out.get('reason_code')}"
-    if item["op"] == "resolve":
+    if op == "resolve":
         roles = out.get("roles", [])
         for want in item.get("expect_roles_contains", []):
             if want not in roles:

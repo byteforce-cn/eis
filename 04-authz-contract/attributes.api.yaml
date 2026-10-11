@@ -1,0 +1,155 @@
+# attributes.api.yaml — EIS 授权属性快照 API 契约（Spec v1.0.0 加法演进，MINOR）
+# 依据：00-freeze/adr/0004-authz-attributes-ownership.md、04-authz-contract/attribute.rules.yaml
+# 属主：人事域（extensions/hr）；消费方：授权引擎/ABAC 条件求值/审批条件参与。
+# 语义：按 principal + as_of 返回权威属性快照；失败必须 fail-closed（见 ATR-006）。
+openapi: 3.1.0
+info:
+  title: EIS Authorization Attributes API
+  version: 1.0.1
+  description: |
+    主体属性拉取协议（规范路径）：
+    - GET /principals/{principal_id}/attributes?as_of=...&recorded_as_of=...
+    - as_of 为业务时点（必填），recorded_at 语义与 04 授权同一口径（半开区间）；
+    - 成功返回快照；无快照返回 409 ATTRIBUTE_MISSING；属主不可达由部署侧以 503 表达；
+    - attribute_state：fresh（在有效期内）/ stale（已过期，仍返回快照供审计）。
+
+paths:
+  /principals/{principal_id}/attributes:
+    get:
+      summary: 拉取主体属性快照
+      operationId: getPrincipalAttributes
+      parameters:
+        - name: principal_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: 业务时点（RFC 3339，UTC）；返回 as_of 不晚于该时点的最新快照
+        - name: recorded_as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: 系统时点（可选）；用于按记录时间重建
+      responses:
+        '200':
+          description: 快照（attribute_state=fresh 或 stale）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttributeSnapshot'
+        '404':
+          description: 主体不存在
+        '409':
+          description: 该主体在 as_of 无属性快照（reason_code=ATTRIBUTE_MISSING）；消费方必须 fail-closed
+        '503':
+          description: 属性属主不可达（reason_code=ATTRIBUTE_SOURCE_UNAVAILABLE）；消费方必须 fail-closed
+
+components:
+  schemas:
+    PositionRef:
+      type: object
+      description: 岗位引用（快照内嵌，避免消费方回查）
+      required: [position_id, code, title, org_unit_id, org_unit_code]
+      properties:
+        position_id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        title:
+          type: string
+        grade:
+          type: [string, 'null']
+          description: 职级（ABAC 常用条件）
+        org_unit_id:
+          type: string
+          format: uuid
+        org_unit_code:
+          type: string
+        is_primary:
+          type: boolean
+          description: 是否主岗（仅 primary_position 恒为 true）
+
+    AttributeSnapshot:
+      type: object
+      required: [principal, as_of, recorded_at, source, attribute_state, snapshot]
+      properties:
+        principal:
+          type: string
+          format: uuid
+        as_of:
+          type: string
+          format: date-time
+        recorded_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: 快照有效期；判定时刻晚于它 → stale
+        source:
+          type: string
+          description: 权威属主（当前为 "hr"）
+        source_version:
+          type: [string, 'null']
+          description: 属主契约版本（语义漂移时消费方可拒绝）
+        attribute_state:
+          type: string
+          enum: [fresh, stale]
+        snapshot:
+          $ref: '#/components/schemas/AttributeSet'
+
+    AttributeSet:
+      type: object
+      description: |
+        属性集合。形状约定（ATR-004）：
+        - primary_position 为单值主岗（可能为 null）；
+        - positions 为多岗集合（含主岗）；
+        - ABAC 条件必须显式声明使用主岗还是任一岗位，两者语义不同。
+      properties:
+        employee_status:
+          type: [string, 'null']
+          description: 雇佣状态（pending_onboarding/active/terminated/cancelled）
+        employment_type:
+          type: [string, 'null']
+          description: 雇佣类型（如 full_time/part_time/contractor）
+        primary_position:
+          oneOf:
+            - $ref: '#/components/schemas/PositionRef'
+            - type: 'null'
+        positions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PositionRef'
+        organization_units:
+          type: array
+          description: 所属组织单元（含路径上的上级）
+          items:
+            type: object
+            required: [id, code, name, unit_type]
+            properties:
+              id:
+                type: string
+                format: uuid
+              code:
+                type: string
+              name:
+                type: string
+              unit_type:
+                type: string
+                enum: [company, department, team]
+        reporting_chain:
+          type: array
+          description: 主岗汇报链（自下而上，position_id 列表；无环由属主保证）
+          items:
+            type: string
+            format: uuid

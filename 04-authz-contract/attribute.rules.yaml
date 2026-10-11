@@ -1,0 +1,69 @@
+# attribute.rules.yaml — 授权属性规则（Spec v1.0.0 加法演进，MINOR）
+# 依据：00-freeze/adr/0004-authz-attributes-ownership.md
+# 判定权威：/check 与 ABAC 条件求值必须遵守本表；违反即合规缺陷。
+version: "1.0.0"
+
+attribute_rules:
+  - id: "ATR-001"
+    name: "属性属主唯一"
+    level: "MUST"
+    statement: "组织/岗位/职级/雇佣类型/汇报链的权威属主是人事域（extensions/hr）；授权域与其它消费方只读，不得回写权威属性。01-data-contract/principal.schema.json 的 attributes 字段是只读投影/缓存，不是权威载体。"
+    error_code: "ATTRIBUTE_OWNER_VIOLATION"
+
+  - id: "ATR-002"
+    name: "拉取为准（规范路径）"
+    level: "MUST"
+    statement: "判定方按 principal + as_of 调用 04-authz-contract/attributes.api.yaml 拉取快照；同一判定内所有属性条件必须使用同一 principal + as_of 的一致快照。若采用推送物化，写入方必须满足：幂等键 = (principal, as_of, source_version)、带 recorded_at 单调时序、保留 as_of 语义；存在冲突时以拉取结果为准。"
+    error_code: "ATTRIBUTE_PROTOCOL_VIOLATION"
+
+  - id: "ATR-003"
+    name: "快照形状与条件声明"
+    level: "MUST"
+    statement: "快照形状为 primary_position（单值主岗，可为 null）+ positions（多岗集合）。任何 ABAC 条件必须声明其语义基于主岗还是任一岗位（例如 primary_position.grade vs positions[*].grade），两者结果不同时不得静默择一。"
+    error_code: "ATTRIBUTE_SHAPE_AMBIGUITY"
+
+  - id: "ATR-004"
+    name: "as_of 一致性"
+    level: "MUST"
+    statement: "属性快照的 as_of 必须与 /check、/resolve 的 as_of 同口径（半开区间）；历史时点判定不得使用当前缓存快照。"
+    error_code: "ATTRIBUTE_AS_OF_MISMATCH"
+
+  - id: "ATR-005"
+    name: "缓存口径"
+    level: "SHOULD"
+    statement: "允许缓存快照，但缓存必须记录 expires_at 且不得超过属主声明的有效期；过期快照不得用于放行判定。缓存键必须包含 principal、as_of、recorded_as_of 三个维度。"
+    error_code: "ATTRIBUTE_CACHE_VIOLATION"
+
+  - id: "ATR-006"
+    name: "失败 fail-closed"
+    level: "MUST"
+    statement: "属性缺失（ATTRIBUTE_MISSING）、过期（ATTRIBUTE_STALE）、属主不可达（ATTRIBUTE_SOURCE_UNAVAILABLE）时，依赖属性的条件求值必须拒绝（不得静默放行），并返回显式的不确定态与原因码。若权限本身不依赖属性，可继续按角色/权限判定。"
+    error_code: "ATTRIBUTE_MISSING"
+
+  - id: "ATR-007"
+    name: "条件不匹配拒绝"
+    level: "MUST"
+    statement: "属性条件求值不匹配时拒绝，reason_code=ATTRIBUTE_MISMATCH；拒绝原因必须包含未满足的条件键（不得泄漏敏感属性值全文，必要时脱敏）。"
+    error_code: "ATTRIBUTE_MISMATCH"
+
+snapshot_lifecycle:
+  states:
+    - { state: "fresh", meaning: "快照在有效期内，可用于条件求值" }
+    - { state: "stale", meaning: "快照已过期；仅可用于审计/对比，不得放行" }
+    - { state: "missing", meaning: "该 principal + as_of 无快照；fail-closed" }
+    - { state: "source_unavailable", meaning: "属主不可达或超时；fail-closed" }
+  reason_codes: ["ATTRIBUTE_MISSING", "ATTRIBUTE_STALE", "ATTRIBUTE_SOURCE_UNAVAILABLE", "ATTRIBUTE_MISMATCH"]
+
+tests:
+  - name: "新鲜快照可用于条件求值"
+    input: "as_of=2026-10-15T12:00:00Z，expires_at=2026-10-20T00:00:00Z"
+    expect: "attribute_state=fresh"
+  - name: "过期快照 fail-closed"
+    input: "as_of=2026-10-25T12:00:00Z，expires_at=2026-10-20T00:00:00Z"
+    expect: "rejected reason_code=ATTRIBUTE_STALE"
+  - name: "无快照 fail-closed"
+    input: "as_of 早于任何快照"
+    expect: "rejected reason_code=ATTRIBUTE_MISSING"
+  - name: "条件不匹配拒绝"
+    input: "require primary_position.grade=P5，快照为 M2"
+    expect: "rejected reason_code=ATTRIBUTE_MISMATCH"

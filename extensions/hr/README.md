@@ -76,3 +76,13 @@ python3 tools/e2e-runner extensions/hr/tests/hr.test.yaml
 证件防重与返聘、敏感字段脱敏与幂等、结束主岗级联终态、供给任务状态匹配。
 
 处理器实现见 `handlers.py`（通过内核注册机制加载，无需修改内核源码，见 `extensions/README.md` §6）。
+
+## 8. 授权属性供给（04 契约消费）
+
+本扩展是授权属性的权威属主（ADR-0004 / `04-authz-contract/attribute.rules.yaml` ATR-001）：
+组织、岗位、职级、雇佣类型、汇报链由本域对象（OrganizationUnit/Position/Employee/Assignment）派生。
+
+- 消费方按 `04-authz-contract/attributes.api.yaml` 以 `principal + as_of` 拉取快照；
+- 快照形状：`primary_position`（单值主岗）+ `positions`（多岗集合）+ `organization_units` + `reporting_chain`；
+- 属性缺失/过期/属主不可达由消费方 fail-closed（ATR-006），本域不提供“默认可放行”路径；
+- 参考实现：`tools/authz-resolver attributes` 与 `--require-attribute`（夹具见 `04-authz-contract/tests/fixtures-attributes.yaml`）。

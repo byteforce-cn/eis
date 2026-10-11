@@ -1,0 +1,93 @@
+# 授权属性夹具（04-authz-contract，v1.0.0 加法演进）
+# 依据：attribute.rules.yaml（ATR-002/004/006）、attributes.api.yaml
+# 供 authz-resolver attributes / check --require-attribute 与 kind: authz 使用。
+fixtures:
+  principals:
+    - id: "01900000-0000-7000-8000-000000000201"
+      type: "person"
+      key: "worker"
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+
+  roles:
+    - id: "01900000-0000-7000-8000-0000000002a1"
+      key: "approver"
+      name: "审批人"
+      permissions: ["purchase.request.approve"]
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+
+  bindings:
+    - id: "01900000-0000-7000-8000-0000000002b1"
+      principal: "01900000-0000-7000-8000-000000000201"
+      role: "01900000-0000-7000-8000-0000000002a1"
+      scope: { department: "D001" }
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+
+  # 属性快照（权威属主 hr）：as_of 选最新不晚于查询时点者；expires_at 决定 fresh/stale
+  attributes:
+    - principal: "worker"
+      as_of: "2026-09-01T00:00:00Z"
+      recorded_at: "2026-09-01T00:00:00Z"
+      expires_at: "2026-12-01T00:00:00Z"
+      source: "hr"
+      source_version: "1.0.0"
+      snapshot:
+        employee_status: "active"
+        employment_type: "full_time"
+        primary_position:
+          position_id: "01900000-0000-7000-8000-0000000002d1"
+          code: "P001"
+          title: "后端工程师"
+          grade: "P5"
+          org_unit_id: "01900000-0000-7000-8000-0000000002e1"
+          org_unit_code: "D001"
+          is_primary: true
+        positions:
+          - position_id: "01900000-0000-7000-8000-0000000002d1"
+            code: "P001"
+            title: "后端工程师"
+            grade: "P5"
+            org_unit_id: "01900000-0000-7000-8000-0000000002e1"
+            org_unit_code: "D001"
+            is_primary: true
+        organization_units:
+          - { id: "01900000-0000-7000-8000-0000000002e1", code: "D001", name: "研发部", unit_type: "department" }
+        reporting_chain: ["01900000-0000-7000-8000-0000000002d1"]
+
+    - principal: "worker"
+      as_of: "2026-10-10T00:00:00Z"
+      recorded_at: "2026-10-10T00:00:00Z"
+      expires_at: "2026-10-20T00:00:00Z"
+      source: "hr"
+      source_version: "1.0.0"
+      snapshot:
+        employee_status: "active"
+        employment_type: "full_time"
+        primary_position:
+          position_id: "01900000-0000-7000-8000-0000000002d2"
+          code: "P002"
+          title: "技术主管"
+          grade: "M2"
+          org_unit_id: "01900000-0000-7000-8000-0000000002e1"
+          org_unit_code: "D001"
+          is_primary: true
+        positions:
+          - position_id: "01900000-0000-7000-8000-0000000002d2"
+            code: "P002"
+            title: "技术主管"
+            grade: "M2"
+            org_unit_id: "01900000-0000-7000-8000-0000000002e1"
+            org_unit_code: "D001"
+            is_primary: true
+          - position_id: "01900000-0000-7000-8000-0000000002d3"
+            code: "P003"
+            title: "架构师"
+            grade: "P6"
+            org_unit_id: "01900000-0000-7000-8000-0000000002e1"
+            org_unit_code: "D001"
+            is_primary: false
+        organization_units:
+          - { id: "01900000-0000-7000-8000-0000000002e1", code: "D001", name: "研发部", unit_type: "department" }
+        reporting_chain: ["01900000-0000-7000-8000-0000000002d2"]

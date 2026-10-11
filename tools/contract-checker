@@ -69,6 +69,7 @@ def schema_files() -> list[Path]:
 def openapi_files() -> list[Path]:
     files = sorted((ROOT / "02-operation-contract").glob("*.openapi.yaml"))
     files += sorted((ROOT / "03-time-contract").glob("*.api.yaml"))
+    files += sorted((ROOT / "04-authz-contract").glob("*.api.yaml"))
     files += sorted((ROOT / "extensions").glob("*/operations/*.openapi.yaml"))
     return files
 
@@ -267,6 +268,7 @@ def check_openapi(report: Report) -> None:
 QUERY_AS_OF_RULES = {
     "02-operation-contract/query.openapi.yaml": {"as_of"},
     "03-time-contract/time-travel.api.yaml": {"valid_at", "recorded_at", "from", "to"},
+    "04-authz-contract/attributes.api.yaml": {"as_of"},
 }
 
 

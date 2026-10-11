@@ -30,6 +30,8 @@ paths:
                   format: date-time
                 scope:
                   $ref: '#/components/schemas/Scope'
+                attributes:
+                  $ref: '#/components/schemas/AttributeContext'
       responses:
         '200':
           description: 解析成功
@@ -72,6 +74,8 @@ paths:
                 as_of:
                   type: string
                   format: date-time
+                attributes:
+                  $ref: '#/components/schemas/AttributeContext'
       responses:
         '200':
           description: 检查结果
@@ -86,10 +90,33 @@ paths:
                     type: string
                   reason_code:
                     type: string
-                    description: 机器可读原因码：SOD-xxx（职责分离冲突）/ NO_PERMISSION 等
+                    description: >-
+                      机器可读原因码：SOD-xxx（职责分离冲突）/ NO_PERMISSION /
+                      ATTRIBUTE_MISSING / ATTRIBUTE_STALE / ATTRIBUTE_SOURCE_UNAVAILABLE /
+                      ATTRIBUTE_MISMATCH（属性条件，见 attribute.rules.yaml ATR-006/007）
+                  attribute_state:
+                    type: string
+                    enum: [fresh, stale, missing, source_unavailable, not_required]
+                    description: 属性快照状态；依赖属性的条件必须 fail-closed
 
 components:
   schemas:
+    AttributeContext:
+      type: object
+      description: >-
+        调用方已按 ATR-002 拉取的属性快照（可选）；缺省由判定方自行拉取。
+        形状与失败口径见 04-authz-contract/attributes.api.yaml 与 attribute.rules.yaml。
+      properties:
+        as_of:
+          type: string
+          format: date-time
+        source:
+          type: string
+        attribute_state:
+          type: string
+          enum: [fresh, stale, missing, source_unavailable]
+        snapshot:
+          type: object
     Scope:
       type: object
       description: 作用域：键值对（常用键见下；允许扩展键）。作用域与时点一样参与授权判定。
