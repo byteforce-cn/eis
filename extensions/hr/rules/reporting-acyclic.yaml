@@ -1,0 +1,19 @@
+# rules/reporting-acyclic.yaml — 组织树与汇报链无环（hr v1.0.0）
+rule:
+  id: "hr.reporting_acyclic"
+  name: "汇报关系无环"
+  statement: "OrganizationUnit.parent_id 与 Position.reports_to_position_id 的变更必须保持无环（上溯不得回到自身）"
+  applies_to:
+    - "operations/org-unit-update.openapi.yaml"
+    - "operations/position-update.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "HR-409-005"
+    error_message: "关系成环：{node} 的上级链回到自身"
+  tests:
+    - name: "正常改挂上级通过"
+      input: "A.parent=B（B 无上级）"
+      expect: "accepted"
+    - name: "回环必须拒绝"
+      input: "B.parent=A（A.parent=B）"
+      expect: "rejected code=HR-409-005"

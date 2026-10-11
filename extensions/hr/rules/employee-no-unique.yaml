@@ -1,0 +1,18 @@
+# rules/employee-no-unique.yaml — 工号唯一（hr v1.0.0）
+rule:
+  id: "hr.employee_no_unique"
+  name: "工号唯一"
+  statement: "employee_no 由服务端按建档顺序生成（EMP-nnnnnn，跳过已占用），在全部员工中唯一；生成路径不可从客户端注入，DDL 唯一索引为兜底约束"
+  applies_to:
+    - "operations/employee-create.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "HR-409-001"
+    error_message: "工号已存在: {employee_no}"
+  tests:
+    - name: "并发/预置占号时生成器跳过已占用"
+      input: "已存在 EMP-000001，服务端生成下一个"
+      expect: "EMP-000002"
+    - name: "客户端无法指定工号"
+      input: "payload 携带 employee_no"
+      expect: "忽略（以服务端生成为准）"

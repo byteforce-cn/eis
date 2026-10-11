@@ -658,14 +658,16 @@ def _run_assertion(kernel: Kernel, assertion: dict, context: dict):
         if row is None:
             return False, f"对象不存在: {assertion['type']}/{obj_id}"
         actual = row.get(assertion["field"])
-        expect = assertion["expect"]
+        expect = resolve_tokens(assertion["expect"], context)
         if actual != expect:
             return False, f"{assertion['type']}.{assertion['field']} 期望 {expect}，实际 {actual}"
         return True, f"{assertion['type']}.{assertion['field']} == {expect}"
     if kind == "object-count":
+        where = {key: resolve_tokens(value, context)
+                 for key, value in (assertion.get("where") or {}).items()}
         rows = [r for r in kernel.objects.get(assertion["type"], [])
                 if r["superseded_at"] is None
-                and all(r.get(key) == value for key, value in assertion.get("where", {}).items())]
+                and all(r.get(key) == value for key, value in where.items())]
         expected = assertion["expect"]
         if len(rows) != expected:
             return False, f"{assertion['type']} 当前对象数期望 {expected}，实际 {len(rows)}"

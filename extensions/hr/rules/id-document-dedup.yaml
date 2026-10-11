@@ -1,0 +1,18 @@
+# rules/id-document-dedup.yaml — 证件散列防重（hr v1.0.0）
+rule:
+  id: "hr.id_document_dedup"
+  name: "证件防重（非终态）"
+  statement: "id_number_hash（HMAC-SHA256）在 pending_onboarding/active 员工中唯一；terminated/cancelled 不参与判重，因而允许返聘"
+  applies_to:
+    - "operations/employee-create.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "HR-409-002"
+    error_message: "证件散列与未终态员工重复: {employee_no}"
+  tests:
+    - name: "非终态重复必须拒绝"
+      input: "hash=H 的员工处于 active，再次以 hash=H 建档"
+      expect: "rejected code=HR-409-002"
+    - name: "终态后允许返聘"
+      input: "hash=H 的员工已 terminated，再以 hash=H 建档"
+      expect: "accepted"

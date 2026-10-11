@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/hr/object/provisioning-task/v1",
+  "title": "ProvisioningTask",
+  "description": "人事域向身份域供给登录账号的任务记录（建号/启用/禁用），由 system 主体回写。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["employee_id", "action", "status", "attempts"],
+      "properties": {
+        "employee_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "action": {
+          "type": "string",
+          "enum": ["create_account", "enable_account", "disable_account"],
+          "description": "供给动作"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "succeeded", "failed"],
+          "description": "任务状态"
+        },
+        "attempts": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)?$",
+          "description": "尝试次数（十进制字符串；内核无独立数值类型）"
+        },
+        "last_error": {
+          "type": ["string", "null"]
+        },
+        "completed_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    }
+  ]
+}

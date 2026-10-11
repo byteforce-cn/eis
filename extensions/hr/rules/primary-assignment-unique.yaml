@@ -1,0 +1,23 @@
+# rules/primary-assignment-unique.yaml — 主岗唯一与在职必有主岗（hr v1.0.0）
+rule:
+  id: "hr.primary_assignment_unique"
+  name: "主岗唯一、在职必有主岗"
+  statement: "同一员工至多一个 status=active 且 is_primary=true 的任职；员工转 active 时必须已存在有效主岗；结束主岗会令在职员工进入 terminated"
+  applies_to:
+    - "operations/assignment-assign.openapi.yaml"
+    - "operations/employee-activate.openapi.yaml"
+    - "operations/assignment-end.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "HR-409-003"
+    error_message: "员工已有有效主岗: {assignment_id}"
+  tests:
+    - name: "第二个主岗必须拒绝"
+      input: "员工已有主岗 A，再分配主岗 B"
+      expect: "rejected code=HR-409-003"
+    - name: "无主岗转在职必须拒绝"
+      input: "employee.status=pending_onboarding 且无主岗，执行 activate"
+      expect: "rejected code=HR-409-004"
+    - name: "结束主岗员工转终态"
+      input: "active 员工结束其唯一主岗"
+      expect: "employee.status=terminated，事件 hr.employee.terminated"

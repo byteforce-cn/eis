@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/hr/object/position/v1",
+  "title": "Position",
+  "description": "岗位。属于唯一组织单元，reports_to_position_id 构成汇报链，必须无环。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["code", "title", "org_unit_id", "status"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z0-9][A-Z0-9_-]{1,31}$",
+          "description": "岗位编码（唯一，如 P001）"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "org_unit_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "所属组织单元 ID（必须存在且启用）"
+        },
+        "reports_to_position_id": {
+          "type": ["string", "null"],
+          "format": "uuid",
+          "description": "上级岗位 ID；无上级为 null（汇报链无环）"
+        },
+        "grade": {
+          "type": ["string", "null"],
+          "description": "职级（如 P5、M2）"
+        },
+        "headcount": {
+          "type": ["string", "null"],
+          "pattern": "^\\d+(\\.\\d+)?$",
+          "description": "编制数（十进制字符串；内核无独立数值类型）"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "frozen", "closed"],
+          "description": "状态：启用 / 冻结（不再分配新任职）/ 关闭"
+        }
+      }
+    }
+  ]
+}

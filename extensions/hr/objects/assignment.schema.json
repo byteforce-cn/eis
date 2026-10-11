@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/hr/object/assignment/v1",
+  "title": "Assignment",
+  "description": "任职记录：员工在岗位上的有效期段。is_primary 标识主岗；同一员工至多一个有效主岗。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["employee_id", "position_id", "org_unit_id", "is_primary", "status", "start_date"],
+      "properties": {
+        "employee_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "position_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "org_unit_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "任职组织（由岗位派生，必须与岗位的 org_unit_id 一致）"
+        },
+        "is_primary": {
+          "type": "boolean",
+          "description": "是否主岗"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "ended"],
+          "description": "状态：有效 / 已结束"
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "end_date": {
+          "type": ["string", "null"],
+          "format": "date"
+        }
+      }
+    }
+  ]
+}

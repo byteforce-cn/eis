@@ -1,0 +1,346 @@
+# 人力资源域验证用例（hr v1.0.0）— 可执行版
+# 运行：tools/e2e-runner extensions/hr/tests/hr.test.yaml
+suite: hr
+x-common:
+  authz: &authz
+    principals:
+      - {id: "01900000-0000-7000-8000-000000000b01", type: person, key: hr_admin, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000b02", type: system, key: provisioner, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    roles:
+      - {id: "01900000-0000-7000-8000-000000000ba1", key: hr-admin, permissions: [hr.org.unit.define, hr.org.unit.update, hr.position.define, hr.position.update, hr.employee.create, hr.employee.update, hr.employee.activate, hr.employee.cancel, hr.assignment.assign, hr.assignment.end, hr.provisioning.run], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000ba2", key: provisioner, permissions: [hr.provisioning.run], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    bindings:
+      - {id: "01900000-0000-7000-8000-000000000bb1", principal: "01900000-0000-7000-8000-000000000b01", role: "01900000-0000-7000-8000-000000000ba1", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000bb2", principal: "01900000-0000-7000-8000-000000000b02", role: "01900000-0000-7000-8000-000000000ba2", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+
+tests:
+  - name: "组织→岗位→员工→主岗→转在职全链路"
+    kind: scenario
+    scenario:
+      id: hr.hire-to-active
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: D001, name: 研发部, unit_type: department}
+          events: [hr.org.unit.defined]
+        - id: T2
+          actor: hr_admin
+          command: hr.position.define
+          payload: {code: P001, title: 后端工程师, org_unit_id: "${steps.T1.created.id}", grade: P5}
+          events: [hr.position.defined]
+        - id: T3
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 张三, hire_date: "2026-10-01", id_type: national_id, id_number_hash: "hmac-zhangsan"}
+          events: [hr.employee.created]
+        - id: T4
+          actor: hr_admin
+          command: hr.assignment.assign
+          payload: {employee_id: "${steps.T3.created.id}", position_id: "${steps.T2.created.id}", is_primary: true, start_date: "2026-10-01"}
+          events: [hr.assignment.assigned]
+        - id: T5
+          actor: hr_admin
+          command: hr.employee.activate
+          payload: {employee_id: "${steps.T3.created.id}"}
+          events: [hr.employee.activated]
+      assert:
+        - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: status, expect: active}
+        - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: employee_no, expect: EMP-000001}
+        - {kind: object-field, type: hr_assignment, id: "${steps.T4.created.id}", field: org_unit_id, expect: "${steps.T1.created.id}"}
+        - {kind: object-field, type: hr_assignment, id: "${steps.T4.created.id}", field: is_primary, expect: true}
+        - {kind: audit-chain, expect: valid, min_entries: 5}
+
+  - name: "工号由服务端生成并跳过已占用"
+    kind: scenario
+    scenario:
+      id: hr.employee-no-generation
+      authz: *authz
+      setup:
+        objects:
+          - type: hr_employee
+            id: "01900000-0000-7000-8000-00000000c001"
+            data: {employee_no: EMP-000001, name: 李四, status: pending_onboarding, hire_date: "2026-09-01"}
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 王五, hire_date: "2026-10-02"}
+          events: [hr.employee.created]
+      assert:
+        - {kind: object-field, type: hr_employee, id: "${steps.T1.created.id}", field: employee_no, expect: EMP-000002}
+        - {kind: object-count, type: hr_employee, where: {employee_no: EMP-000001}, expect: 1}
+        - {kind: object-count, type: hr_employee, where: {employee_no: EMP-000002}, expect: 1}
+
+  - name: "组织编码重复必须拒绝"
+    kind: scenario
+    scenario:
+      id: hr.org-code-unique
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: D001, name: 研发部, unit_type: department}
+        - id: T2
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: D001, name: 研发二部, unit_type: department}
+          expect_status: rejected
+          expect_code: HR-409-001
+      assert:
+        - {kind: object-count, type: hr_organization_unit, where: {code: D001}, expect: 1}
+
+  - name: "组织树无环（改挂上级回环必须拒绝）"
+    kind: scenario
+    scenario:
+      id: hr.org-acyclic
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: A001, name: 总部, unit_type: company}
+        - id: T2
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: B001, name: 华东大区, unit_type: department, parent_id: "${steps.T1.created.id}"}
+        - id: T3
+          actor: hr_admin
+          command: hr.org.unit.update
+          payload: {unit_id: "${steps.T1.created.id}", parent_id: "${steps.T2.created.id}"}
+          expect_status: rejected
+          expect_code: HR-409-005
+      assert:
+        - {kind: object-field, type: hr_organization_unit, id: "${steps.T1.created.id}", field: parent_id, expect: null}
+
+  - name: "岗位必须挂在存在且启用的组织单元下"
+    kind: scenario
+    scenario:
+      id: hr.position-org-consistent
+      authz: *authz
+      setup:
+        objects:
+          - type: hr_organization_unit
+            id: "01900000-0000-7000-8000-00000000d001"
+            data: {code: DX01, name: 停用部门, unit_type: department, parent_id: null, status: inactive}
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.position.define
+          payload: {code: PX01, title: 岗位, org_unit_id: "01900000-0000-7000-8000-00000000d001"}
+          expect_status: rejected
+          expect_code: HR-409-006
+        - id: T2
+          actor: hr_admin
+          command: hr.position.define
+          payload: {code: PX02, title: 岗位, org_unit_id: "01900000-0000-7000-8000-00000000dead"}
+          expect_status: rejected
+          expect_code: HR-404-001
+      assert:
+        - {kind: object-count, type: hr_position, where: {code: PX01}, expect: 0}
+
+  - name: "汇报链无环（岗位改挂上级回环必须拒绝）"
+    kind: scenario
+    scenario:
+      id: hr.position-acyclic
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: D002, name: 平台部, unit_type: department}
+        - id: T2
+          actor: hr_admin
+          command: hr.position.define
+          payload: {code: P100, title: 主管, org_unit_id: "${steps.T1.created.id}"}
+        - id: T3
+          actor: hr_admin
+          command: hr.position.define
+          payload: {code: P101, title: 工程师, org_unit_id: "${steps.T1.created.id}", reports_to_position_id: "${steps.T2.created.id}"}
+        - id: T4
+          actor: hr_admin
+          command: hr.position.update
+          payload: {position_id: "${steps.T2.created.id}", reports_to_position_id: "${steps.T3.created.id}"}
+          expect_status: rejected
+          expect_code: HR-409-005
+      assert:
+        - {kind: object-field, type: hr_position, id: "${steps.T2.created.id}", field: reports_to_position_id, expect: null}
+
+  - name: "主岗唯一（第二个有效主岗必须拒绝）"
+    kind: scenario
+    scenario:
+      id: hr.primary-unique
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: D003, name: 财务部, unit_type: department}
+        - id: T2
+          actor: hr_admin
+          command: hr.position.define
+          payload: {code: P200, title: 会计, org_unit_id: "${steps.T1.created.id}"}
+        - id: T3
+          actor: hr_admin
+          command: hr.position.define
+          payload: {code: P201, title: 出纳, org_unit_id: "${steps.T1.created.id}"}
+        - id: T4
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 赵六, hire_date: "2026-10-03"}
+        - id: T5
+          actor: hr_admin
+          command: hr.assignment.assign
+          payload: {employee_id: "${steps.T4.created.id}", position_id: "${steps.T2.created.id}", is_primary: true}
+          events: [hr.assignment.assigned]
+        - id: T6
+          actor: hr_admin
+          command: hr.assignment.assign
+          payload: {employee_id: "${steps.T4.created.id}", position_id: "${steps.T3.created.id}", is_primary: true}
+          expect_status: rejected
+          expect_code: HR-409-003
+        - id: T7
+          actor: hr_admin
+          command: hr.assignment.assign
+          payload: {employee_id: "${steps.T4.created.id}", position_id: "${steps.T3.created.id}", is_primary: false}
+          events: [hr.assignment.assigned]
+      assert:
+        - {kind: object-count, type: hr_assignment, where: {employee_id: "${steps.T4.created.id}", is_primary: true, status: active}, expect: 1}
+        - {kind: object-count, type: hr_assignment, where: {employee_id: "${steps.T4.created.id}", status: active}, expect: 2}
+
+  - name: "在职必有主岗（无主岗转在职必须拒绝）"
+    kind: scenario
+    scenario:
+      id: hr.activate-requires-primary
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 孙七, hire_date: "2026-10-04"}
+        - id: T2
+          actor: hr_admin
+          command: hr.employee.activate
+          payload: {employee_id: "${steps.T1.created.id}"}
+          expect_status: rejected
+          expect_code: HR-409-004
+      assert:
+        - {kind: object-field, type: hr_employee, id: "${steps.T1.created.id}", field: status, expect: pending_onboarding}
+        - {kind: events, absent: [hr.employee.activated]}
+
+  - name: "证件散列防重（非终态唯一，终态后可返聘）"
+    kind: scenario
+    scenario:
+      id: hr.id-dedup-rehire
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 周八, hire_date: "2026-10-05", id_type: national_id, id_number_hash: "hmac-rehire"}
+          events: [hr.employee.created]
+        - id: T2
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 周八（重复）, hire_date: "2026-10-05", id_type: national_id, id_number_hash: "hmac-rehire"}
+          expect_status: rejected
+          expect_code: HR-409-002
+        - id: T3
+          actor: hr_admin
+          command: hr.employee.cancel
+          payload: {employee_id: "${steps.T1.created.id}", reason: 放弃入职}
+          events: [hr.employee.cancelled]
+        - id: T4
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 周八（返聘）, hire_date: "2026-11-01", id_type: national_id, id_number_hash: "hmac-rehire"}
+          events: [hr.employee.created]
+      assert:
+        - {kind: object-field, type: hr_employee, id: "${steps.T1.created.id}", field: status, expect: cancelled}
+        - {kind: object-count, type: hr_employee, where: {id_number_hash: "hmac-rehire"}, expect: 2}
+
+  - name: "结束主岗令在职员工进入终态，供给可回收账号"
+    kind: scenario
+    scenario:
+      id: hr.terminate-cascade
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.org.unit.define
+          payload: {code: D004, name: 运营部, unit_type: department}
+        - id: T2
+          actor: hr_admin
+          command: hr.position.define
+          payload: {code: P300, title: 运营专员, org_unit_id: "${steps.T1.created.id}"}
+        - id: T3
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 吴九, hire_date: "2026-10-06"}
+        - id: T4
+          actor: hr_admin
+          command: hr.assignment.assign
+          payload: {employee_id: "${steps.T3.created.id}", position_id: "${steps.T2.created.id}", is_primary: true}
+        - id: T5
+          actor: hr_admin
+          command: hr.employee.activate
+          payload: {employee_id: "${steps.T3.created.id}"}
+        - id: T6
+          actor: hr_admin
+          command: hr.assignment.end
+          payload: {assignment_id: "${steps.T4.created.id}", reason: 离职}
+          events: [hr.assignment.ended, hr.employee.terminated]
+        - id: T7
+          actor: provisioner
+          command: hr.provisioning.run
+          payload: {employee_id: "${steps.T3.created.id}", action: disable_account}
+          events: [hr.provisioning.completed]
+      assert:
+        - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: status, expect: terminated}
+        - {kind: object-field, type: hr_assignment, id: "${steps.T4.created.id}", field: status, expect: ended}
+        - {kind: object-field, type: hr_provisioning_task, id: "${steps.T7.created.id}", field: action, expect: disable_account}
+        - {kind: object-field, type: hr_provisioning_task, id: "${steps.T7.created.id}", field: attempts, expect: "1"}
+        - {kind: audit-chain, expect: valid, min_entries: 7}
+
+  - name: "证件散列在命令记录中脱敏，幂等重放不受影响"
+    kind: scenario
+    scenario:
+      id: hr.sensitive-redaction
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 郑十, hire_date: "2026-10-07", id_type: passport, id_number_hash: "hmac-secret"}
+          events: [hr.employee.created]
+      assert:
+        - {kind: command-redacted, step: T1, fields: [id_number_hash]}
+        - {kind: idempotency, step: T1}
+
+  - name: "供给动作与员工状态不匹配必须拒绝"
+    kind: scenario
+    scenario:
+      id: hr.provisioning-action-check
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 钱十一, hire_date: "2026-10-08"}
+        - id: T2
+          actor: provisioner
+          command: hr.provisioning.run
+          payload: {employee_id: "${steps.T1.created.id}", action: disable_account}
+          expect_status: rejected
+          expect_code: HR-409-006
+        - id: T3
+          actor: provisioner
+          command: hr.provisioning.run
+          payload: {employee_id: "${steps.T1.created.id}", action: create_account}
+          events: [hr.provisioning.completed]
+      assert:
+        - {kind: object-count, type: hr_provisioning_task, where: {employee_id: "${steps.T1.created.id}"}, expect: 1}
+        - {kind: object-field, type: hr_provisioning_task, id: "${steps.T3.created.id}", field: status, expect: succeeded}
+        - {kind: object-field, type: hr_provisioning_task, id: "${steps.T3.created.id}", field: attempts, expect: "1"}

@@ -1,0 +1,71 @@
+# manifest.yaml — 人力资源域扩展（v1.0.0）
+extension:
+  id: "hr"
+  name: "人力资源域扩展"
+  version: "1.0.0"
+  core_version: "1.0.0"
+
+  dependencies: []
+  conflicts: []
+
+  objects:
+    - name: "OrganizationUnit"
+      schema: "objects/organization-unit.schema.json"
+    - name: "Position"
+      schema: "objects/position.schema.json"
+    - name: "Employee"
+      schema: "objects/employee.schema.json"
+    - name: "Assignment"
+      schema: "objects/assignment.schema.json"
+    - name: "ProvisioningTask"
+      schema: "objects/provisioning-task.schema.json"
+
+  operations:
+    - name: "orgUnitDefine"
+      contract: "operations/org-unit-define.openapi.yaml"
+    - name: "orgUnitUpdate"
+      contract: "operations/org-unit-update.openapi.yaml"
+    - name: "positionDefine"
+      contract: "operations/position-define.openapi.yaml"
+    - name: "positionUpdate"
+      contract: "operations/position-update.openapi.yaml"
+    - name: "employeeCreate"
+      contract: "operations/employee-create.openapi.yaml"
+    - name: "employeeUpdate"
+      contract: "operations/employee-update.openapi.yaml"
+    - name: "employeeActivate"
+      contract: "operations/employee-activate.openapi.yaml"
+    - name: "employeeCancel"
+      contract: "operations/employee-cancel.openapi.yaml"
+    - name: "assignmentAssign"
+      contract: "operations/assignment-assign.openapi.yaml"
+    - name: "assignmentEnd"
+      contract: "operations/assignment-end.openapi.yaml"
+    - name: "provisioningRun"
+      contract: "operations/provisioning-run.openapi.yaml"
+
+  rules:
+    - name: "employee_no_unique"
+      file: "rules/employee-no-unique.yaml"
+    - name: "id_document_dedup"
+      file: "rules/id-document-dedup.yaml"
+    - name: "reporting_acyclic"
+      file: "rules/reporting-acyclic.yaml"
+    - name: "position_org_consistent"
+      file: "rules/position-org-consistent.yaml"
+    - name: "primary_assignment_unique"
+      file: "rules/primary-assignment-unique.yaml"
+
+  invariants:
+    - name: "工号唯一"
+      expression: "unique(employee.employee_no)"
+    - name: "证件散列在非终态员工中唯一"
+      expression: "unique(employee.id_number_hash) where employee.status in (pending_onboarding, active)"
+    - name: "任职岗位与组织一致"
+      expression: "assignment.org_unit_id == position(assignment.position_id).org_unit_id"
+    - name: "汇报关系无环"
+      expression: "acyclic(position.reports_to_position_id) and acyclic(org_unit.parent_id)"
+    - name: "在职必有主岗"
+      expression: "employee.status == active implies exists(assignment where employee_id == employee.id and is_primary and status == active)"
+    - name: "同一员工至多一个有效主岗"
+      expression: "count(assignment where employee_id == e.id and is_primary and status == active) <= 1"

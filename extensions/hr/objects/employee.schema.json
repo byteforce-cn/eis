@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/hr/object/employee/v1",
+  "title": "Employee",
+  "description": "员工主数据。employee_no 由服务端生成；id_number_hash 为写入专用散列，任何读投影均须剔除。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["employee_no", "name", "status", "hire_date"],
+      "properties": {
+        "employee_no": {
+          "type": "string",
+          "pattern": "^EMP-[0-9]{6,}$",
+          "description": "工号（服务端生成，兜底唯一）"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending_onboarding", "active", "terminated", "cancelled"],
+          "description": "员工状态：待入职 / 在职 / 离职 / 取消"
+        },
+        "hire_date": {
+          "type": "string",
+          "format": "date",
+          "description": "入职日期"
+        },
+        "org_unit_id": {
+          "type": ["string", "null"],
+          "format": "uuid",
+          "description": "主组织单元 ID（由主岗派生）"
+        },
+        "contact": {
+          "type": ["string", "null"]
+        },
+        "id_type": {
+          "type": ["string", "null"],
+          "enum": ["national_id", "passport"],
+          "description": "证件类型"
+        },
+        "id_number_hash": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "writeOnly": true,
+          "description": "证件号 HMAC-SHA256 散列（写入专用；非终态员工间唯一，允许离职返聘）"
+        },
+        "terminated_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "terminated_reason": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  ]
+}

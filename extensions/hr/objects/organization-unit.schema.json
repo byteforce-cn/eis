@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/hr/object/organization-unit/v1",
+  "title": "OrganizationUnit",
+  "description": "组织单元（公司/部门/团队）。parent_id 构成组织树，必须无环且上级有效。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["code", "name", "unit_type", "status"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z0-9][A-Z0-9_-]{1,31}$",
+          "description": "组织编码（在同一组织树内唯一，如 D001）"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit_type": {
+          "type": "string",
+          "enum": ["company", "department", "team"],
+          "description": "组织类型"
+        },
+        "parent_id": {
+          "type": ["string", "null"],
+          "format": "uuid",
+          "description": "上级组织单元 ID；根组织为 null"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "inactive"],
+          "description": "状态：启用 / 停用"
+        },
+        "description": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  ]
+}

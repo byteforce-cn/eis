@@ -1,0 +1,22 @@
+# rules/position-org-consistent.yaml — 岗位与组织一致（hr v1.0.0）
+rule:
+  id: "hr.position_org_consistent"
+  name: "岗位与组织单元一致"
+  statement: "岗位必须挂在存在且启用的组织单元下；任职记录的 org_unit_id 恒等于岗位的 org_unit_id（由服务端派生，不允许客户端指定）"
+  applies_to:
+    - "operations/position-define.openapi.yaml"
+    - "operations/assignment-assign.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "HR-409-006"
+    error_message: "组织单元不存在或未启用: {org_unit_id}"
+  tests:
+    - name: "启用组织下定义岗位通过"
+      input: "org.status=active"
+      expect: "accepted"
+    - name: "停用组织下定义岗位必须拒绝"
+      input: "org.status=inactive"
+      expect: "rejected code=HR-409-006"
+    - name: "任职组织与岗位一致"
+      input: "assignment.position_id → position.org_unit_id"
+      expect: "assignment.org_unit_id == position.org_unit_id"
