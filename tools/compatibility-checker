@@ -10,6 +10,20 @@
   compatibility-checker --self-test
 
 退出码: 0 通过（未触发 --fail-on）/ 1 触发 --fail-on 阈值或判定失败 / 2 用法或输入错误
+
+规则 → 实现映射（Step 1，对照 compatibility.rules.yaml 的 data 规则）:
+  | 规则文件条目        | 级别  | 实现 kind        | 触发条件                                   |
+  | 字段删除            | MAJOR | 字段删除         | 属性在 new.properties 中缺失               |
+  | 字段类型变更        | MAJOR | 字段类型变更     | type/format 变化（任意嵌套层级）           |
+  | 可选字段新增        | MINOR | 可选字段新增     | new 新增属性且非 required                  |
+  | 必填字段新增        | MAJOR | 必填字段新增     | new 新增/收紧 required                     |
+  规则表未单列约束关键词，下列为工具扩展，级别沿用规则表的“域收缩=MAJOR / 域扩张=MINOR”：
+  | （扩展）约束收紧    | MAJOR | 约束收紧         | maxLength↓/minimum↑/新增 pattern 等        |
+  | （扩展）约束放宽    | MINOR | 约束放宽         | maxLength↑/minimum↓/移除 pattern 等        |
+  | （扩展）必填放宽    | MINOR | 必填放宽         | required 中删除字段                        |
+  | （扩展）枚举取值收缩| MAJOR | 枚举取值收缩     | enum 取值集合收窄                          |
+  | （扩展）枚举取值扩展| MINOR | 枚举取值扩展     | enum 取值集合扩张                          |
+  | （扩展）$ref 无法解析| MAJOR| $ref 无法解析    | 本地 $ref 无法解析或循环（保守判 MAJOR）   |
 """
 from __future__ import annotations
 
@@ -33,11 +47,24 @@ KIND_TO_RULE = {
     "必填字段新增": ("data", "必填字段新增"),
 }
 # 规则表未覆盖的变更（工具扩展判定，默认配套动作在 EXTRA_REQUIRES）
+# 级别依据：compatibility.rules.yaml 将“域收缩”类变更（字段删除/类型变更）定为 MAJOR，
+# “域扩张”类（可选字段新增）定为 MINOR；约束/枚举/必填的收紧与放宽沿用同一原则。
 EXTRA_REQUIRES = {
     "枚举取值收缩": ["migration"],
     "枚举取值扩展": [],
     "必填放宽": [],
+    "约束收紧": ["migration"],
+    "约束放宽": [],
+    "$ref 无法解析": [],
 }
+
+# 下界类：数值增大为收紧；上界类：数值减小为收紧
+LOWER_BOUNDS = ("minLength", "minimum", "exclusiveMinimum", "minItems")
+UPPER_BOUNDS = ("maxLength", "maximum", "exclusiveMaximum", "maxItems")
+# 逐节点比较的约束关键词（type/format 归入“类型变更”，enum/required 单独处理）
+CONSTRAINT_KEYWORDS = LOWER_BOUNDS + UPPER_BOUNDS + (
+    "pattern", "const", "multipleOf", "additionalProperties",
+)
 
 
 def load_rule_index() -> dict:
@@ -56,41 +83,153 @@ def norm_type(prop: dict):
     return (t, prop.get("format"))
 
 
-def diff_schemas(old: dict, new: dict) -> list[dict]:
-    changes = []
-    op, np_ = old.get("properties", {}), new.get("properties", {})
-    oreq, nreq = set(old.get("required", [])), set(new.get("required", []))
+def type_desc(node: dict) -> str:
+    t = node.get("type")
+    fmt = node.get("format")
+    return f"{t}:{fmt}" if fmt else str(t)
 
-    for name, oprop in op.items():
-        if name not in np_:
-            changes.append({"kind": "字段删除", "prop": name, "level": "MAJOR"})
+
+def resolve_local_ref(node, root, seen=None):
+    """解析本地 $ref（#/$defs/... 或 #/definitions/...）。
+
+    返回 (resolved_node, ref, error)：无 $ref 时 ref/error 为 None；
+    无法解析或循环时 node 原样返回并给出 error（调用方保守判 MAJOR）。
+    """
+    if not isinstance(node, dict) or "$ref" not in node:
+        return node, None, None
+    ref = node["$ref"]
+    if not isinstance(ref, str) or not ref.startswith("#"):
+        return node, ref, f"仅支持本地 $ref，无法解析 {ref!r}"
+    if seen is None:
+        seen = set()
+    if ref in seen:
+        return node, ref, f"$ref 循环引用 {ref}"
+    seen.add(ref)
+    target = root
+    for part in [p for p in ref.lstrip("#/").split("/") if p != ""]:
+        part = part.replace("~1", "/").replace("~0", "~")
+        try:
+            target = target[part]
+        except (KeyError, TypeError):
+            return node, ref, f"$ref 无法解析 {ref}"
+    return resolve_local_ref(target, root, seen)
+
+
+def _constraint_direction(keyword: str, old_val, new_val) -> str | None:
+    """返回 'tighten'（收紧）/ 'loosen'（放宽）/ 'change'（不可比，保守收紧）/ None。"""
+    if old_val == new_val:
+        return None
+    if keyword in LOWER_BOUNDS:
+        if old_val is None:
+            return "tighten"
+        if new_val is None:
+            return "loosen"
+        return "tighten" if new_val > old_val else "loosen"
+    if keyword in UPPER_BOUNDS:
+        if old_val is None:
+            return "tighten"
+        if new_val is None:
+            return "loosen"
+        return "tighten" if new_val < old_val else "loosen"
+    if keyword == "pattern":
+        if new_val is None:
+            return "loosen"
+        return "tighten"
+    if keyword == "const":
+        if new_val is None:
+            return "loosen"
+        return "tighten"
+    if keyword == "multipleOf":
+        if new_val is None:
+            return "loosen"
+        return "tighten"
+    if keyword == "additionalProperties":
+        # 缺省等价于 true（允许额外属性）
+        old_allowed = old_val is not False
+        new_allowed = new_val is not False
+        if old_allowed == new_allowed:
+            return None
+        return "tighten" if not new_allowed else "loosen"
+    return None
+
+
+def _compare_enum(old_node: dict, new_node: dict, path: str, changes: list) -> None:
+    oenum = {str(v) for v in old_node.get("enum", [])}
+    nenum = {str(v) for v in new_node.get("enum", [])}
+    if oenum and nenum and (oenum - nenum):
+        changes.append({"kind": "枚举取值收缩", "prop": path, "level": "MAJOR",
+                        "detail": f"移除取值 {sorted(oenum - nenum)}"})
+    elif nenum - oenum:
+        changes.append({"kind": "枚举取值扩展", "prop": path, "level": "MINOR",
+                        "detail": f"新增取值 {sorted(nenum - oenum)}"})
+
+
+def diff_node(old_node, new_node, path: str, old_root, new_root, changes: list) -> None:
+    """递归比较两个 Schema 节点（解析本地 $ref 后逐层下钻）。"""
+    old_res, o_ref, o_err = resolve_local_ref(old_node, old_root)
+    new_res, n_ref, n_err = resolve_local_ref(new_node, new_root)
+    if o_err or n_err:
+        changes.append({"kind": "$ref 无法解析", "prop": path, "level": "MAJOR",
+                        "detail": o_err or n_err})
+        return
+    if not isinstance(old_res, dict) or not isinstance(new_res, dict):
+        return
+
+    if norm_type(old_res) != norm_type(new_res):
+        changes.append({"kind": "字段类型变更", "prop": path, "level": "MAJOR",
+                        "detail": f"{type_desc(old_res)} → {type_desc(new_res)}"})
+
+    _compare_enum(old_res, new_res, path, changes)
+
+    for keyword in CONSTRAINT_KEYWORDS:
+        direction = _constraint_direction(keyword, old_res.get(keyword), new_res.get(keyword))
+        if direction is None:
             continue
-        nprop = np_[name]
-        if norm_type(oprop) != norm_type(nprop):
-            changes.append({
-                "kind": "字段类型变更", "prop": name, "level": "MAJOR",
-                "detail": f"{oprop.get('type')} → {nprop.get('type')}",
-            })
+        if direction == "tighten":
+            changes.append({"kind": "约束收紧", "prop": path, "level": "MAJOR",
+                            "detail": f"{keyword}: {old_res.get(keyword)} → {new_res.get(keyword)}"})
         else:
-            oenum = {str(v) for v in oprop.get("enum", [])}
-            nenum = {str(v) for v in nprop.get("enum", [])}
-            if oenum and nenum and (oenum - nenum):
-                changes.append({"kind": "枚举取值收缩", "prop": name, "level": "MAJOR",
-                                "detail": f"移除取值 {sorted(oenum - nenum)}"})
-            elif nenum - oenum:
-                changes.append({"kind": "枚举取值扩展", "prop": name, "level": "MINOR",
-                                "detail": f"新增取值 {sorted(nenum - oenum)}"})
-        if name in oreq and name not in nreq:
-            changes.append({"kind": "必填放宽", "prop": name, "level": "MINOR"})
-        if name not in oreq and name in nreq:
-            changes.append({"kind": "必填字段新增", "prop": name, "level": "MAJOR"})
+            changes.append({"kind": "约束放宽", "prop": path, "level": "MINOR",
+                            "detail": f"{keyword}: {old_res.get(keyword)} → {new_res.get(keyword)}"})
+
+    op = old_res.get("properties", {}) or {}
+    np_ = new_res.get("properties", {}) or {}
+    oreq = set(old_res.get("required", []) or [])
+    nreq = set(new_res.get("required", []) or [])
+    common = set(op) & set(np_)
+
+    for name in op:
+        child_path = name if path == "$" else f"{path}.{name}"
+        if name not in np_:
+            changes.append({"kind": "字段删除", "prop": child_path, "level": "MAJOR"})
+            continue
+        diff_node(op[name], np_[name], child_path, old_root, new_root, changes)
 
     for name in np_:
-        if name not in op:
-            if name in nreq:
-                changes.append({"kind": "必填字段新增", "prop": name, "level": "MAJOR"})
-            else:
-                changes.append({"kind": "可选字段新增", "prop": name, "level": "MINOR"})
+        if name in op:
+            continue
+        child_path = name if path == "$" else f"{path}.{name}"
+        if name in nreq:
+            changes.append({"kind": "必填字段新增", "prop": child_path, "level": "MAJOR"})
+        else:
+            changes.append({"kind": "可选字段新增", "prop": child_path, "level": "MINOR"})
+
+    # required 变化（仅针对两侧共有的属性，避免与增删属性重复计数）
+    for name in sorted((oreq - nreq) & common):
+        child_path = name if path == "$" else f"{path}.{name}"
+        changes.append({"kind": "必填放宽", "prop": child_path, "level": "MINOR"})
+    for name in sorted((nreq - oreq) & common):
+        child_path = name if path == "$" else f"{path}.{name}"
+        changes.append({"kind": "必填字段新增", "prop": child_path, "level": "MAJOR"})
+
+    if "items" in old_res or "items" in new_res:
+        diff_node(old_res.get("items", {}) or {}, new_res.get("items", {}) or {},
+                  f"{path}[]", old_root, new_root, changes)
+
+
+def diff_schemas(old: dict, new: dict) -> list[dict]:
+    changes: list[dict] = []
+    diff_node(old, new, "$", old, new, changes)
     return changes
 
 
@@ -162,6 +301,66 @@ def cmd_self_test(args) -> int:
         r = run_check(write("old4.json", base), write("new4.json", new4))
         ch = next(ch for ch in r["changes"] if ch["kind"] == "必填字段新增")
         report("必填新增要求 backfill", "backfill" in ch["requires"])
+
+        # 5) 顶层约束收紧（maxLength↓ / minimum↑ / 新增 pattern）→ MAJOR
+        tighten_old = {"properties": {
+            "s": {"type": "string", "maxLength": 10},
+            "n": {"type": "integer", "minimum": 1},
+        }, "required": ["s", "n"]}
+        tighten_new = {"properties": {
+            "s": {"type": "string", "maxLength": 5, "pattern": "^[a-z]+$"},
+            "n": {"type": "integer", "minimum": 5},
+        }, "required": ["s", "n"]}
+        r = run_check(write("tighten_old.json", tighten_old), write("tighten_new.json", tighten_new))
+        report("顶层约束收紧判定 MAJOR", r["overall"] == "MAJOR")
+        report("检出 maxLength 收紧", any("maxLength" in ch.get("detail", "") for ch in r["changes"]))
+        report("检出 minimum 收紧", any("minimum" in ch.get("detail", "") for ch in r["changes"]))
+        report("检出 pattern 新增", any(ch.get("detail", "").startswith("pattern") for ch in r["changes"]))
+
+        # 6) 顶层约束放宽（maxLength↑ / 移除 pattern）→ MINOR
+        loose_old = {"properties": {"s": {"type": "string", "maxLength": 5, "pattern": "^[a-z]+$"}},
+                     "required": ["s"]}
+        loose_new = {"properties": {"s": {"type": "string", "maxLength": 10}}, "required": ["s"]}
+        r = run_check(write("loose_old.json", loose_old), write("loose_new.json", loose_new))
+        report("顶层约束放宽判定 MINOR", r["overall"] == "MINOR")
+        report("放宽检出约束放宽", any(ch["kind"] == "约束放宽" for ch in r["changes"]))
+
+        # 7) 嵌套对象属性类型变更 → MAJOR
+        nest_old = {"properties": {"o": {"type": "object", "properties": {"x": {"type": "string"}},
+                                          "required": ["x"]}}, "required": ["o"]}
+        nest_new = {"properties": {"o": {"type": "object", "properties": {"x": {"type": "integer"}},
+                                          "required": ["x"]}}, "required": ["o"]}
+        r = run_check(write("nest_old.json", nest_old), write("nest_new.json", nest_new))
+        report("嵌套类型变更判定 MAJOR", r["overall"] == "MAJOR")
+        report("嵌套类型变更命中 o.x", any(ch["kind"] == "字段类型变更" and ch["prop"] == "o.x"
+                                            for ch in r["changes"]))
+
+        # 8) 嵌套必填新增 / 删除 → MAJOR / MINOR
+        nreq_old = {"properties": {"o": {"type": "object", "properties": {
+            "x": {"type": "string"}, "y": {"type": "string"}}}}, "required": ["o"]}
+        nreq_new = {"properties": {"o": {"type": "object", "properties": {
+            "x": {"type": "string"}, "y": {"type": "string"}}, "required": ["x"]}}, "required": ["o"]}
+        r = run_check(write("nreq_old.json", nreq_old), write("nreq_new.json", nreq_new))
+        report("嵌套必填新增判定 MAJOR", r["overall"] == "MAJOR"
+               and any(ch["kind"] == "必填字段新增" for ch in r["changes"]))
+        r = run_check(write("nreq_new.json", nreq_new), write("nreq_old.json", nreq_old))
+        report("嵌套必填删除判定 MINOR", r["overall"] == "MINOR"
+               and any(ch["kind"] == "必填放宽" for ch in r["changes"]))
+
+        # 9) $ref（本地 $defs）内部约束收紧 → MAJOR
+        ref_old = {"$defs": {"Amount": {"type": "string", "maxLength": 10}},
+                   "properties": {"a": {"$ref": "#/$defs/Amount"}}, "required": ["a"]}
+        ref_new = {"$defs": {"Amount": {"type": "string", "maxLength": 5}},
+                   "properties": {"a": {"$ref": "#/$defs/Amount"}}, "required": ["a"]}
+        r = run_check(write("ref_old.json", ref_old), write("ref_new.json", ref_new))
+        report("$ref 内部约束收紧判定 MAJOR", r["overall"] == "MAJOR"
+               and any(ch["kind"] == "约束收紧" for ch in r["changes"]))
+
+        # 10) $ref 无法解析 → 保守判 MAJOR 并输出原因
+        ref_bad = {"properties": {"a": {"$ref": "#/$defs/Missing"}}, "required": ["a"]}
+        r = run_check(write("ref_old.json", ref_old), write("ref_bad.json", ref_bad))
+        report("$ref 无法解析保守判 MAJOR", r["overall"] == "MAJOR"
+               and any(ch["kind"] == "$ref 无法解析" for ch in r["changes"]))
     print(f"自测结果: {'通过' if ok else '失败'}")
     return 0 if ok else 1
 
