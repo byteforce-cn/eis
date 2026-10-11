@@ -49,7 +49,7 @@ attribute_rules:
   - id: "ATR-008"
     name: "属性端点仅限服务间调用"
     level: "MUST"
-    statement: "GET /principals/{id}/attributes 是判定链路内部协议：调用方必须是受信后端服务（授权引擎、审批条件求值、域服务），以服务身份（system principal）认证并持有属主声明的 hr.attributes.read；不得经 BFF/SPA 暴露给浏览器会话；无权限/身份不符必须 fail-closed（401/403），不得降级为匿名或用户可读。"
+    statement: "GET /principals/{id}/attributes 是判定链路内部协议：调用方必须是受信后端服务（授权引擎、审批条件求值、域服务），以服务身份（system principal）认证并持有属主为该属性集声明的 service 权限（如 hr.attributes.read）；不得经 BFF/SPA 暴露给浏览器会话；无权限/身份不符必须 fail-closed（401/403），不得降级为匿名或用户可读。"
     error_code: "ATTRIBUTE_CALLER_VIOLATION"
 
 snapshot_lifecycle:

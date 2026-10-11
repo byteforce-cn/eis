@@ -22,7 +22,7 @@
 - 契约：`01-data-contract` 新增规则文件（加法）；`02-operation-contract/command.openapi.yaml` 补充描述（PATCH 级）；
 - 扩展：`extensions/hr` 载荷由 `id_number_hash` 改为原始 `id_number`（发布前修正，见 §3）；`extensions/iam` 明确适用同一 custody 口径（指定生产者过渡）；
 - 案例：不涉及；
-- 工具：`tools/lib/kernel.py` 新增密钥环与派生/投影 API；`tools/e2e-runner` 新增 `object-absent` 断言；`docs/IMPLEMENTATION.md` 增加密钥服务映射。
+- 工具：`tools/lib/kernel.py` 新增密钥环与派生/投影 API 与 `object-absent` 断言；`docs/IMPLEMENTATION.md` 增加密钥服务映射。
 
 ## 3. 兼容性分析
 
@@ -54,6 +54,7 @@
 | 参考内核 | `tools/lib/kernel.py` | `derive_hmac`、密钥环、`derive_write_only`/`write_only_variants`、`read_projection`、`WRITE_ONLY_FIELDS` |
 | e2e 断言 | `tools/lib/kernel.py`（`object-absent`） | 读投影剔除的可执行判据 |
 | hr 契约 | `extensions/hr/operations/employee-create.openapi.yaml`、`objects/employee.schema.json`、`README.md`、`handlers.py` | 原始值入参与服务端派生 |
+| iam 契约 | `extensions/iam/handlers.py` | `Credential.secret_hash` 读投影剔除（`WRITE_ONLY_FIELDS`）；custody 口径声明（DRV-006） |
 | 用例 | `extensions/hr/tests/hr.test.yaml` | 派生确定性、防重、脱敏、读投影剔除、轮换窗口、空值拒绝 |
 | 落地映射 | `docs/IMPLEMENTATION.md` | 受信密钥服务映射（含 coord Transit 前置） |
 | coord 需求 | `docs/COORD-REQUIREMENTS.md`（G-TR-3） | 用途化 HMAC 密钥 + 轮换窗口 |
@@ -62,6 +63,7 @@
 
 - `extensions/hr/tests/hr.test.yaml`：`hr.hire-to-active`（派生散列确定值）、`hr.id-dedup-rehire`（防重）、
   `hr.sensitive-redaction`（命令记录 + 读投影剔除、幂等重放）、`hr.write-only-rotation`（轮换窗口）、
-  `hr.id-number-required`（空值拒绝）；
+  `hr.id-number-required`（空值拒绝）、`hr.id-number-hash-rejected`（拒绝调用方自算散列）；
+- `extensions/iam/tests/iam.test.yaml`：凭证轮换后读投影剔除 `secret_hash`（`object-absent`）；
 - `01-data-contract/tests/data-contract.test.yaml`：规则文件存在且含 DRV-001..006（静态用例）；
 - `python3 tools/e2e-runner --all` 全绿；对应 `acceptance.yaml`「所有 Schema 通过校验 / 所有用例可执行」。

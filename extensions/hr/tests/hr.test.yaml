@@ -434,6 +434,21 @@ tests:
       assert:
         - {kind: object-count, type: hr_employee, where: {name: 蒋十三}, expect: 0}
 
+  - name: "调用方自算散列必须拒绝（DRV-001：服务端派生）"
+    kind: scenario
+    scenario:
+      id: hr.id-number-hash-rejected
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 蒋十四, hire_date: "2026-10-10", id_type: national_id, id_number_hash: "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"}
+          expect_status: rejected
+          expect_code: HR-400-001
+      assert:
+        - {kind: object-count, type: hr_employee, where: {name: 蒋十四}, expect: 0}
+
   - name: "V201 迁移必须随契约分发并覆盖五张表"
     kind: static
     target: extensions/hr/migrations/V201__hr_initial.sql

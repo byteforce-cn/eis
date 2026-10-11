@@ -14,8 +14,8 @@ info:
     - 成功返回快照；无快照返回 409 ATTRIBUTE_MISSING；属主不可达由部署侧以 503 表达；
     - attribute_state：fresh（在有效期内）/ stale（已过期，仍返回快照供审计）。
     - 调用方边界（ATR-008 / ADR-0006）：仅限受信后端服务（授权引擎、审批条件求值、域服务）
-      以服务身份（system principal）认证并持有属主声明的 hr.attributes.read；不得经 BFF/SPA
-      暴露给浏览器会话；无权限/身份不符返回 403 且 fail-closed。
+      以服务身份（system principal）认证并持有属主为该属性集声明的 service 权限（如
+      hr.attributes.read）；不得经 BFF/SPA 暴露给浏览器会话；无权限/身份不符返回 403 且 fail-closed。
 
 paths:
   /principals/{principal_id}/attributes:
@@ -53,7 +53,7 @@ paths:
         '404':
           description: 主体不存在
         '403':
-          description: 调用方非受信服务或缺少 hr.attributes.read（fail-closed，ATR-008）
+          description: 调用方非受信服务或缺少属主声明的 service 权限（如 hr.attributes.read）（fail-closed，ATR-008）
         '409':
           description: 该主体在 as_of 无属性快照（reason_code=ATTRIBUTE_MISSING）；消费方必须 fail-closed
         '503':

@@ -247,6 +247,8 @@ def create_employee(api, payload, actor, command_id):
         raise api.reject("HR-400-001", "name 必填")
     if not _valid_date(hire_date):
         raise api.reject("HR-400-001", "hire_date 必须为 YYYY-MM-DD")
+    if "id_number_hash" in payload:
+        raise api.reject("HR-400-001", "不得提交派生值 id_number_hash（DRV-001：由服务端派生）")
     # 写入专用派生字段（DRV-001）：载荷携带原始证件号，域服务用注入密钥派生散列；
     # 不接受调用方自算的 id_number_hash（避免非法生产者与密钥外泄）。
     raw_id = payload.get("id_number")

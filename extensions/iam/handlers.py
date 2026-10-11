@@ -15,6 +15,11 @@ SENSITIVE_FIELDS = {
     "iam.credential.reset": ("secret_hash", "old_secret_hash", "new_secret_hash"),
 }
 
+# 读投影剔除：凭证散列为写入专用字段（DRV-004/DRV-006）
+WRITE_ONLY_FIELDS = {
+    "iam_credential": ("secret_hash",),
+}
+
 
 def register(api):
     return {

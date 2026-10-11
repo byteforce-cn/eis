@@ -115,6 +115,7 @@ tests:
         - {kind: object-field, type: iam_credential, id: "01900000-0000-7000-8000-000000000914", field: must_change, expect: false}
         - {kind: temporal-history, type: iam_credential, id: "01900000-0000-7000-8000-000000000914", expect_versions: 2}
         - {kind: command-redacted, step: T1, fields: [old_secret_hash, new_secret_hash, secret_hash]}
+        - {kind: object-absent, type: iam_credential, id: "01900000-0000-7000-8000-000000000914", fields: [secret_hash]}
 
   - name: 凭证轮换拒绝错误旧凭证
     kind: scenario
