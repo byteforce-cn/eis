@@ -45,3 +45,9 @@ tests:
     target: 01-data-contract/event.schema.json
     check: present
     pattern: '"idempotency_key"\]'
+
+  - name: "PG 保留字字段名必须在契约层被拒绝（contract-checker 自测）"
+    kind: cli
+    args: [tools/contract-checker, --self-test]
+    expect_exit: 0
+    stdout_contains: ["PG 保留字字段被拒绝并给出建议名"]

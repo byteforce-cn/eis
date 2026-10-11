@@ -3,7 +3,8 @@
 """contract-checker — EIS 契约检查（v1.0.0 参考实现）
 
 检查项:
-  1. Schema：JSON 合法、Draft 2020-12 元校验通过、$id 含 /v{n}、$id 唯一、pattern 可编译
+  1. Schema：JSON 合法、Draft 2020-12 元校验通过、$id 含 /v{n}、$id 唯一、pattern 可编译、
+     字段名（及派生列名）不得与 PostgreSQL 保留字冲突（否则生成 DDL 语法错误）
   2. OpenAPI：结构、operationId 唯一、$ref 可解析、路径参数声明、
      命令端点必含 idempotency_key（required）与 202/400/409 响应
   3. AsyncAPI：结构、消息负载 $ref 可解析
@@ -37,6 +38,20 @@ COMMAND_METHOD_REQUIRED_RESPONSES = {"202", "400", "409"}
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 ERROR_CODE_RE = re.compile(r"^EIS-(\d{3})-(\d{3})$")
 TYPE_RE = re.compile(r"^[a-z][a-z0-9_.]*$")
+
+# PostgreSQL 保留字（Table C.1 的 reserved 与 reserved-can-be-function-or-type-name 两类）。
+# schema-compiler 生成的列名不带引号，命中即 DDL 语法错误（如 primary BOOLEAN NOT NULL）。
+PG_RESERVED_WORDS = frozenset("""
+all analyse analyze and any array as asc asymmetric authorization binary both case cast check
+collate collation column concurrently constraint create cross current_catalog current_date
+current_role current_schema current_time current_timestamp current_user default deferrable
+desc distinct do else end except false fetch for foreign freeze from full grant group having
+ilike in initially inner intersect into is isnull join lateral leading left like limit
+localtime localtimestamp natural not notnull null offset on only or order outer overlaps
+placing primary references returning right select session_user similar some symmetric
+tablesample table then to trailing true union unique user using variadic verbose when where
+window with
+""".split())
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +134,27 @@ def check_refs(doc, path: Path, report: Report) -> None:
 # ---------------------------------------------------------------------------
 # 各类检查
 # ---------------------------------------------------------------------------
+def schema_property_entries(doc: dict):
+    """产出 (属性名, 属性 Schema)：顶层 properties 与 allOf[*].properties。
+
+    扩展对象的领域字段位于 allOf 内联项，必须一并检查（它们会成为 DDL 列）。
+    """
+    for name, prop in (doc.get("properties") or {}).items():
+        yield name, prop
+    for item in doc.get("allOf", []):
+        if not isinstance(item, dict):
+            continue
+        for name, prop in (item.get("properties") or {}).items():
+            yield name, prop
+
+
+def suggest_column_name(name: str, prop: dict) -> str:
+    """保留字冲突时的替代名建议（布尔字段用 is_ 前缀）。"""
+    if prop.get("type") == "boolean":
+        return f"is_{name}"
+    return f"{name}_value"
+
+
 def check_schemas(report: Report) -> None:
     seen_ids: dict[str, str] = {}
     for path in schema_files():
@@ -150,6 +186,16 @@ def check_schemas(report: Report) -> None:
                     re.compile(pat)
                 except re.error as exc:
                     problems.append(f"pattern 非法（{prop_name}）: {exc}")
+        seen_reserved: set[str] = set()
+        for prop_name, prop in schema_property_entries(doc):
+            if prop_name.lower() not in PG_RESERVED_WORDS or prop_name in seen_reserved:
+                continue
+            seen_reserved.add(prop_name)
+            suggestion = suggest_column_name(prop_name, prop)
+            problems.append(
+                f"字段名与 PostgreSQL 保留字冲突（{prop_name}）："
+                f"生成的 DDL 列名不加引号会语法错误；建议改名 {suggestion}"
+            )
         if problems:
             report.fail(f"{rel(path)}: Schema 检查", "\n".join(problems))
         else:
@@ -382,6 +428,53 @@ def cmd_self_test(args) -> int:
             report.fail("自测：非法命令 API 未被检出")
         else:
             report.ok("自测：非法命令 API 被正确检出（缺 idempotency_key / 响应）")
+
+    # PG 保留字：字段名 primary（保留字）必须被拒绝并给出替代名；is_primary 不受影响
+    base = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "eis://selftest/reserved-word/v1",
+        "title": "ReservedWord",
+        "allOf": [
+            {"$ref": "../../01-data-contract/object.schema.json"},
+            {"type": "object", "properties": {"primary": {"type": "boolean"}}},
+        ],
+    }
+    ok_schema = {
+        **base,
+        "$id": "eis://selftest/reserved-word-ok/v1",
+        "allOf": [
+            {"$ref": "../../01-data-contract/object.schema.json"},
+            {"type": "object", "properties": {"is_primary": {"type": "boolean"}}},
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        bad_path = Path(tmp) / "bad.schema.json"
+        bad_path.write_text(json.dumps(base, ensure_ascii=False), encoding="utf-8")
+        ok_path = Path(tmp) / "ok.schema.json"
+        ok_path.write_text(json.dumps(ok_schema, ensure_ascii=False), encoding="utf-8")
+        global schema_files  # noqa: PLW0603
+        orig_schemas = schema_files
+        bad_report = Report("tmp")
+        schema_files = lambda: [bad_path]
+        try:
+            check_schemas(bad_report)
+        finally:
+            schema_files = orig_schemas
+        detail = "\n".join(str(d) for _, _, d in bad_report.failures)
+        if bad_report.success or "保留字" not in detail or "is_primary" not in detail:
+            report.fail("自测：PG 保留字字段未被正确拒绝（应报保留字并建议 is_primary）")
+        else:
+            report.ok("自测：PG 保留字字段被拒绝并给出建议名")
+        ok_report = Report("tmp")
+        schema_files = lambda: [ok_path]
+        try:
+            check_schemas(ok_report)
+        finally:
+            schema_files = orig_schemas
+        if ok_report.success:
+            report.ok("自测：非保留字字段不受影响")
+        else:
+            report.fail("自测：非保留字字段被误拒绝")
     report.print()
     return 0 if report.success else 1
 
