@@ -91,12 +91,7 @@ def disable_user(api, payload, actor, command_id):
     if account.get("built_in") or account.get("username") == "root":
         raise api.reject("IAM-403-002", "内置 root 账户不可禁用")
     now = api.ts(api.now())
-    events = []
-    for session in list(api.objects("iam_auth_session")):
-        if session["superseded_at"] is None and session["account_id"] == account_id and session["status"] == "active":
-            api.update_object("iam_auth_session", session["id"], {"status": "revoked"}, actor)
-            events.append(api.event("iam.session.revoked", actor, [session["id"]],
-                                    {"session_id": session["id"], "reason": "account_disabled"}))
+    events = revoke_sessions(api, account_id, actor, "account_disabled")
     api.update_object("iam_user_account", account_id, {"status": "disabled"}, actor)
     events.append(api.event("iam.user.disabled", actor, [account_id],
                             {"account_id": account_id, "disabled_at": now}))

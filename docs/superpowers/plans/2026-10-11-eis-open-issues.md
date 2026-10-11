@@ -25,10 +25,10 @@
 - Test: `01-data-contract/tests/data-contract.test.yaml`（新增 `cli` 用例运行 `--self-test`）
 
 **Steps:**
-- [ ] 收集 PostgreSQL 保留字集合（reserved，不含 reserved-can-be-function-or-type）。
-- [ ] 在 `check_schemas` 中对每个 schema 的 `properties` 名（含 allOf 展开后的领域字段）做大小写不敏感匹配；冲突输出字段、来源文件与建议名（boolean → `is_<name>`，否则 `<name>_value`）。
-- [ ] 自测新增：含 `primary` 字段的临时 Schema 必须被拒绝且错误含保留字提示；`is_primary` 必须通过。
-- [ ] `python3 tools/e2e-runner --all` 全绿；确认现有 iam/approval/accounting/inventory 无冲突。
+- [x] 收集 PostgreSQL 保留字集合（reserved，不含 reserved-can-be-function-or-type）。
+- [x] 在 `check_schemas` 中对每个 schema 的 `properties` 名（含 allOf 展开后的领域字段）做大小写不敏感匹配；冲突输出字段、来源文件与建议名（boolean → `is_<name>`，否则 `<name>_value`）。
+- [x] 自测新增：含 `primary` 字段的临时 Schema 必须被拒绝且错误含保留字提示；`is_primary` 必须通过。
+- [x] `python3 tools/e2e-runner --all` 全绿；确认现有 iam/approval/accounting/inventory 无冲突。
 
 ## Task 2（issue #2）：内核扩展处理器注册机制
 
@@ -45,10 +45,10 @@
 - `load_extension_handlers(kernel)` 扫描 `extensions/*/handlers.py`，加载异常不静默。
 
 **Steps:**
-- [ ] 实现 API 与加载器，`_handle` 改为注册表查找。
-- [ ] 机械迁移 4 个扩展全部处理器；运行全量用例。
-- [ ] 文档补充机制说明与最小模板。
-- [ ] 提交。
+- [x] 实现 API 与加载器，`_handle` 改为注册表查找。
+- [x] 机械迁移 4 个扩展全部处理器；运行全量用例。
+- [x] 文档补充机制说明与最小模板。
+- [x] 提交。
 
 ## Task 3（issue #5）：extensions/hr 人力资源域扩展
 
@@ -57,13 +57,13 @@
 **验收（issue #5）:** `contract-checker`、`schema-compiler compile hr` 通过；V2xx 迁移随契约；`hr.test.yaml` 可执行；敏感字段仅散列留存。
 
 **Steps:**
-- [ ] objects：Employee/OrganizationUnit/Position/Assignment/ProvisioningTask（allOf 核心 object，双时间轴）。
-- [ ] operations：11 条命令 OpenAPI（hr.employee.create|update|activate|cancel、hr.org.unit.define|update、hr.position.define|update、hr.assignment.assign|end、hr.provisioning.run）。
-- [ ] handlers：工号服务端生成、 uniqueness、返聘允许、组织/岗位一致性、汇报无环、在职必有主岗、主岗唯一、id 散列脱敏、供给任务。
-- [ ] rules + invariants + README。
-- [ ] tests：覆盖唯一性、返聘、无环、主岗不变量、敏感字段脱敏、审计链、供给任务。
-- [ ] migration（由 `schema-compiler compile hr` 产物对齐）。
-- [ ] `e2e-runner --all` 全绿。
+- [x] objects：Employee/OrganizationUnit/Position/Assignment/ProvisioningTask（allOf 核心 object，双时间轴）。
+- [x] operations：11 条命令 OpenAPI（hr.employee.create|update|activate|cancel、hr.org.unit.define|update、hr.position.define|update、hr.assignment.assign|end、hr.provisioning.run）。
+- [x] handlers：工号服务端生成、 uniqueness、返聘允许、组织/岗位一致性、汇报无环、在职必有主岗、主岗唯一、id 散列脱敏、供给任务。
+- [x] rules + invariants + README。
+- [x] tests：覆盖唯一性、返聘、无环、主岗不变量、敏感字段脱敏、审计链、供给任务。
+- [x] migration（由 `schema-compiler compile hr` 产物对齐）。
+- [x] `e2e-runner --all` 全绿。
 
 ## Task 4（issue #4）：approval 区块级流转
 
@@ -72,12 +72,12 @@
 **验收（issue #4）:** compatibility-checker MINOR；用例覆盖正常流转、条件不适用、打回→重提→全部重确认、有人确认后撤回被拒、区块属主不匹配被拒；既有 decide 语义不破坏。
 
 **Steps:**
-- [ ] 对象 `ApprovalSection`（key/title/owner/state/confirmer/decided_at/comment/applicable）与 request 可选 `sections` 关联。
-- [ ] 命令：`approval.section.confirm|reject|complete`、`approval.request.resubmit|withdraw`。
-- [ ] 权限：区块属主 `approval.section.confirm.<owner>`（handler 内校验）。
-- [ ] 不变量与规则文件；重提重置全部区块；完成⟺全部就绪。
-- [ ] 用例 + compat 用例（旧 schema → 新 schema = MINOR）。
-- [ ] `e2e-runner --all` 全绿。
+- [x] 对象 `ApprovalSection`（key/title/owner/state/confirmer/decided_at/comment/applicable）与 request 可选 `sections` 关联。
+- [x] 命令：`approval.section.confirm|reject|complete`、`approval.request.resubmit|withdraw`。
+- [x] 权限：区块属主 `approval.section.confirm.<owner>`（handler 内校验）。
+- [x] 不变量与规则文件；重提重置全部区块；完成⟺全部就绪。
+- [x] 用例 + compat 用例（旧 schema → 新 schema = MINOR）。
+- [x] `e2e-runner --all` 全绿。
 
 ## Task 5（issue #3）：授权属性属主与来源（核心 04）
 
@@ -86,11 +86,11 @@
 **验收（issue #3）:** 契约给出取属性接口或写入协议；明确缺失/过期/不可达口径（fail-closed）；明确属性快照形状（主岗单值 + 岗位集合）及对 /check 的影响。
 
 **Steps:**
-- [ ] 定义 snapshots 形状与 `as_of` 语义。
-- [ ] Pull API 契约 + fail-closed 规则（ATR-xxx）。
-- [ ] `/check` 增加可选 attributes 上下文与 `attribute_state` 返回；ADR 记录取舍。
-- [ ] authz-resolver 支持属性夹具并补 e2e 用例。
-- [ ] `e2e-runner --all` 全绿。
+- [x] 定义 snapshots 形状与 `as_of` 语义。
+- [x] Pull API 契约 + fail-closed 规则（ATR-xxx）。
+- [x] `/check` 增加可选 attributes 上下文与 `attribute_state` 返回；ADR 记录取舍。
+- [x] authz-resolver 支持属性夹具并补 e2e 用例。
+- [x] `e2e-runner --all` 全绿。
 
 ---
 

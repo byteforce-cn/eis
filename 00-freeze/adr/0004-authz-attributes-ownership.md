@@ -17,7 +17,7 @@
 
 ## 2. 影响范围
 
-- 契约：授权（04）加法补充属性快照协议与失败口径；数据契约（01）仅更新 `attributes` 字段描述（PATCH）；
+- 契约：授权（04）加法补充属性快照协议与失败口径；主体 Schema（04-authz-contract/principal.schema.json）仅更新 `attributes` 字段描述（PATCH）；
 - 扩展：`extensions/hr` 是属性权威属主（其对象/事件已可派生快照）；
 - 案例：不涉及；
 - 工具：`tools/authz-resolver` 支持属性夹具、`attributes` 子命令与 `--require-attribute` 条件；
@@ -53,4 +53,5 @@
 
 - `acceptance.yaml`「授权契约：解析测试 / SoD 测试」；
 - 新增：`attributes` 新鲜/过期/缺失三态；`/check --require-attribute` 条件不匹配拒绝
-  （ATTRIBUTE_MISMATCH）；过期/缺失 fail-closed（ATTRIBUTE_STALE / ATTRIBUTE_MISSING）。
+  （ATTRIBUTE_MISMATCH）；过期/缺失/属主不可达 fail-closed（ATTRIBUTE_STALE / ATTRIBUTE_MISSING /
+  ATTRIBUTE_SOURCE_UNAVAILABLE）。

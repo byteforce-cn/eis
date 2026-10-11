@@ -7,7 +7,7 @@ attribute_rules:
   - id: "ATR-001"
     name: "属性属主唯一"
     level: "MUST"
-    statement: "组织/岗位/职级/雇佣类型/汇报链的权威属主是人事域（extensions/hr）；授权域与其它消费方只读，不得回写权威属性。01-data-contract/principal.schema.json 的 attributes 字段是只读投影/缓存，不是权威载体。"
+    statement: "组织/岗位/职级/雇佣类型/汇报链的权威属主是人事域（extensions/hr）；授权域与其它消费方只读，不得回写权威属性。04-authz-contract/principal.schema.json 的 attributes 字段是只读投影/缓存，不是权威载体。"
     error_code: "ATTRIBUTE_OWNER_VIOLATION"
 
   - id: "ATR-002"

@@ -8,6 +8,11 @@ fixtures:
       key: "worker"
       valid_from: "2026-01-01T00:00:00Z"
       recorded_at: "2026-01-01T00:00:00Z"
+    - id: "01900000-0000-7000-8000-000000000202"
+      type: "person"
+      key: "outage"
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
 
   roles:
     - id: "01900000-0000-7000-8000-0000000002a1"
@@ -24,9 +29,21 @@ fixtures:
       scope: { department: "D001" }
       valid_from: "2026-01-01T00:00:00Z"
       recorded_at: "2026-01-01T00:00:00Z"
+    - id: "01900000-0000-7000-8000-0000000002b2"
+      principal: "01900000-0000-7000-8000-000000000202"
+      role: "01900000-0000-7000-8000-0000000002a1"
+      scope: {}
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
 
   # 属性快照（权威属主 hr）：as_of 选最新不晚于查询时点者；expires_at 决定 fresh/stale
   attributes:
+    # 属主不可达模拟（部署侧 503 的夹具化表达）：条件求值必须 fail-closed
+    - principal: "outage"
+      as_of: "2026-09-01T00:00:00Z"
+      recorded_at: "2026-09-01T00:00:00Z"
+      source: "hr"
+      source_unavailable: true
     - principal: "worker"
       as_of: "2026-09-01T00:00:00Z"
       recorded_at: "2026-09-01T00:00:00Z"

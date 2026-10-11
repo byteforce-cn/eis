@@ -240,8 +240,8 @@ def create_employee(api, payload, actor, command_id):
         raise api.reject("HR-400-001", "hire_date 必须为 YYYY-MM-DD")
     id_hash = payload.get("id_number_hash")
     if id_hash is not None:
-        if not isinstance(id_hash, str) or not id_hash:
-            raise api.reject("HR-400-001", "id_number_hash 非法")
+        if not isinstance(id_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", id_hash):
+            raise api.reject("HR-400-001", "id_number_hash 必须为小写十六进制 HMAC-SHA256（64 字符）")
         duplicate = api.find_current(
             "hr_employee",
             lambda r: r.get("id_number_hash") == id_hash and r["status"] in NON_TERMINAL,
@@ -295,9 +295,7 @@ def activate_employee(api, payload, actor, command_id):
     primary = _primary_assignment(api, employee["id"])
     if primary is None:
         raise api.reject("HR-409-004", "在职必有主岗：请先分配有效主岗")
-    updates = {"status": "active"}
-    if not employee.get("org_unit_id"):
-        updates["org_unit_id"] = primary["org_unit_id"]
+    updates = {"status": "active", "org_unit_id": primary["org_unit_id"]}
     api.update_object("hr_employee", employee["id"], updates, actor)
     event = api.event("hr.employee.activated", actor, [employee["id"]],
                       {"employee_id": employee["id"], "employee_no": employee["employee_no"]})

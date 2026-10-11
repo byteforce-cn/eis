@@ -68,9 +68,9 @@ components:
               type:
               - string
               - 'null'
-              minLength: 1
+              pattern: ^[0-9a-f]{64}$
               writeOnly: true
-              description: 证件号 HMAC-SHA256 散列（写入专用，不落读投影）
+              description: 证件号 HMAC-SHA256 散列（小写十六进制 64 字符；写入专用，不落读投影）
         idempotency_key:
           type: string
         targets:

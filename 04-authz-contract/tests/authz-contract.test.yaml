@@ -122,6 +122,26 @@ tests:
     expect_allowed: false
     expect_code: ATTRIBUTE_STALE
 
+  - name: "属主不可达（source_unavailable，ATR-006）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    op: attributes
+    principal: outage
+    as_of: "2026-10-15T12:00:00Z"
+    expect_attribute_state: source_unavailable
+    expect_reason_code: ATTRIBUTE_SOURCE_UNAVAILABLE
+
+  - name: "依赖属性的条件在属主不可达时 fail-closed"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    op: check
+    principal: outage
+    permission: purchase.request.approve
+    as_of: "2026-10-15T12:00:00Z"
+    require_attributes: {employment_type: full_time}
+    expect_allowed: false
+    expect_code: ATTRIBUTE_SOURCE_UNAVAILABLE
+
   - name: "不依赖属性的判定不受属性缺失影响"
     kind: authz
     fixture: 04-authz-contract/tests/fixtures-attributes.yaml

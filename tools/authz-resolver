@@ -213,6 +213,11 @@ class Authz:
                     "source": "hr", "attribute_state": "missing",
                     "reason_code": "ATTRIBUTE_MISSING", "snapshot": None}
         item = max(candidates, key=lambda x: parse_ts(x.get("as_of") or x.get("recorded_at")))
+        if item.get("source_unavailable") is True:
+            return {**base, "recorded_at": item.get("recorded_at"), "expires_at": None,
+                    "source": item.get("source", "hr"), "source_version": item.get("source_version"),
+                    "attribute_state": "source_unavailable",
+                    "reason_code": "ATTRIBUTE_SOURCE_UNAVAILABLE", "snapshot": None}
         expires = item.get("expires_at")
         stale = expires is not None and parse_ts(expires) <= as_of_dt
         return {
@@ -238,6 +243,10 @@ class Authz:
         if state == "stale":
             return {"allowed": False, "reason": "属性快照过期（fail-closed）",
                     "reason_code": "ATTRIBUTE_STALE", "warnings": [], "attribute_state": state}
+        if state == "source_unavailable":
+            return {"allowed": False, "reason": "属性属主不可达（fail-closed）",
+                    "reason_code": "ATTRIBUTE_SOURCE_UNAVAILABLE", "warnings": [],
+                    "attribute_state": state}
         for key, expected in require_attributes.items():
             actual = _attr_get(attrs["snapshot"], key)
             if actual != expected:
