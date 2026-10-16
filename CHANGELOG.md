@@ -6,6 +6,7 @@
 
 ### 修复
 
+- `extensions/approval` 声明读取面权限目录（`approval.request.read`；6 命令 + 1 读取，动态属主以 `approval.section.confirm.*` 声明），`contract-checker` 支持尾部 `.*` 通配且保持段边界校验（issue #8）；
 - 扩展权限目录与读取面授权口径（ADR-0006）：`manifest.permissions`（hr 声明 11 命令 + `hr.employee.read`/`hr.attributes.read`），`contract-checker` 拦截未声明权限引用；属性快照端点限定服务间（ATR-008）；核心通用查询 API 明确部署边界（issue #7）；
 - 写入专用派生字段口径（ADR-0005 / DRV-001..006）：载荷携带原始值（`writeOnly`）、域服务用注入密钥派生、密钥环轮换窗口、读投影/命令记录/日志剔除；`extensions/hr` 载荷 `id_number_hash` → `id_number`（发布前修正），参考内核支持 `derive_write_only`/`write_only_variants`/`read_projection`/`object-absent`，iam 凭证 `secret_hash` 同步登记读投影剔除（issue #6）；
 - `tools/contract-checker`：拦截与 PostgreSQL 保留字冲突的对象字段名（issue #1）；
