@@ -20,6 +20,19 @@ tests:
     expect_level: MINOR
     expect_kinds: ["可选字段新增"]
 
+  - name: "独立模式（--standalone）：仅两契约文件判定 MINOR"
+    kind: cli
+    args: [tools/compatibility-checker, --old, 06-evolution-contract/tests/fixtures/schema-v1.json,
+           --new, 06-evolution-contract/tests/fixtures/schema-v2-minor.json, --standalone, --json]
+    stdout_contains: ["\"overall\": \"MINOR\"", "\"requires\": []"]
+
+  - name: "独立模式（--standalone）：破坏性变更触发 --fail-on"
+    kind: cli
+    args: [tools/compatibility-checker, --old, 06-evolution-contract/tests/fixtures/schema-v1.json,
+           --new, 06-evolution-contract/tests/fixtures/schema-v2-breaking.json,
+           --standalone, --fail-on, MAJOR]
+    expect_exit: 1
+
   - name: "迁移必须可生成且含对应回滚"
     kind: migrate
     old: 06-evolution-contract/tests/fixtures/schema-v1.json

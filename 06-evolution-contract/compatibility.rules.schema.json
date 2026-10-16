@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://evolution/compatibility-rules/v1",
+  "title": "CompatibilityRules",
+  "description": "compatibility.rules.yaml 的机器可读 Schema（判定权威仍为规则文件本身；第三方可据此校验/生成规则表）。",
+  "type": "object",
+  "required": ["version", "compatibility"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "compatibility": {
+      "type": "object",
+      "required": ["data", "operation", "event"],
+      "properties": {
+        "data": { "$ref": "#/$defs/ruleList" },
+        "operation": { "$ref": "#/$defs/ruleList" },
+        "event": { "$ref": "#/$defs/ruleList" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "ruleList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rule", "level", "requires"],
+        "properties": {
+          "rule": { "type": "string", "minLength": 1 },
+          "level": { "enum": ["PATCH", "MINOR", "MAJOR"] },
+          "requires": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

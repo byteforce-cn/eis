@@ -29,7 +29,7 @@ Java 端行为必须与参考内核（`tools/lib/kernel.py`）语义一致——
 | 时间契约 | `03-time-contract/*` | 建议新增 `starter-data-temporal` | 实体双时间轴 + 时点查询（`as_of`/`recorded_as_of`）SQL/拦截器；append-only 写入助手（封口旧版本、追加新版本） |
 | 授权契约 | `04-authz-contract/*` | `starter-resource`（身份进上下文）+ 建议新增 `client-eis-authz` | JWT → principal 映射；调用 `/resolve`、`/check`（携带 `as_of`）；SoD 拒绝映射到 `EIS-403-001` + `reason_code=SOD-xxx` |
 | 审计契约 | `05-audit-contract/*` | 建议新增 `starter-eis-audit`（可置于 `starter/` 家族） | 哈希链写入（命令受理后追加）；`verify.tool` 的 Java 移植必须通过冻结测试向量；链头锚定策略（部署侧） |
-| 演进契约 | `06-evolution-contract/*` | 构建与发布流程（非运行时模块） | Schema/DDL diff 门禁：`tools/compatibility-checker --fail-on MAJOR`；迁移脚本产出走 `migration-generator` 模板；发布流程挂接 ADR 要求 |
+| 演进契约 | `06-evolution-contract/*` | 构建与发布流程（非运行时模块） | Schema/DDL diff 门禁：`tools/compatibility-checker --fail-on MAJOR`；迁移脚本产出走 `migration-generator` 模板；发布流程挂接 ADR 要求；`--standalone` 可脱离本仓库与规则文件独立判定（ADR-0008） |
 
 **建议的 seedj 内核构件**（命名可按 seedj 规范调整）：
 

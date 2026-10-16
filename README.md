@@ -28,6 +28,25 @@ python3 tools/e2e-runner --all
 
 ---
 
+## 独立验证（不依赖参考内核）
+
+兼容性判定（PATCH/MINOR/MAJOR）可脱离 EIS 运行时独立执行——只读取两个契约文件与内置规则缺省：
+
+```bash
+tools/compatibility-checker --old old.schema.json --new new.schema.json --standalone
+tools/compatibility-checker --old old.schema.json --new new.schema.json --standalone --json
+tools/compatibility-checker --old old.schema.json --new new.schema.json --rules path/to/compatibility.rules.yaml
+```
+
+- 核心判定为纯 stdlib 模块 `tools/lib/eis_compat.py`（零 EIS 运行时依赖）；按原目录结构
+  复制 `tools/compatibility-checker` 与 `tools/lib/eis_compat.py` 即可在任意环境运行，
+  `--standalone` 仅需两个契约文件（内置缺省与规则文件四条数据规则逐项一致）；
+- `compatibility.rules.yaml` 的机器可读 Schema：[`06-evolution-contract/compatibility.rules.schema.json`](06-evolution-contract/compatibility.rules.schema.json)；
+- 契约工件（Schema/OpenAPI/DDL）、验收用例与合规判定仍以本仓库为准；六类契约独立 JSON Schema
+  与独立契约 lint CLI 为后续项（[docs/ROADMAP.md](docs/ROADMAP.md)）。
+
+---
+
 ## 规范的本质
 
 每条契约必须满足：

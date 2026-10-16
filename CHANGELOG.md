@@ -21,6 +21,7 @@
 
 ### 变更
 
+- `tools/compatibility-checker` 独立模式（ADR-0008）：核心判定提取为纯 stdlib `tools/lib/eis_compat.py`，新增 `--standalone`/`--rules` 与规则 JSON Schema `06-evolution-contract/compatibility.rules.schema.json`；默认输出与判定语义不变（issue #10）；
 - `tools/e2e-runner`：`object-field`/`object-count` 断言支持 `${...}` 令牌；`kind: authz` 支持属性快照与条件断言；
 - 用例 100/100（相对首发 53 条新增 47 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
 
