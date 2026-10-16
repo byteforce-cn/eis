@@ -16,6 +16,7 @@
 
 - `extensions/hr` 1.0.0：人力资源域扩展（组织/岗位/员工/任职/供给任务，含 V201 迁移，issue #5）；
 - `extensions/approval` 1.0.1：区块级流转（分派/条件参与/打回重确认/撤回，MINOR，issue #4）；
+- 审计条目 `payload_digest`（ADR-0007 / hash-chain v1.1）：事件投影 `{id,type,payload}` 规范 JSON 的 SHA-256，可选字段且仅存在时参与链哈希（v1.0 条目哈希不变）；`verify.tool`/`audit-verifier --events` 复算并检出事件正文篡改（issue #9）；
 - 授权属性协议：`04-authz-contract/attributes.api.yaml`、`attribute.rules.yaml`（ATR-001..007）与 ADR-0004（issue #3）。
 
 ### 变更

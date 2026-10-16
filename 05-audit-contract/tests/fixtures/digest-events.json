@@ -1,0 +1,23 @@
+{
+  "events": [
+    {
+      "id": "018f2e3a-4000-8000-0000-0000000000e1",
+      "type": "approval.request.submitted",
+      "payload": {
+        "operation": "inventory.stock.receive",
+        "target": {
+          "type": "purchase_order",
+          "id": "018f2e3a-9999-7000-8000-00000000f301"
+        }
+      }
+    },
+    {
+      "id": "018f2e3a-4000-8000-0000-0000000000e2",
+      "type": "approval.section.created",
+      "payload": {
+        "owner": "finance",
+        "key": "cost"
+      }
+    }
+  ]
+}

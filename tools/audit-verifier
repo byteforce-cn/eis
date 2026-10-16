@@ -10,9 +10,10 @@
 
 用法:
   audit-verifier CHAIN.json [--json]     验证单个链文件
+  audit-verifier CHAIN.json --events E.json   复算 payload_digest（事件正文篡改检出）
   audit-verifier --all [--dir D]         验证 D 下全部 *.chain.json（默认全仓库 tests/）
   audit-verifier --vector                校验规范冻结的创世测试向量
-  audit-verifier --self-test             向量 + 合法/篡改/缺口/断链
+  audit-verifier --self-test             向量 + 合法/篡改/缺口/断链 + payload_digest
 
 退出码: 0 通过 / 1 验证失败 / 2 用法或输入错误
 """
@@ -59,13 +60,20 @@ def check_vector(vt) -> bool:
     return vt.compute_hash(GENESIS_VECTOR_ENTRY) == GENESIS_VECTOR_HASH
 
 
-def verify_file(vt, path: Path) -> dict:
+def verify_file(vt, path: Path, events_path: Path | None = None) -> dict:
     try:
         entries = vt.load_entries(str(path))
     except (OSError, ValueError) as exc:
         return {"file": rel(path), "valid": False, "error": f"读取失败: {exc}"}
+    errors = []
+    if events_path is not None:
+        try:
+            events = vt.load_entries(str(events_path))
+        except (OSError, ValueError) as exc:
+            return {"file": rel(path), "valid": False, "error": f"事件导出读取失败: {exc}"}
+        errors.extend(vt.verify_payload_digests(entries, events))
     try:
-        errors = vt.verify_chain(entries)
+        errors = vt.verify_chain(entries) + errors
     except (ValueError, TypeError, KeyError) as exc:
         return {"file": rel(path), "valid": False,
                 "error": f"验证异常（输入畸形）: {type(exc).__name__}: {exc}"}
@@ -139,6 +147,24 @@ def cmd_self_test(args) -> int:
                any(e["type"] in ("schema_invalid", "invalid_hash") for e in bad_ts_errors))
     except Exception as exc:  # noqa: BLE001
         report(f"畸形 timestamp 结构化报错（抛出 {type(exc).__name__}）", False)
+    # payload_digest（v1.1）：摘要复算与事件正文篡改检出
+    digest_events = [{"id": "018f2e3a-1234-7000-8000-0000000000e1", "type": "voucher.created",
+                      "payload": {"amount": "100.00", "currency": "CNY"}}]
+    dchain, dprev = [], vt.GENESIS_PREV_HASH
+    for dseq, devs in ((1, digest_events), (2, [])):
+        de = vt._build_entry(dseq, dprev, payload={"event_ids": [ev["id"] for ev in devs]})
+        de["payload_digest"] = vt.compute_payload_digest(devs)
+        de["hash"] = vt.compute_hash(de)
+        dchain.append(de)
+        dprev = de["hash"]
+    report("含 payload_digest 的链通过", not vt.verify_chain(dchain))
+    report("零事件摘要冻结常量", vt.compute_payload_digest([]) == vt.EMPTY_PAYLOAD_DIGEST)
+    tampered_events = copy.deepcopy(digest_events)
+    tampered_events[0]["payload"]["amount"] = "999.00"
+    report("事件正文篡改检出（payload_digest_mismatch）",
+           any(e["type"] == "payload_digest_mismatch"
+               for e in vt.verify_payload_digests(dchain, tampered_events)))
+
     print(f"自测结果: {'通过' if ok else '失败'}")
     return 0 if ok else 1
 
@@ -146,6 +172,7 @@ def cmd_self_test(args) -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="audit-verifier", description="EIS 审计链验证（参考实现）")
     parser.add_argument("chain", nargs="?", help="审计链文件（JSON 数组 / {entries:[...]} / JSONL）")
+    parser.add_argument("--events", help="事件导出文件（JSON 数组 / {events:[...]}）；复算 payload_digest")
     parser.add_argument("--json", action="store_true", help="JSON 输出")
     parser.add_argument("--all", action="store_true", help="验证目录下全部 *.chain.json")
     parser.add_argument("--dir", help="配合 --all：扫描目录（默认仓库根）")
@@ -168,7 +195,7 @@ def main(argv=None) -> int:
         parser.print_usage(sys.stderr)
         return 2
     vt = load_verify_module()
-    result = verify_file(vt, Path(args.chain))
+    result = verify_file(vt, Path(args.chain), Path(args.events) if args.events else None)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     elif result["valid"]:

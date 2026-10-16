@@ -4,8 +4,9 @@
 
 用法:
   verify.tool CHAIN.json           验证审计链（JSON 数组、{"entries": [...]} 或 JSONL）
+  verify.tool CHAIN.json --events E.json   复算 payload_digest（检出事件正文篡改）
   verify.tool --json CHAIN.json    以 JSON 输出验证报告
-  verify.tool --self-test          自测：构建链→验证通过→篡改→检出→缺口→检出
+  verify.tool --self-test          自测：合法/篡改/缺口/断链/payload_digest
 
 退出码:
   0  验证通过（或自测全部符合预期）
@@ -23,9 +24,11 @@
       actor(uuid, 小写), action,
       resource.type, resource.id(uuid, 小写; NULL → 空串),
       payload(规范 JSON: UTF-8、键排序、无空白),
-      prev_hash(小写 hex)
+      prev_hash(小写 hex),
+      payload_digest(可选，v1.1：存在时追加为最后一行；缺失时保持 v1.0 规范化)
   ])
   hash = sha256(utf8(canonical)) 的小写 hex
+  payload_digest = sha256(canonical JSON of [{"id","type","payload"} for each event])
   创世: sequence == 1 且 prev_hash == 64 个 "0"
 """
 
@@ -44,6 +47,8 @@ except ImportError:  # pragma: no cover — jsonschema 缺失时降级为仅哈�
     FormatChecker = None
 
 GENESIS_PREV_HASH = "0" * 64
+# 零事件投影（[]）的 SHA-256，冻结常量（与 hash-chain.spec.md §3 第二条向量一致）
+EMPTY_PAYLOAD_DIGEST = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
 AUDIT_SCHEMA_PATH = Path(__file__).resolve().parent / "audit.schema.json"
 
 
@@ -100,7 +105,46 @@ def canonical_string(entry: dict) -> str:
         canonical_payload(entry.get("payload")),
         str(entry.get("prev_hash", "")).lower(),
     ]
+    # v1.1 可选字段：仅在存在时追加，v1.0 条目哈希逐字节不变
+    digest = entry.get("payload_digest")
+    if digest:
+        fields.append(str(digest).lower())
     return "\n".join(fields)
+
+
+def payload_projection(events) -> list:
+    """事件投影：仅绑定语义核心（事件 id / 类型 / 正文），不含时间戳等易变字段。"""
+    return [{"id": ev.get("id"), "type": ev.get("type"), "payload": ev.get("payload")}
+            for ev in (events or []) if isinstance(ev, dict)]
+
+
+def compute_payload_digest(events) -> str:
+    """payload_digest = sha256(canonical_json(事件投影列表))，小写 hex；空列表为冻结常量。"""
+    return hashlib.sha256(canonical_payload(payload_projection(events)).encode("utf-8")).hexdigest()
+
+
+def verify_payload_digests(entries: list, events: list) -> list:
+    """按条目 payload_digest 复算事件投影摘要；无 digest 条目跳过（v1.0 兼容）。"""
+    by_id = {str(ev.get("id")): ev for ev in (events or []) if isinstance(ev, dict)}
+    errors = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("payload_digest"):
+            continue
+        event_ids = ((entry.get("payload") or {}).get("event_ids")) or []
+        missing = [eid for eid in event_ids if str(eid) not in by_id]
+        if missing:
+            errors.append({"sequence": entry.get("sequence"),
+                           "type": "payload_digest_missing_event", "event_id": missing[0],
+                           "message": "事件导出缺少被引用事件，无法复算摘要"})
+            continue
+        expected = compute_payload_digest([by_id[str(eid)] for eid in event_ids])
+        actual = str(entry["payload_digest"]).lower()
+        if actual != expected:
+            errors.append({"sequence": entry.get("sequence"),
+                           "type": "payload_digest_mismatch",
+                           "expected": expected, "actual": actual,
+                           "message": "事件正文与审计条目 payload_digest 不符（可能被篡改）"})
+    return errors
 
 
 def compute_hash(entry: dict) -> str:
@@ -207,10 +251,10 @@ def load_entries(path: str) -> list:
         return [json.loads(ln) for ln in lines]
 
     if isinstance(data, dict):
-        for key in ("entries", "chain"):
+        for key in ("entries", "chain", "events"):
             if key in data:
                 return data[key]
-        raise ValueError("JSON 对象中缺少 entries/chain 字段")
+        raise ValueError("JSON 对象中缺少 entries/chain/events 字段")
     return data
 
 
@@ -318,6 +362,62 @@ def self_test(verbose: bool = True) -> bool:
         if verbose:
             print("[FAIL] 畸形 timestamp 抛出异常: %r" % exc)
 
+    # 7) payload_digest（v1.1 加法演进）：含摘要链通过 / 零事件冻结常量 / 摘要纳入哈希
+    digest_events = [
+        {"id": "018f2e3a-1234-7000-8000-0000000000e1", "type": "voucher.created",
+         "payload": {"amount": "100.00", "currency": "CNY"}},
+        {"id": "018f2e3a-1234-7000-8000-0000000000e2", "type": "voucher.posted",
+         "payload": {"amount": "100.00", "currency": "CNY"}},
+    ]
+    digest_chain, prev = [], GENESIS_PREV_HASH
+    for seq, evs in ((1, digest_events[:1]), (2, digest_events[1:]), (3, [])):
+        entry = _build_entry(seq, prev, payload={"event_ids": [ev["id"] for ev in evs]})
+        entry["payload_digest"] = compute_payload_digest(evs)
+        entry["hash"] = compute_hash(entry)
+        digest_chain.append(entry)
+        prev = entry["hash"]
+    errors = verify_chain(digest_chain)
+    if errors:
+        ok = False
+        if verbose:
+            print("[FAIL] 含 payload_digest 的链未通过: %s" % errors)
+    elif verbose:
+        print("[ok]   含 payload_digest 的链验证通过（3 条）")
+
+    if compute_payload_digest([]) != EMPTY_PAYLOAD_DIGEST:
+        ok = False
+        if verbose:
+            print("[FAIL] 零事件摘要不等于冻结常量: %s" % compute_payload_digest([]))
+    elif verbose:
+        print("[ok]   零事件摘要为冻结常量（%s…）" % EMPTY_PAYLOAD_DIGEST[:8])
+
+    if verify_payload_digests(digest_chain, digest_events):
+        ok = False
+        if verbose:
+            print("[FAIL] 未篡改事件正文被误报: %s" % verify_payload_digests(digest_chain, digest_events))
+    elif verbose:
+        print("[ok]   未篡改事件正文通过（摘要复算一致）")
+
+    tampered_events = copy.deepcopy(digest_events)
+    tampered_events[1]["payload"]["amount"] = "999.00"
+    perrors = verify_payload_digests(digest_chain, tampered_events)
+    if not any(x["type"] == "payload_digest_mismatch" for x in perrors):
+        ok = False
+        if verbose:
+            print("[FAIL] 事件正文篡改未被检出: %s" % perrors)
+    elif verbose:
+        print("[ok]   事件正文篡改被检出（payload_digest_mismatch, sequence=2）")
+
+    digest_tampered = copy.deepcopy(digest_chain)
+    digest_tampered[0]["payload_digest"] = "0" * 64
+    errors = verify_chain(digest_tampered)
+    if not any(x["type"] == "invalid_hash" for x in errors):
+        ok = False
+        if verbose:
+            print("[FAIL] payload_digest 字段篡改未被检出: %s" % errors)
+    elif verbose:
+        print("[ok]   payload_digest 字段篡改被检出（invalid_hash）")
+
     if verbose:
         print("自测结果: %s" % ("通过" if ok else "失败"))
     return ok
@@ -333,6 +433,7 @@ def main(argv=None) -> int:
         description="EIS 审计链验证工具（Spec v1.0.0 参考实现）",
     )
     parser.add_argument("chain", nargs="?", help="审计链文件（JSON 数组 / {entries:[...]} / JSONL）")
+    parser.add_argument("--events", help="事件导出文件（JSON 数组 / {events:[...]}）；用于复算 payload_digest")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出验证报告")
     parser.add_argument("--self-test", action="store_true", help="运行自测")
     parser.add_argument("--quiet", action="store_true", help="静默模式")
@@ -355,6 +456,13 @@ def main(argv=None) -> int:
         return 2
 
     errors = verify_chain(entries)
+    if args.events:
+        try:
+            events = load_entries(args.events)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print("错误: 无法读取事件导出: %s" % exc, file=sys.stderr)
+            return 2
+        errors = errors + verify_payload_digests(entries, events)
     valid = not errors
 
     if args.json:

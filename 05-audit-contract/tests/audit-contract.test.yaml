@@ -33,6 +33,24 @@ tests:
     expect: invalid
     error_types: [prev_hash_mismatch]
 
+  - name: "含 payload_digest 的链必须可验证（v1.1 加法演进）"
+    kind: chain
+    fixture: 05-audit-contract/tests/fixtures/valid-digest.chain.json
+    expect: valid
+
+  - name: "事件正文未篡改：payload_digest 复算一致"
+    kind: cli
+    args: [05-audit-contract/verify.tool, 05-audit-contract/tests/fixtures/valid-digest.chain.json,
+           --events, 05-audit-contract/tests/fixtures/digest-events.json]
+    stdout_contains: ["审计链验证：通过"]
+
+  - name: "事件正文篡改：payload_digest 检出不匹配"
+    kind: cli
+    args: [05-audit-contract/verify.tool, 05-audit-contract/tests/fixtures/valid-digest.chain.json,
+           --events, 05-audit-contract/tests/fixtures/tampered-events.json]
+    expect_exit: 1
+    stdout_contains: ["payload_digest_mismatch"]
+
   - name: "冻结测试向量必须一致（跨实现验证）"
     kind: cli
     args: [tools/audit-verifier, --vector]
@@ -57,5 +75,5 @@ tests:
             target: {type: purchase_order, id: "01900000-0000-7000-8000-00000000f301"}
           events: [approval.request.submitted]
       assert:
-        - {kind: audit-chain, expect: valid, min_entries: 1}
+        - {kind: audit-chain, expect: valid, min_entries: 1, verify_payload_digest: true}
         - {kind: idempotency, step: T1}
