@@ -30,6 +30,25 @@
 `APR-409-002` 模式不匹配、`APR-409-003` 状态不允许、`APR-409-004` 仅已驳回可重提、
 `APR-409-005` 已有确认不可撤回、`APR-409-006` 区块 key 重复。
 
+## 读取面权限（issue #8）
+
+`manifest.yaml` 的 `permissions` 是唯一权限来源（6 命令 + 1 读取）。`approval.request.read`
+（`kind: read`）覆盖消费方（`ims-approval`，经 BFF 同源 `/api/approval`）的四个读端点：
+
+| 读操作 | 用途 |
+|--------|------|
+| `GET /requests?operation=&status=&targetId=&requester=&todoFor=me` | 审批中心列表（`todoFor=me` 按调用者持有的 `approval.section.confirm.<owner>` 过滤待办） |
+| `GET /requests/{id}` | 单据详情（单据头 + 区块数组 + `flowPhase/flowState` + 服务端判定的 `canConfirm/canReject`） |
+| `GET /requests/{id}/decisions` | `decide` 路径决策列表 |
+| `GET /requests/by-target/{type}/{id}` | 按业务对象反查单据与 system 区块 ID（HR 供给成功后回写 system 区块的对账入口，调用方为 `ims-hr` 服务身份） |
+
+- 读权限**不是命令**：不参与命令级 `/check`，由消费方读面授权门按声明标识执行；
+- **fail-closed**：未授权返回 403；**读面 403 无契约码**（`APR-403-*` 仅覆盖命令面），
+  reason_code 由 authz `/check` 给出 `NO_PERMISSION`——「已声明未授予」与「未声明引用」不再含糊；
+- 动态属主命令权限以 `approval.section.confirm.*` 声明（确认与打回复用同一属主权限）；
+- 消费方（`ims-approval` / `ims-iam`）按声明标识接入 `approval.request.read`，不得自造权限标识；
+  判定用例见 `tests/fixtures-authz.yaml` 与 `approval.test.yaml` 的 `kind: authz` 用例。
+
 ## 不变量与规则
 
 - `rules/no-self-approval.yaml`：决定人 ≠ 申请人；

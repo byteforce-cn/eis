@@ -6,6 +6,7 @@
 
 ### 修复
 
+- `extensions/approval` 声明读取面权限目录（`approval.request.read`；6 命令 + 1 读取，动态属主以 `approval.section.confirm.*` 声明），`contract-checker` 支持尾部 `.*` 通配且保持段边界校验（issue #8）；
 - 扩展权限目录与读取面授权口径（ADR-0006）：`manifest.permissions`（hr 声明 11 命令 + `hr.employee.read`/`hr.attributes.read`），`contract-checker` 拦截未声明权限引用；属性快照端点限定服务间（ATR-008）；核心通用查询 API 明确部署边界（issue #7）；
 - 写入专用派生字段口径（ADR-0005 / DRV-001..006）：载荷携带原始值（`writeOnly`）、域服务用注入密钥派生、密钥环轮换窗口、读投影/命令记录/日志剔除；`extensions/hr` 载荷 `id_number_hash` → `id_number`（发布前修正），参考内核支持 `derive_write_only`/`write_only_variants`/`read_projection`/`object-absent`，iam 凭证 `secret_hash` 同步登记读投影剔除（issue #6）；
 - `tools/contract-checker`：拦截与 PostgreSQL 保留字冲突的对象字段名（issue #1）；
@@ -15,12 +16,14 @@
 
 - `extensions/hr` 1.0.0：人力资源域扩展（组织/岗位/员工/任职/供给任务，含 V201 迁移，issue #5）；
 - `extensions/approval` 1.0.1：区块级流转（分派/条件参与/打回重确认/撤回，MINOR，issue #4）；
+- 审计条目 `payload_digest`（ADR-0007 / hash-chain v1.1）：事件投影 `{id,type,payload}` 规范 JSON 的 SHA-256，可选字段且仅存在时参与链哈希（v1.0 条目哈希不变）；`verify.tool`/`audit-verifier --events` 复算并检出事件正文篡改（issue #9）；
 - 授权属性协议：`04-authz-contract/attributes.api.yaml`、`attribute.rules.yaml`（ATR-001..007）与 ADR-0004（issue #3）。
 
 ### 变更
 
+- `tools/compatibility-checker` 独立模式（ADR-0008）：核心判定提取为纯 stdlib `tools/lib/eis_compat.py`，新增 `--standalone`/`--rules` 与规则 JSON Schema `06-evolution-contract/compatibility.rules.schema.json`；默认输出与判定语义不变（issue #10）；
 - `tools/e2e-runner`：`object-field`/`object-count` 断言支持 `${...}` 令牌；`kind: authz` 支持属性快照与条件断言；
-- 用例 100/100（相对首发 53 条新增 47 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
+- 用例 108/108（相对首发 53 条新增 55 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
 
 ## [1.0.0] — 2026-10-08（开源首发）
 

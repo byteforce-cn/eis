@@ -343,3 +343,32 @@ tests:
     new: extensions/approval/objects/approval-request.schema.json
     expect_level: MINOR
     expect_kinds: ["可选字段新增", "枚举取值扩展"]
+
+  # ---- 读取面权限目录（issue #8）：声明即判据，参考实现按声明执行 ----
+  - name: "读取面权限：approval.request.read 授予具备该权限的主体"
+    kind: authz
+    fixture: extensions/approval/tests/fixtures-authz.yaml
+    op: check
+    principal: approval-reader
+    permission: approval.request.read
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: true
+
+  - name: "读取面权限：无权限主体拒绝（fail-closed）"
+    kind: authz
+    fixture: extensions/approval/tests/fixtures-authz.yaml
+    op: check
+    principal: approver
+    permission: approval.request.read
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: false
+    expect_code: NO_PERMISSION
+
+  - name: "读取面权限：HR 对账服务身份可读（服务身份按声明授予）"
+    kind: authz
+    fixture: extensions/approval/tests/fixtures-authz.yaml
+    op: check
+    principal: hr-service
+    permission: approval.request.read
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: true

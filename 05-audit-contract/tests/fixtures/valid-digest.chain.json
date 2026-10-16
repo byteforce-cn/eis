@@ -1,0 +1,41 @@
+[
+  {
+    "id": "018f2e3a-1234-7000-8000-000000000001",
+    "sequence": 1,
+    "timestamp": "2026-10-08T09:00:00.001000+00:00",
+    "actor": "018f2e3a-0000-7000-8000-000000000001",
+    "action": "voucher.create",
+    "resource": {
+      "type": "voucher",
+      "id": "018f2e3a-9999-7000-8000-000000000002"
+    },
+    "payload": {
+      "command_id": "018f2e3a-5000-8000-0000-000000000001",
+      "event_ids": [
+        "018f2e3a-4000-8000-0000-0000000000e1",
+        "018f2e3a-4000-8000-0000-0000000000e2"
+      ]
+    },
+    "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "hash": "05fc6e117fc083c45bac8dc731ab2f2b7f01bbe8a241d2e766dbdf9d1081c011",
+    "payload_digest": "1f4d40b1d04374c747fede93f5445f81760e797b867fc37b5314a7345c15df75"
+  },
+  {
+    "id": "018f2e3a-1234-7000-8000-000000000002",
+    "sequence": 2,
+    "timestamp": "2026-10-08T09:00:00.002000+00:00",
+    "actor": "018f2e3a-0000-7000-8000-000000000001",
+    "action": "voucher.create",
+    "resource": {
+      "type": "voucher",
+      "id": "018f2e3a-9999-7000-8000-000000000002"
+    },
+    "payload": {
+      "command_id": "018f2e3a-5000-8000-0000-000000000002",
+      "event_ids": []
+    },
+    "prev_hash": "05fc6e117fc083c45bac8dc731ab2f2b7f01bbe8a241d2e766dbdf9d1081c011",
+    "hash": "ba2e02828870cc628a1fbe0dcc4f90d59480e3711cb7c713ae37c26cdfbbe69c",
+    "payload_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  }
+]

@@ -120,7 +120,7 @@ def handle_action(api, payload, actor, command_id):
 
 | 字段 | 说明 |
 |------|------|
-| `id` | 全局唯一，必须以 `<extension.id>.` 开头（如 `hr.employee.read`） |
+| `id` | 全局唯一，必须以 `<extension.id>.` 开头（如 `hr.employee.read`）；动态属主权限可用且仅可用尾部 `.*`（如 `approval.section.confirm.*`） |
 | `kind` | `command`（命令）/ `read`（读取面）/ `service`（仅服务间，如属性快照拉取） |
 | `description` | 权限语义（中文一句话） |
 | `scope` | 可选：行级范围语义标识（如 `same_department`），以属性快照 ABAC 条件求值（ADR-0004） |
@@ -130,6 +130,8 @@ def handle_action(api, payload, actor, command_id):
 
 - 声明目录后未声明即不可用：消费方不得自造 `<extension>.*` 权限；测试中引用的权限必须全部在目录内
   （`tools/contract-checker` 校验，未声明引用即失败）；未声明目录的扩展不参与该校验（存量扩展按需补齐）；
+- 通配声明仅限**尾部** `.*`，匹配 `<前缀>.<合法段>`（段边界，不得放宽为任意前缀，`approval.section.confirm`/
+  `approval.section.confirmx` 均不匹配 `approval.section.confirm.*`）；
 - 读取面接入 `/check`（fail-closed）；命令面沿用内核命令级预检；
 - `kind: service` 的权限不得授予用户会话或经 BFF/SPA 暴露；
 - 核心通用查询 API 由部署边界保护，不要求域级权限（ADR-0006）。

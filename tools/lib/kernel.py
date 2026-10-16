@@ -545,6 +545,7 @@ class Kernel:
             "action": action,
             "resource": resource,
             "payload": {"command_id": record["id"], "event_ids": [e["id"] for e in events]},
+            "payload_digest": _VT.compute_payload_digest(events),
             "prev_hash": self.audit[-1]["hash"] if self.audit else GENESIS_PREV_HASH,
         }
         entry["hash"] = _VT.compute_hash(entry)
@@ -705,6 +706,16 @@ def _run_assertion(kernel: Kernel, assertion: dict, context: dict):
             return False, f"审计链条数 {len(kernel.audit)} < {minimum}"
         if errors:
             return False, f"审计链验证失败: {errors[0]['type']}@seq{errors[0].get('sequence')}"
+        if assertion.get("verify_payload_digest"):
+            by_id = {e["id"]: e for e in kernel.events}
+            for entry in kernel.audit:
+                event_ids = (entry.get("payload") or {}).get("event_ids") or []
+                missing = [eid for eid in event_ids if eid not in by_id]
+                if missing:
+                    return False, f"审计条目 seq={entry.get('sequence')} 引用的事件缺失: {missing[0]}"
+                expected = _VT.compute_payload_digest([by_id[eid] for eid in event_ids])
+                if entry.get("payload_digest") != expected:
+                    return False, f"payload_digest 与事件不符: seq={entry.get('sequence')}"
         return True, "审计链验证通过"
     if kind == "object-field":
         obj_id = resolve_tokens(assertion["id"], context)
@@ -944,6 +955,18 @@ def _self_test() -> bool:
     chain = copy.deepcopy(kernel.audit)
     chain[0]["payload"]["command_id"] = "01900000-0000-7000-8000-000000000302"
     report("篡改检出（invalid_hash）", any(e["type"] == "invalid_hash" for e in _VT.verify_chain(chain)))
+
+    # payload_digest：审计条目绑定事件投影（id/type/payload），事件正文篡改可复算检出
+    by_id = {e["id"]: e for e in kernel.events}
+    report("审计条目携带 payload_digest 且可由事件复算",
+           all(entry.get("payload_digest") == _VT.compute_payload_digest(
+               [by_id[eid] for eid in entry["payload"]["event_ids"]])
+               for entry in kernel.audit))
+    tampered_events = copy.deepcopy(kernel.events)
+    tampered_events[0]["payload"] = dict(tampered_events[0]["payload"], __tampered__=True)
+    report("事件正文篡改被检出（payload_digest_mismatch）", any(
+        x["type"] == "payload_digest_mismatch"
+        for x in _VT.verify_payload_digests(kernel.audit, tampered_events)))
     return ok
 
 

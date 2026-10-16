@@ -17,7 +17,7 @@
 ```bash
 pip install pyyaml jsonschema
 python3 tools/e2e-runner --all
-# 预期：用例 100/100；场景 1/1；流水线 5/5；总判定：通过
+# 预期：用例 108/108；场景 1/1；流水线 5/5；总判定：通过
 ```
 
 - 审计链验证（可直接运行）：`05-audit-contract/verify.tool --self-test`
@@ -25,6 +25,25 @@ python3 tools/e2e-runner --all
 - 已知限制与规范缺口：[docs/KNOWN-LIMITATIONS.md](docs/KNOWN-LIMITATIONS.md)
 - 实现落地（seedj / server 映射）：[docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md)
 - 版本与规划：[docs/ROADMAP.md](docs/ROADMAP.md)、[CHANGELOG.md](CHANGELOG.md)
+
+---
+
+## 独立验证（不依赖参考内核）
+
+兼容性判定（PATCH/MINOR/MAJOR）可脱离 EIS 运行时独立执行——只读取两个契约文件与内置规则缺省：
+
+```bash
+tools/compatibility-checker --old old.schema.json --new new.schema.json --standalone
+tools/compatibility-checker --old old.schema.json --new new.schema.json --standalone --json
+tools/compatibility-checker --old old.schema.json --new new.schema.json --rules path/to/compatibility.rules.yaml
+```
+
+- 核心判定为纯 stdlib 模块 `tools/lib/eis_compat.py`（零 EIS 运行时依赖）；按原目录结构
+  复制 `tools/compatibility-checker` 与 `tools/lib/eis_compat.py` 即可在任意环境运行，
+  `--standalone` 仅需两个契约文件（内置缺省与规则文件四条数据规则逐项一致）；
+- `compatibility.rules.yaml` 的机器可读 Schema：[`06-evolution-contract/compatibility.rules.schema.json`](06-evolution-contract/compatibility.rules.schema.json)；
+- 契约工件（Schema/OpenAPI/DDL）、验收用例与合规判定仍以本仓库为准；六类契约独立 JSON Schema
+  与独立契约 lint CLI 为后续项（[docs/ROADMAP.md](docs/ROADMAP.md)）。
 
 ---
 
@@ -38,7 +57,7 @@ python3 tools/e2e-runner --all
 3. **可演进**：能定义兼容性规则与迁移路径
 
 这三条不是口号：`tools/` 提供参考实现，一条命令即可验证本仓库全部契约——
-`python3 tools/e2e-runner --all`（100 条用例 + 端到端场景 + 工具链流水线；
+`python3 tools/e2e-runner --all`（108 条用例 + 端到端场景 + 工具链流水线；
 DDL 由 CI 在 PostgreSQL 16 上冒烟断言）。
 
 ---
@@ -152,7 +171,7 @@ eis/
 
 | 工件 | 状态 |
 |------|------|
-| 契约 Schema / OpenAPI / AsyncAPI / DDL / 测试用例 | 已实例化；100 条用例全部可执行 |
+| 契约 Schema / OpenAPI / AsyncAPI / DDL / 测试用例 | 已实例化；108 条用例全部可执行 |
 | `tools/*` 工具链（8 件） | ✅ 参考实现全部可用（Python，仅 PyYAML/jsonschema 依赖） |
 | 参考内核 `tools/lib/kernel.py` | ✅ 可执行端到端语义（命令→规则→事件→审计链→双时间轴） |
 | `05-audit-contract/verify.tool` | ✅ 冻结测试向量经实现验证一致 |

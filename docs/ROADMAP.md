@@ -6,6 +6,9 @@
       前端直接消费），生成物纳入 CI 一致性校验；
 - [ ] **工具增强**：`migration-generator` 支持索引/约束 diff；`contract-checker`
       增加 AsyncAPI 全量 schema 校验与 OpenAPI lint 集成；
+- [ ] **独立验证工件**（issue #10 后续项）：六类契约的公开 JSON Schema（数据/操作/时间/
+      授权/审计/演进）与独立契约 lint CLI；当前已交付 `compatibility-checker --standalone`、
+      纯 stdlib 核心 `tools/lib/eis_compat.py` 与 `compatibility.rules.schema.json`（ADR-0008）；
 - [ ] **审计增强**：链头锚定参考方案（按期签名并发布链头 hash）、审计导出/归档格式；
 - [x] **扩展扩充**：`extensions/hr`（人员/组织/任职/供给）已引入 v1.0.0（含可执行用例与 V201 迁移）；
       `extensions/asset`（资产）待社区贡献（见 CONTRIBUTING）；

@@ -13,6 +13,7 @@ CREATE TABLE audit_entry (
     resource_type   TEXT          NOT NULL,
     resource_id     UUID,
     payload         JSONB         NOT NULL,
+    payload_digest  TEXT,                        -- 可选（v1.1）：事件投影 SHA-256；存在时参与链哈希
     hash            TEXT          NOT NULL,
     prev_hash       TEXT          NOT NULL,
     signature       TEXT,                        -- 可选 CA 签名
@@ -20,7 +21,9 @@ CREATE TABLE audit_entry (
     CONSTRAINT pk_audit_entry      PRIMARY KEY (id),
     CONSTRAINT audit_sequence_uq   UNIQUE (sequence),
     CONSTRAINT audit_hash_len      CHECK (hash ~ '^[0-9a-f]{64}$'),
-    CONSTRAINT audit_prev_hash_len CHECK (prev_hash ~ '^[0-9a-f]{64}$')
+    CONSTRAINT audit_prev_hash_len CHECK (prev_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT audit_payload_digest_len
+        CHECK (payload_digest IS NULL OR payload_digest ~ '^[0-9a-f]{64}$')
 );
 
 -- 禁止 UPDATE 和 DELETE（append-only）

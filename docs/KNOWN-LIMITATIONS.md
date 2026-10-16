@@ -4,7 +4,7 @@
 > （文件:行号或工具行为），并按「现状 / 影响 / 使用者应对」说明。这些不是承诺清单，而是供
 > 采用者评估风险与自行补齐的依据。
 >
-> 计数口径：`python3 tools/e2e-runner --all` 的实际输出为唯一来源（当前 `用例 100/100`）。
+> 计数口径：`python3 tools/e2e-runner --all` 的实际输出为唯一来源（当前 `用例 108/108`）。
 
 ## 1. 时间契约
 
@@ -45,13 +45,15 @@
 - 影响：内核可能接受契约 Schema 会拒绝的输入；内核行为不等价于 Schema 语义的完整实现。
 - 使用者应对：实现侧必须自行执行对象 Schema 校验，不以内核接受作为合规依据。
 
-### 2.2 审计链不覆盖事件 payload
+### 2.2 审计链不覆盖事件 payload（已修复：v1.1 payload_digest）
 
-- 【已核实】`tools/lib/kernel.py` 的 `_append_audit`：审计条目 `payload` 仅含
-  `{"command_id", "event_ids"}`，不含事件正文。
-- 现状：审计链保证「命令受理记录」的完整性与顺序，不承诺事件 payload 的不可篡改。
-- 影响：事件内容被篡改时，链校验无法发现。
-- 使用者应对：如需事件级不可篡改，把事件摘要纳入审计 payload 或另行锚定。
+- 【已修复】`tools/lib/kernel.py` 的 `_append_audit` 现写入 `payload_digest`（事件投影
+  `{id,type,payload}` 的规范 JSON SHA-256，见 `hash-chain.spec.md` v1.1），校验工具
+  `verify.tool`/`audit-verifier --events` 可复算并检出事件正文篡改（`payload_digest_mismatch`）。
+- 残余边界：复算需要事件导出文件；仅有审计链时只能验证链内自洽（digest 自身纳入哈希，
+  篡改条目字段仍报 `invalid_hash`）；仅实现 v1.0 公式的旧验证器无法验证含 digest 的新条目。
+- 使用者应对：审计导出应同时提供事件导出（或由其复算的投影摘要）；跨实现验证器按
+  `hash-chain.spec.md` v1.1 公式实现；外部大内容在事件 payload 中携带 `content_sha256`（§2.1）。
 
 ### 2.3 写入专用字段密钥的参考缺省值
 

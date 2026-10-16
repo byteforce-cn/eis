@@ -337,7 +337,18 @@ def check_error_codes(report: Report) -> None:
 
 
 PERMISSION_KINDS = {"command", "read", "service"}
-PERMISSION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
+# 动态属主权限允许且仅允许尾部 .*（如 approval.section.confirm.*）
+PERMISSION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+(\.\*)?$")
+
+
+def permission_matches(ref: str, declared) -> bool:
+    """精确声明或尾部 .* 通配声明匹配（段边界；不得放宽为任意前缀）。"""
+    for pid in declared:
+        if ref == pid:
+            return True
+        if pid.endswith(".*") and ref.startswith(pid[:-1]) and PERMISSION_ID_RE.match(ref):
+            return True
+    return False
 
 
 def collect_permission_refs(node, refs: set) -> None:
@@ -388,7 +399,7 @@ def check_manifest_permissions(path: Path, ext_id: str, ext: dict) -> list[str]:
     if tests_dir.is_dir():
         for test_path in sorted(tests_dir.glob("*.yaml")):
             collect_permission_refs(load_yaml(test_path), used)
-    undeclared = sorted(p for p in used if p not in ids)
+    undeclared = sorted(p for p in used if not permission_matches(p, ids))
     if undeclared:
         problems.append(f"测试引用了未声明的权限: {undeclared}")
     return problems
@@ -566,6 +577,41 @@ def cmd_self_test(args) -> int:
             report.fail("自测：扩展权限目录校验未生效（应报未声明引用与非命名空间 id）")
         else:
             report.ok("自测：扩展权限未声明引用与非命名空间 id 被拒")
+
+    # 动态属主权限：仅尾部 .* 通配；必须段边界匹配，不得放宽为任意前缀
+    with _tempfile.TemporaryDirectory() as tmp:
+        ext_dir = Path(tmp) / "extensions" / "demo"
+        (ext_dir / "tests").mkdir(parents=True)
+        (ext_dir / "manifest.yaml").write_text(
+            _yaml.safe_dump({
+                "extension": {
+                    "id": "demo", "version": "1.0.0", "core_version": "1.0.0",
+                    "permissions": [
+                        {"id": "demo.section.confirm.*", "kind": "command",
+                         "description": "区块属主确认（动态 owner）"},
+                    ],
+                },
+            }, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+        def check_ref(ref: str) -> tuple[bool, str]:
+            (ext_dir / "tests" / "demo.test.yaml").write_text(
+                _yaml.safe_dump({"tests": [{"kind": "authz", "permission": ref}]},
+                                allow_unicode=True, sort_keys=False), encoding="utf-8")
+            tmp_report = Report("tmp")
+            check_manifests(tmp_report, root=Path(tmp))
+            return tmp_report.success, "\n".join(str(d) for _, _, d in tmp_report.failures)
+
+        matched, detail = check_ref("demo.section.confirm.ops")
+        if matched:
+            report.ok("自测：通配声明匹配属主子权限")
+        else:
+            report.fail("自测：通配声明未匹配属主子权限", detail)
+        for bad_ref in ("demo.section.confirm", "demo.section.confirmx"):
+            matched, detail = check_ref(bad_ref)
+            if not matched and "未声明" in detail:
+                report.ok(f"自测：通配不得匹配 {bad_ref}")
+            else:
+                report.fail(f"自测：通配错误匹配 {bad_ref}", detail)
     report.print()
     return 0 if report.success else 1
 
