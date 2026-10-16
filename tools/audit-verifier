@@ -44,6 +44,14 @@ GENESIS_VECTOR_ENTRY = {
 }
 GENESIS_VECTOR_HASH = "447c6e299d9adaec35d89e273b15d28752eeaac4674000b5df88d2e53a087410"
 
+# hash-chain.spec.md §3.2 冻结测试向量（含 payload_digest；事件投影与期望值）
+GENESIS_DIGEST_PROJECTION = [
+    {"id": "018f2e3a-aaaa-7000-8000-000000000001", "type": "voucher.created",
+     "payload": {"amount": "100.00", "currency": "CNY"}},
+]
+GENESIS_DIGEST = "b3a88a20915cc5a9a3c4a5c05e90b32be38b4e3ecafdc5f94d0fe878fb402913"
+GENESIS_DIGEST_HASH = "fb4cc4620dba2250bca59861f177e5406e19b35136582386d0e15fb96bb98969"
+
 
 def load_verify_module():
     loader = SourceFileLoader("eis_verify_tool", str(VERIFY_TOOL))
@@ -58,6 +66,14 @@ def load_verify_module():
 
 def check_vector(vt) -> bool:
     return vt.compute_hash(GENESIS_VECTOR_ENTRY) == GENESIS_VECTOR_HASH
+
+
+def check_digest_vector(vt) -> bool:
+    """校验 §3.2 向量：投影摘要与含 digest 条目的哈希均与规范字面值一致。"""
+    entry = dict(GENESIS_VECTOR_ENTRY)
+    entry["payload_digest"] = GENESIS_DIGEST
+    return (vt.compute_payload_digest(GENESIS_DIGEST_PROJECTION) == GENESIS_DIGEST
+            and vt.compute_hash(entry) == GENESIS_DIGEST_HASH)
 
 
 def verify_file(vt, path: Path, events_path: Path | None = None) -> dict:
@@ -108,6 +124,7 @@ def cmd_self_test(args) -> int:
         ok = ok and cond
 
     report("冻结测试向量（hash-chain.spec.md §3）", check_vector(vt))
+    report("payload_digest 冻结测试向量（hash-chain.spec.md §3.2）", check_digest_vector(vt))
     chain, prev = [], vt.GENESIS_PREV_HASH
     for seq in (1, 2, 3):
         entry = vt._build_entry(seq, prev)
@@ -184,8 +201,8 @@ def main(argv=None) -> int:
         return cmd_self_test(args)
     if args.vector:
         vt = load_verify_module()
-        if check_vector(vt):
-            print("[ok  ] 冻结测试向量通过")
+        if check_vector(vt) and check_digest_vector(vt):
+            print("[ok  ] 冻结测试向量通过（§3.1 无 digest + §3.2 含 digest）")
             return 0
         print("[FAIL] 冻结测试向量不匹配（实现缺陷）", file=sys.stderr)
         return 1
