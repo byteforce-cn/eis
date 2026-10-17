@@ -17,6 +17,8 @@
 - `extensions/hr` 1.0.0：人力资源域扩展（组织/岗位/员工/任职/供给任务，含 V201 迁移，issue #5）；
 - `extensions/hr` 1.1.0：Employee 增加 `employment_type` / `work_location`（可选，受控枚举 / 非空文本，加法演进 MINOR，含 V202 迁移与 ADR-0009，issue #13）；
 - `tools/build-spec-pack`（issue #12 / P1）：从规范源生成自包含 AI 规格包（六类契约 + `vectors/` 冻结夹具 + 参考工具 + `MANIFEST.json` 逐文件 SHA-256），产物内可直接运行 `verify.tool --self-test` / `audit-verifier --vector` / `compatibility-checker --standalone` / `contract-checker`；
+- `skills/`（Agent Skills，issue #12 / P2）：`eis-create-contract` / `eis-verify-contract` / `eis-generate-audit` / `eis-generate-verifier` 四个技能（含可验证示例 `examples/im-message.schema.json`）与 `skills/README.md` 索引；
+- `docs/AI-INTEGRATION.md`：Claude Code / Codex / Pi / OpenCode 接线、通用验证约束与失败反馈闭环；`CONTRIBUTING.md` 新增「AI 辅助贡献」章节；
 - `extensions/approval` 1.0.1：区块级流转（分派/条件参与/打回重确认/撤回，MINOR，issue #4）；
 - 审计条目 `payload_digest`（ADR-0007 / hash-chain v1.1）：事件投影 `{id,type,payload}` 规范 JSON 的 SHA-256，可选字段且仅存在时参与链哈希（v1.0 条目哈希不变）；`verify.tool`/`audit-verifier --events` 复算并检出事件正文篡改（issue #9）；
 - 授权属性协议：`04-authz-contract/attributes.api.yaml`、`attribute.rules.yaml`（ATR-001..007）与 ADR-0004（issue #3）。
@@ -28,7 +30,8 @@
 - `tools/migration-generator`：支持 `allOf` 扩展对象 Schema（合并内联领域属性；平铺 Schema 行为不变，issue #13）；
 - `tools/lib/kernel.py`：`object-field` 断言新增可选 `read_projection: true`（默认仍为 `as_of`）；
 - `.github/workflows/ci.yml`：新增 `spec-pack` 任务（构建 + MANIFEST 校验 + 产物内自校验 + artifact 上传）；
-- 用例 116/116（相对首发 53 条新增 63 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
+- `tools/contract-checker`：新增 `--file` 单文件检查（`*.schema.json` / `*.openapi.yaml` / `*.api.yaml` / `*.asyncapi.yaml`），Schema 检查补充 `$ref` 解析校验；
+- 用例 126/126（相对首发 53 条新增 73 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
 
 ## [1.0.0] — 2026-10-08（开源首发）
 
