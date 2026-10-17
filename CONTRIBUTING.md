@@ -12,7 +12,7 @@ pip install pyyaml jsonschema
 python3 tools/e2e-runner --all
 ```
 
-预期输出：`用例 116/116；场景 1/1；流水线 5/5；总判定：通过`。
+预期输出：`用例 126/126；场景 1/1；流水线 5/5；总判定：通过`。
 
 ## 2. 贡献类型与流程
 
@@ -40,20 +40,38 @@ python3 tools/e2e-runner --all
 - 一个 PR 聚焦一件事；契约变更 PR 必须链接对应 ADR；
 - PR 描述中附上 `e2e-runner` 的汇总行。
 
-## 5. 行为准则与许可
+## 5. AI 辅助贡献
+
+允许并鼓励使用 AI 编码代理（Claude Code / Codex / Pi / OpenCode 等）生成契约与代码，
+但必须满足：
+
+1. **契约变更走 ADR**：与人工贡献同一流程（§2）；AI 生成不是跳过 ADR 的理由；
+2. **生成物必须通过对应验证**：
+   - 契约：`python3 tools/contract-checker --file <file>`（迭代）/ `python3 tools/contract-checker`（落地后）；
+   - 兼容性：`python3 tools/compatibility-checker --standalone`，按 PATCH/MINOR/MAJOR 落实配套动作；
+   - 审计：`python3 tools/audit-verifier --vector` 与 `python3 05-audit-contract/verify.tool --self-test`；
+   - 独立验证器：`hash-chain.spec.md` §3.1/§3.2 冻结向量全过，不得阅读 Python 参考实现源码；
+   - 全量：`python3 tools/e2e-runner --all` 全绿；
+3. **PR 注明 AI 工具与版本**（如「Claude Code 2.x + Opus 4.x」），便于复现与审计；
+4. **不得提交未通过验证的产物**，也不得把验证命令改成永远通过。
+
+技能定义（Agent Skills 规范）见 `skills/`，各工具接线与失败反馈闭环见 [`docs/AI-INTEGRATION.md`](docs/AI-INTEGRATION.md)。
+
+## 6. 行为准则与许可
 
 - 参与即表示同意 [行为准则](CODE_OF_CONDUCT.md)；
 - 提交的代码与文档按 [Apache-2.0](LICENSE) 授权。
 
-## 6. 目录速查
+## 7. 目录速查
 
 ```
 00-freeze/                 冻结与治理（ADR 在这里）
 01..06-*-contract/         六份契约（含 tests/）
 extensions/                领域扩展（独立版本化）
 cases/                     应用案例（组合与场景）
+skills/                    Agent Skills（AI 代理技能索引见 skills/README.md）
 tools/                     工具链（参考实现）与参考内核（tools/lib/kernel.py）
 tools/build-spec-pack      AI 规格包生成与 MANIFEST 校验（issue #12 / P1）
 tools/ci/ddl-smoke.sql     PostgreSQL 冒烟（CI 使用）
-docs/                      落地映射 / 合规等级 / 路线图
+docs/                      落地映射 / 合规等级 / 路线图 / AI 集成指南（docs/AI-INTEGRATION.md）
 ```

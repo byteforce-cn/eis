@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://skills/eis-create-contract/object/message/v1",
+  "title": "Message",
+  "description": "IM 消息对象示例（eis-create-contract 技能的验收样本）：allOf 引用核心 object 元结构，领域字段放第二段；可选字段演示 string|null + enum 语义。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["conversation_id", "sender_id", "content", "sent_at"],
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "会话 ID"
+        },
+        "sender_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "发送者主体 ID"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "description": "消息正文"
+        },
+        "content_type": {
+          "type": ["string", "null"],
+          "enum": ["text", "image", "file"],
+          "description": "内容类型：文本 / 图片 / 文件；历史数据可空"
+        },
+        "sent_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "发送时间（UTC）"
+        }
+      }
+    }
+  ]
+}

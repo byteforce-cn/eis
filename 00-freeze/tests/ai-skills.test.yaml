@@ -1,0 +1,69 @@
+# AI Skills 与集成文档用例（issue #12 / P2）
+# 运行：tools/e2e-runner 00-freeze/tests/ai-skills.test.yaml
+suite: ai-skills
+
+tests:
+  - name: "eis-create-contract：frontmatter 与验证命令齐备"
+    kind: static
+    target: skills/eis-create-contract/SKILL.md
+    check: present
+    pattern: "(^name: eis-create-contract|^description: Use when|tools/contract-checker)"
+    min_matches: 3
+
+  - name: "eis-verify-contract：frontmatter 与验证命令齐备"
+    kind: static
+    target: skills/eis-verify-contract/SKILL.md
+    check: present
+    pattern: "(^name: eis-verify-contract|^description: Use when|tools/compatibility-checker)"
+    min_matches: 3
+
+  - name: "eis-generate-audit：frontmatter 与验证命令齐备"
+    kind: static
+    target: skills/eis-generate-audit/SKILL.md
+    check: present
+    pattern: "(^name: eis-generate-audit|^description: Use when|tools/audit-verifier)"
+    min_matches: 3
+
+  - name: "eis-generate-verifier：frontmatter 与冻结向量验证命令齐备"
+    kind: static
+    target: skills/eis-generate-verifier/SKILL.md
+    check: present
+    pattern: "(^name: eis-generate-verifier|^description: Use when|verify.tool)"
+    min_matches: 3
+
+  - name: "skills 索引列出四个技能"
+    kind: static
+    target: skills/README.md
+    check: present
+    pattern: "(eis-create-contract|eis-verify-contract|eis-generate-audit|eis-generate-verifier)"
+    min_matches: 4
+
+  - name: "AI 集成指南覆盖四个工具与通用约束"
+    kind: static
+    target: docs/AI-INTEGRATION.md
+    check: present
+    pattern: "(Claude Code|Codex|Pi|OpenCode|e2e-runner --all)"
+    min_matches: 5
+
+  - name: "CONTRIBUTING 含 AI 辅助贡献章节与验证口径"
+    kind: static
+    target: CONTRIBUTING.md
+    check: present
+    pattern: "(AI 辅助贡献|tools/contract-checker|docs/AI-INTEGRATION.md)"
+    min_matches: 3
+
+  - name: "示例契约通过单文件校验（contract-checker --file）"
+    kind: cli
+    args: [tools/contract-checker, --file, skills/eis-create-contract/examples/im-message.schema.json]
+    stdout_contains: ["Schema 检查", "$ref 全部可解析"]
+
+  - name: "兼容性判定命令可机器解析（standalone --json）"
+    kind: cli
+    args: [tools/compatibility-checker, --old, 06-evolution-contract/tests/fixtures/schema-v1.json,
+           --new, 06-evolution-contract/tests/fixtures/schema-v2-minor.json, --standalone, --fail-on, MAJOR, --json]
+    stdout_contains: ['"overall": "MINOR"']
+
+  - name: "审计写入验证命令可用（audit-verifier 自测含冻结向量）"
+    kind: cli
+    args: [tools/audit-verifier, --self-test]
+    stdout_contains: ["自测结果: 通过"]

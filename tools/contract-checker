@@ -156,9 +156,10 @@ def suggest_column_name(name: str, prop: dict) -> str:
     return f"{name}_value"
 
 
-def check_schemas(report: Report) -> None:
+def check_schemas(report: Report, files=None) -> None:
+    """仓库级或指定文件列表的 Schema 检查（files 用于 --file 单文件模式）。"""
     seen_ids: dict[str, str] = {}
-    for path in schema_files():
+    for path in (files if files is not None else schema_files()):
         try:
             doc = load_json(path)
         except json.JSONDecodeError as exc:
@@ -201,10 +202,11 @@ def check_schemas(report: Report) -> None:
             report.fail(f"{rel(path)}: Schema 检查", "\n".join(problems))
         else:
             report.ok(f"{rel(path)}: Schema 检查")
+        check_refs(doc, path, report)
 
 
-def check_openapi(report: Report) -> None:
-    for path in openapi_files():
+def check_openapi(report: Report, files=None) -> None:
+    for path in (files if files is not None else openapi_files()):
         doc = load_yaml(path)
         problems: list[str] = []
         if not str(doc.get("openapi", "")).startswith("3."):
@@ -290,8 +292,8 @@ def check_query_time_points(report: Report) -> None:
             report.ok(f"{rel(rel_path)}: 全部 GET 支持时点参数")
 
 
-def check_asyncapi(report: Report) -> None:
-    for path in asyncapi_files():
+def check_asyncapi(report: Report, files=None) -> None:
+    for path in (files if files is not None else asyncapi_files()):
         doc = load_yaml(path)
         problems = []
         if not str(doc.get("asyncapi", "")).startswith("3."):
@@ -521,9 +523,12 @@ def cmd_self_test(args) -> int:
         ],
     }
     with tempfile.TemporaryDirectory() as tmp:
-        bad_path = Path(tmp) / "bad.schema.json"
+        (Path(tmp) / "a" / "b").mkdir(parents=True)
+        (Path(tmp) / "01-data-contract").mkdir()
+        (Path(tmp) / "01-data-contract" / "object.schema.json").write_text("{}", encoding="utf-8")
+        bad_path = Path(tmp) / "a" / "b" / "bad.schema.json"
         bad_path.write_text(json.dumps(base, ensure_ascii=False), encoding="utf-8")
-        ok_path = Path(tmp) / "ok.schema.json"
+        ok_path = Path(tmp) / "a" / "b" / "ok.schema.json"
         ok_path.write_text(json.dumps(ok_schema, ensure_ascii=False), encoding="utf-8")
         global schema_files  # noqa: PLW0603
         orig_schemas = schema_files
@@ -548,6 +553,45 @@ def cmd_self_test(args) -> int:
             report.ok("自测：非保留字字段不受影响")
         else:
             report.fail("自测：非保留字字段被误拒绝")
+
+    # 单文件检查（--file）：$ref 可解析必须通过，坏引用必须被拒，未知类型退出 2
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "01-data-contract").mkdir()
+        (Path(tmp) / "01-data-contract" / "object.schema.json").write_text("{}", encoding="utf-8")
+        base_doc = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "eis://selftest/file-check/v1",
+            "title": "FileCheck",
+            "allOf": [{"$ref": "01-data-contract/object.schema.json"}],
+        }
+        good_path = Path(tmp) / "good.schema.json"
+        good_path.write_text(json.dumps(base_doc, ensure_ascii=False), encoding="utf-8")
+        good_report = Report("tmp")
+        check_schemas(good_report, files=[good_path])
+        if good_report.success:
+            report.ok("自测：单文件 Schema 检查（含 $ref）通过")
+        else:
+            report.fail("自测：单文件 Schema 检查误报："
+                        + "; ".join(str(d) for _, _, d in good_report.failures))
+        bad_path = Path(tmp) / "bad-ref.schema.json"
+        bad_path.write_text(json.dumps({
+            **base_doc,
+            "$id": "eis://selftest/file-check-bad/v1",
+            "allOf": [{"$ref": "01-data-contract/missing.schema.json"}],
+        }, ensure_ascii=False), encoding="utf-8")
+        bad_report = Report("tmp")
+        check_schemas(bad_report, files=[bad_path])
+        detail = "\n".join(str(d) for _, _, d in bad_report.failures)
+        if bad_report.success or "文件不存在" not in detail:
+            report.fail("自测：单文件 $ref 坏引用未被检出")
+        else:
+            report.ok("自测：单文件 $ref 坏引用被检出")
+        unknown = Path(tmp) / "note.txt"
+        unknown.write_text("x", encoding="utf-8")
+        if main(["--file", str(unknown)]) == 2:
+            report.ok("自测：--file 未知类型退出 2")
+        else:
+            report.fail("自测：--file 未知类型未退出 2")
 
     # 扩展权限目录：未声明引用必须被拒；非命名空间 id 必须被拒
     import tempfile as _tempfile
@@ -621,10 +665,31 @@ def main(argv=None) -> int:
     parser.add_argument("--json", action="store_true", help="JSON 输出")
     parser.add_argument("--verbose", action="store_true", help="输出全部明细")
     parser.add_argument("--self-test", action="store_true", help="自测")
+    parser.add_argument("--file", metavar="PATH",
+                        help="单文件检查（*.schema.json / *.openapi.yaml / *.api.yaml / *.asyncapi.yaml）")
     args = parser.parse_args(argv)
 
     if args.self_test:
         return cmd_self_test(args)
+
+    if args.file:
+        path = Path(args.file)
+        report = Report(f"contract-checker — 单文件检查（{args.file}）")
+        if path.name.endswith(".schema.json"):
+            check_schemas(report, files=[path])
+        elif path.name.endswith((".openapi.yaml", ".api.yaml")):
+            check_openapi(report, files=[path])
+        elif path.name.endswith(".asyncapi.yaml"):
+            check_asyncapi(report, files=[path])
+        else:
+            print("--file 仅支持 *.schema.json / *.openapi.yaml / *.api.yaml / *.asyncapi.yaml",
+                  file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(report.to_json(), ensure_ascii=False, indent=2))
+        else:
+            report.print(verbose=True)
+        return 0 if report.success else 1
 
     report = Report("contract-checker — EIS 契约检查")
     check_schemas(report)
