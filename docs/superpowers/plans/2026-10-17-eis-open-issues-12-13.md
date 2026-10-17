@@ -112,5 +112,5 @@
 
 - [x] **Step 1**：`git push -u origin feat/hr-employment-work-location`。
 - [x] **Step 2**：`gh pr create --base main --title "feat(extensions/hr): 员工增加雇佣类型/工作地点（issue #13）"`，正文含验收对照、ADR 链接、`Closes #13`、`e2e-runner --all` 汇总行。
-- [ ] **Step 3**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`。
-- [ ] **Step 4**：`git switch main && git pull`；确认 #13 关闭；在 #13 留 PR 链接评论。
+- [x] **Step 3**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`。
+- [x] **Step 4**：`git switch main && git pull`；确认 #13 关闭；在 #13 留 PR 链接评论。
