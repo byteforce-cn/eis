@@ -77,7 +77,7 @@
 
 ## Task 5（收尾）：推送、PR、CI、合并与 #18 评论
 
-- [ ] **Step 1**：提交（feat 契约与处理器、docs 文档计数）；`git push -u origin feat/approval-section-order`；`gh pr create`（标题 `feat(extensions/approval): 区块顺序语义与 APR-409-007（issue #18）`，正文含验收对照、ADR、`Closes #18`）。
-- [ ] **Step 2**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`；`git switch main && git pull`；确认 #18 关闭。
-- [ ] **Step 3**：在 #18 留交付评论（规则、错误码、兼容判定与验证结果）。
-- [ ] **Step 4**：标记本计划完成（小 docs PR）。
+- [x] **Step 1**：提交（feat 契约与处理器、docs 文档计数）；`git push -u origin feat/approval-section-order`；`gh pr create`（标题 `feat(extensions/approval): 区块顺序语义与 APR-409-007（issue #18）`，正文含验收对照、ADR、`Closes #18`）。
+- [x] **Step 2**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`；`git switch main && git pull`；确认 #18 关闭。
+- [x] **Step 3**：在 #18 留交付评论（规则、错误码、兼容判定与验证结果）。
+- [x] **Step 4**：标记本计划完成（小 docs PR）。
