@@ -12,7 +12,7 @@ pip install pyyaml jsonschema
 python3 tools/e2e-runner --all
 ```
 
-预期输出：`用例 114/114；场景 1/1；流水线 5/5；总判定：通过`。
+预期输出：`用例 116/116；场景 1/1；流水线 5/5；总判定：通过`。
 
 ## 2. 贡献类型与流程
 
@@ -53,6 +53,7 @@ python3 tools/e2e-runner --all
 extensions/                领域扩展（独立版本化）
 cases/                     应用案例（组合与场景）
 tools/                     工具链（参考实现）与参考内核（tools/lib/kernel.py）
+tools/build-spec-pack      AI 规格包生成与 MANIFEST 校验（issue #12 / P1）
 tools/ci/ddl-smoke.sql     PostgreSQL 冒烟（CI 使用）
 docs/                      落地映射 / 合规等级 / 路线图
 ```
