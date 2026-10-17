@@ -96,3 +96,28 @@ jobs:
         with:
           name: eis-spec-pack
           path: dist/eis-spec-pack
+      - name: 安装 pnpm 与 Node
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 构建 npm/pnpm 包形态
+        run: python3 tools/build-spec-pack --npm-out dist/npm
+      - name: 校验 npm 包 MANIFEST
+        run: python3 tools/build-spec-pack --check dist/npm
+      - name: Node CLI 自检（manifest / verify）
+        run: |
+          node dist/npm/bin/eis-spec.js manifest --json > /dev/null
+          node dist/npm/bin/eis-spec.js verify --no-python
+      - name: pnpm pack（归档 tarball，不发布 registry）
+        working-directory: dist/npm
+        run: pnpm pack --pack-destination ../npm-pack
+      - name: 上传 npm 包产物（eis-spec-npm）
+        uses: actions/upload-artifact@v4
+        with:
+          name: eis-spec-npm
+          path: |
+            dist/npm
+            dist/npm-pack/*.tgz

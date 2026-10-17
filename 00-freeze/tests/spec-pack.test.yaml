@@ -14,3 +14,10 @@ tests:
     check: present
     pattern: "(build-spec-pack --out|verify.tool --self-test|upload-artifact)"
     min_matches: 3
+
+  - name: "CI 工作流包含 npm/pnpm 形态构建、node 自检与 pnpm pack"
+    kind: static
+    target: .github/workflows/ci.yml
+    check: present
+    pattern: "(--npm-out|pnpm/action-setup|pnpm pack|eis-spec-npm)"
+    min_matches: 4
