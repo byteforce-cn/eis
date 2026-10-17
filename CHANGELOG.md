@@ -2,7 +2,7 @@
 
 本项目版本语义遵循 [00-freeze/version-policy.md](00-freeze/version-policy.md)（SemVer）。
 
-## [Unreleased] — 2026-10-11（开放 issue 修复）
+## [Unreleased] — 2026-10-17（开放 issue 修复）
 
 ### 修复
 
@@ -15,6 +15,7 @@
 ### 新增
 
 - `extensions/hr` 1.0.0：人力资源域扩展（组织/岗位/员工/任职/供给任务，含 V201 迁移，issue #5）；
+- `extensions/hr` 1.1.0：Employee 增加 `employment_type` / `work_location`（可选，受控枚举 / 非空文本，加法演进 MINOR，含 V202 迁移与 ADR-0009，issue #13）；
 - `extensions/approval` 1.0.1：区块级流转（分派/条件参与/打回重确认/撤回，MINOR，issue #4）；
 - 审计条目 `payload_digest`（ADR-0007 / hash-chain v1.1）：事件投影 `{id,type,payload}` 规范 JSON 的 SHA-256，可选字段且仅存在时参与链哈希（v1.0 条目哈希不变）；`verify.tool`/`audit-verifier --events` 复算并检出事件正文篡改（issue #9）；
 - 授权属性协议：`04-authz-contract/attributes.api.yaml`、`attribute.rules.yaml`（ATR-001..007）与 ADR-0004（issue #3）。
@@ -23,7 +24,9 @@
 
 - `tools/compatibility-checker` 独立模式（ADR-0008）：核心判定提取为纯 stdlib `tools/lib/eis_compat.py`，新增 `--standalone`/`--rules` 与规则 JSON Schema `06-evolution-contract/compatibility.rules.schema.json`；默认输出与判定语义不变（issue #10）；
 - `tools/e2e-runner`：`object-field`/`object-count` 断言支持 `${...}` 令牌；`kind: authz` 支持属性快照与条件断言；
-- 用例 108/108（相对首发 53 条新增 55 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
+- `tools/migration-generator`：支持 `allOf` 扩展对象 Schema（合并内联领域属性；平铺 Schema 行为不变，issue #13）；
+- `tools/lib/kernel.py`：`object-field` 断言新增可选 `read_projection: true`（默认仍为 `as_of`）；
+- 用例 114/114（相对首发 53 条新增 61 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
 
 ## [1.0.0] — 2026-10-08（开源首发）
 

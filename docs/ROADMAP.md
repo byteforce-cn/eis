@@ -10,7 +10,7 @@
       授权/审计/演进）与独立契约 lint CLI；当前已交付 `compatibility-checker --standalone`、
       纯 stdlib 核心 `tools/lib/eis_compat.py` 与 `compatibility.rules.schema.json`（ADR-0008）；
 - [ ] **审计增强**：链头锚定参考方案（按期签名并发布链头 hash）、审计导出/归档格式；
-- [x] **扩展扩充**：`extensions/hr`（人员/组织/任职/供给）已引入 v1.0.0（含可执行用例与 V201 迁移）；
+- [x] **扩展扩充**：`extensions/hr`（人员/组织/任职/供给）已引入 v1.0.0（含可执行用例与 V201 迁移），当前 v1.1.0（员工雇佣类型/工作地点，V202，issue #13）；
       `extensions/asset`（资产）待社区贡献（见 CONTRIBUTING）；
 - [ ] **PostgreSQL 集成测试扩展**：时序索引建议验证、分区表模板（非契约、性能域）。
 
