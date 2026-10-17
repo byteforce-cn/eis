@@ -319,13 +319,18 @@ def _npm_package_json(version: str) -> dict:
 # 构建与校验
 # ---------------------------------------------------------------------------
 def build_pack(out: Path, *, generated_at: str | None = None, commit: str | None = None,
-               npm: bool = False) -> dict:
-    """构建规格包到 out（清空重建），返回 MANIFEST 字典。npm=True 时附加 pnpm/npm 包形态。"""
+               npm: bool = False, npm_version: str | None = None) -> dict:
+    """构建规格包到 out（清空重建），返回 MANIFEST 字典。
+
+    npm=True 时附加 pnpm/npm 包形态；npm_version 覆盖包版本（nightly/预发布），
+    默认 = 规范版本（acceptance.yaml），MANIFEST 同时记录两者。
+    """
     out = Path(out).resolve()
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    version = _spec_version()
+    spec_version = _spec_version()
+    package_version = npm_version or spec_version
 
     files: list[dict] = []
     for contract in CONTRACT_DIRS:
@@ -360,25 +365,26 @@ def build_pack(out: Path, *, generated_at: str | None = None, commit: str | None
             shutil.copy2(ROOT / name, out / name)
             files.append(_entry(out, name, name, "packaging"))
         (out / "package.json").write_text(
-            json.dumps(_npm_package_json(version), ensure_ascii=False, indent=2) + "\n",
+            json.dumps(_npm_package_json(package_version), ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8")
         files.append(_entry(out, "package.json", "(generated:npm)", "packaging"))
 
     manifest = {
         "pack_schema_version": PACK_SCHEMA_VERSION,
         "package_name": NPM_PACKAGE_NAME,
-        "spec_version": version,
+        "package_version": package_version,
+        "spec_version": spec_version,
         "generated_at": generated_at or _generated_at(),
         "source_commit": commit if commit is not None else _source_commit(),
         "generator": "tools/build-spec-pack",
         "files": sorted(files, key=lambda item: item["path"]),
     }
     readme = README_TEMPLATE.substitute(
-        spec_version=version,
+        spec_version=spec_version,
         generated_at=manifest["generated_at"],
         source_commit=manifest["source_commit"] or "(unknown)",
         file_count=len(manifest["files"]) + 1,  # 含 README.md 自身
-        npm_section=NPM_SECTION_TEMPLATE.substitute(spec_version=version) if npm else "",
+        npm_section=NPM_SECTION_TEMPLATE.substitute(spec_version=package_version) if npm else "",
     )
     (out / "README.md").write_text(readme, encoding="utf-8")
     manifest["files"].append(_entry(out, "README.md", "(generated)", "generated"))
@@ -540,6 +546,21 @@ def cmd_self_test(args) -> int:
         report("npm：固定时间与 commit 时 MANIFEST 字节一致",
                (npm_dir / "MANIFEST.json").read_bytes() == (npm_dir2 / "MANIFEST.json").read_bytes())
 
+        npm_dir3 = Path(tmp) / "npm3"
+        override = "1.0.0-nightly.19700101.abc1234"
+        override_manifest = build_pack(npm_dir3, generated_at="1970-01-01T00:00:00Z",
+                                       commit="0" * 40, npm=True, npm_version=override)
+        override_pkg = json.loads((npm_dir3 / "package.json").read_text(encoding="utf-8"))
+        override_readme = (npm_dir3 / "README.md").read_text(encoding="utf-8")
+        report("npm：--npm-version 覆盖包版本",
+               override_pkg.get("version") == override
+               and override_manifest["package_version"] == override
+               and override_manifest["spec_version"] != override
+               and override in override_readme)
+        report("npm：非法/孤立 --npm-version 退出 2",
+               main(["--npm-version", "not-semver", "--npm-out", str(Path(tmp) / "bad")]) == 2
+               and main(["--npm-version", "1.0.0"]) == 2)
+
         node = shutil.which("node")
         if node:
             proc = subprocess.run([node, "bin/eis-spec.js", "manifest", "--json"], cwd=npm_dir,
@@ -596,6 +617,8 @@ def main(argv=None) -> int:
     parser.add_argument("--npm-out", metavar="DIR",
                         help="生成 npm/pnpm 包形态（package.json + bin/eis-spec.js + 规格内容）")
     parser.add_argument("--check", metavar="DIR", help="校验已有产物的 MANIFEST")
+    parser.add_argument("--npm-version", metavar="V",
+                        help="npm 包版本覆盖（仅与 --npm-out 同用；默认 = 规范版本）")
     parser.add_argument("--json", action="store_true", help="JSON 摘要输出")
     parser.add_argument("--self-test", action="store_true", help="自测")
     args = parser.parse_args(argv)
@@ -611,11 +634,19 @@ def main(argv=None) -> int:
         print("[ok  ] MANIFEST 校验通过（哈希、大小与文件清单一致）")
         return 0
 
+    if args.npm_version and not args.npm_out:
+        print("--npm-version 仅与 --npm-out 一起使用", file=sys.stderr)
+        return 2
+    if args.npm_version and not re.match(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$", args.npm_version):
+        print("--npm-version 必须为合法 semver（如 1.0.0 或 1.0.0-nightly.20261017.abc1234）",
+              file=sys.stderr)
+        return 2
+
     if args.npm_out:
         out = Path(args.npm_out)
-        manifest = build_pack(out, npm=True)
+        manifest = build_pack(out, npm=True, npm_version=args.npm_version)
         print(f"[ok  ] npm 包: {len(manifest['files'])} 个文件 → {out}")
-        print(f"[ok  ] package: {NPM_PACKAGE_NAME}@{manifest['spec_version']}"
+        print(f"[ok  ] package: {NPM_PACKAGE_NAME}@{manifest['package_version']}"
               "（pnpm pack 归档，不发布 registry）")
         return 0
 

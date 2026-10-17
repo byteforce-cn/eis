@@ -9,7 +9,8 @@ EIS 的规范结构（Schema 约束 + 可执行验证）适合交给 AI 编码�
   （生成物不提交；包内含六类契约、冻结向量、参考工具、`MANIFEST.json` 与面向 AI 的 `README.md`）。
 - **pnpm/npm 包形态**：`python3 tools/build-spec-pack --npm-out dist/npm`（`@byteforce/eis-spec`，含零依赖 CLI）
   → `cd dist/npm && pnpm pack`。安装后 `pnpm exec eis-spec manifest` / `pnpm exec eis-spec verify`
-  （完整性 + 冻结向量自检）；registry 发布待维护者提供 npm 凭证（P4）。
+  （完整性 + 冻结向量自检）。CI 发布：tag `v*` → `latest`（预发布 tag → `next`）、每日/手动 → `nightly`
+  （`.github/workflows/release-npm.yml`，`NPM_TOKEN` + provenance）；发布前可用本地 tarball。
 - **直接使用本仓库**：契约目录 `01-data-contract/` … `06-evolution-contract/` + 本文件与 `skills/`。
 
 ## 2. Agent Skills（`skills/`）

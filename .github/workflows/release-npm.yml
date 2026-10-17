@@ -1,0 +1,111 @@
+name: Release npm
+
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "0 18 * * *"   # 每日 02:00（UTC+8）nightly（main 快照）
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "dist-tag：latest / next / nightly"
+        type: choice
+        options: [latest, next, nightly]
+        default: latest
+      version:
+        description: "覆盖版本（留空：latest/next=规范版本；nightly=规范版本-nightly.YYYYMMDD.sha7）"
+        type: string
+        default: ""
+      dry_run:
+        description: "仅构建与校验，不发布 registry"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write   # provenance（GitHub OIDC → Sigstore）
+
+concurrency:
+  group: release-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: 构建并发布 @byteforce/eis-spec
+    if: github.repository == 'byteforce-cn/eis'
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖
+        run: pip install pyyaml jsonschema
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: 解析版本与 dist-tag
+        id: meta
+        run: |
+          SPEC_VERSION=$(python3 -c "import re,pathlib;print(re.search(r'^version:\s*\"([^\"]+)\"', pathlib.Path('acceptance.yaml').read_text(encoding='utf-8'), re.M).group(1))")
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            case "$VERSION" in
+              *-*) CHANNEL=next ;;
+              *) CHANNEL=latest ;;
+            esac
+            if [ "${VERSION%%-*}" != "$SPEC_VERSION" ]; then
+              echo "标签版本 $VERSION 与规范版本 $SPEC_VERSION 不一致" >&2
+              exit 1
+            fi
+          else
+            CHANNEL="${{ inputs.channel }}"
+            VERSION="${{ inputs.version }}"
+          fi
+          [ -n "$CHANNEL" ] || CHANNEL=nightly
+          if [ -z "$VERSION" ]; then
+            if [ "$CHANNEL" = "nightly" ]; then
+              VERSION="${SPEC_VERSION}-nightly.$(date -u +%Y%m%d).${GITHUB_SHA::7}"
+            else
+              VERSION="$SPEC_VERSION"
+            fi
+          fi
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "版本不是合法 semver: $VERSION" >&2; exit 1 ;;
+          esac
+          {
+            echo "channel=$CHANNEL"
+            echo "version=$VERSION"
+            echo "spec_version=$SPEC_VERSION"
+          } >> "$GITHUB_OUTPUT"
+          echo "发布计划：@byteforce/eis-spec@$VERSION（dist-tag: $CHANNEL，registry: npmjs.org）"
+      - name: 构建 npm 包并自检
+        run: |
+          python3 tools/build-spec-pack --npm-out dist/npm --npm-version "${{ steps.meta.outputs.version }}"
+          python3 tools/build-spec-pack --check dist/npm
+          node dist/npm/bin/eis-spec.js verify --no-python
+      - name: 发布到 npm（provenance）
+        working-directory: dist/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "缺少 NPM_TOKEN secret" >&2
+            exit 1
+          fi
+          FLAGS="--no-git-checks --access public --tag ${{ steps.meta.outputs.channel }} --registry https://registry.npmjs.org"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "dry-run：跳过 registry 发布"
+            pnpm publish --dry-run $FLAGS
+          else
+            pnpm publish $FLAGS --provenance
+          fi
