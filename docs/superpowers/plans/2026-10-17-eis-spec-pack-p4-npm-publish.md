@@ -69,7 +69,7 @@
 
 ## Task 5（发布与收口）：
 
-- [ ] **Step 1**：`gh workflow run release-npm.yml -f channel=next -f version=1.0.1-rc.0 -f dry_run=true` → 运行成功（日志含版本/channel 与 dry-run 跳过暂存）。注：`npm stage publish --dry-run` 仍校验版本占用，1.0.0 已发布，故用未发布版本。
+- [x] **Step 1**：`gh workflow run release-npm.yml -f channel=next -f version=1.0.1-rc.0 -f dry_run=true` → run `38993653018` 成功；日志确认 npm 11.21.1、`1.0.1-rc.0 / next`、`dry-run：跳过 registry 暂存`。注：`npm stage publish --dry-run` 仍校验版本占用，1.0.0 已发布，故用未发布版本。
 - [x] **Step 2**：`git tag v1.0.0` 已推送；CI 运行 `38990303663` 失败于 pnpm 2FA（`ERR_PNPM_OTP_NON_INTERACTIVE`），1.0.0 由维护者侧于 2026-10-17T01:43Z 发布（`dist-tags.latest=1.0.0`）；已用 registry tarball 自检核验。
-- [ ] **Step 3**：`gh workflow run release-npm.yml -f channel=nightly` → 验证 nightly 版本发布与通道隔离（`npm view ... dist-tags`）。
-- [ ] **Step 4**：在 #12 收口评论（P1–P4 全交付 + 发布证据 + 验收演练状态），关闭 #12；标记本计划完成（小 docs PR）。
+- [x] **Step 3**：`gh workflow run release-npm.yml -f channel=nightly` → run `38993706382` 成功，暂存 `@byteforce/eis-spec@1.0.0-nightly.20261017.ed73ebc`（stage id `06c47f96-1582-46bb-a4c9-43027d8c1095`）；维护者批准后 `dist-tags = {latest: 1.0.0, nightly: 1.0.0-nightly.20261017.ed73ebc}`，nightly 带 provenance（attestations 200），tarball MANIFEST 校验通过（69 文件）。
+- [x] **Step 4**：在 #12 收口评论（[issuecomment-6228344199](https://github.com/byteforce-cn/eis/issues/12#issuecomment-6228344199)），关闭 #12；本 docs PR 标记计划完成。
