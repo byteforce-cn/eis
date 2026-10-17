@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans（用户确认仓库已有 NPM_TOKEN，可在 CI 发布；inline 执行）。Steps use checkbox (`- [ ]`) syntax for tracking。
 
-**Goal:** 交付 P4：新增 npm 发布工作流，用仓库 secret `NPM_TOKEN` 从 CI 发布 `@byteforce/eis-spec`（tag `v*` → `latest`；预发布 tag → `next`；每日/手动 → `nightly`），带 provenance；并完成首个正式发布 `v1.0.0` 与验证。
+**Goal:** 交付 P4：新增 npm **staged release** 工作流，用仓库 secret `NPM_TOKEN` 从 CI 暂存 `@byteforce/eis-spec`（tag `v*` → `latest`；预发布 tag → `next`；手动 → `nightly`），维护者在 npmjs.com「Staged Packages」批准后公开；带 provenance；并完成首个正式版 `1.0.0` 发布与验证。
 
-**Architecture:** 发布走独立工作流 `.github/workflows/release-npm.yml`（不污染 PR 校验流程）：构建 `--npm-out`（新增 `--npm-version` 覆盖版本，nightly/预发布用）→ `--check` → node 完整性自检 → `pnpm publish --registry https://registry.npmjs.org --tag <channel> --provenance`（`id-token: write`）。版本与通道由 workflow 从 `acceptance.yaml` 规范版本 + tag/输入推导；tag 版本必须匹配规范版本（预发布比基版本）。
+**Architecture:** 发布走独立工作流 `.github/workflows/release-npm.yml`（不污染 PR 校验流程）：构建 `--npm-out`（新增 `--npm-version` 覆盖版本，nightly/预发布用）→ `--check` → node 完整性自检 → `npm stage publish --registry https://registry.npmjs.org --tag <channel> --provenance`（`id-token: write`）→ 维护者在 npmjs.com「Staged Packages」批准（2FA）。采用 staged 是因为组织/包已启用 Staged publishing，且 CI 的 granular token 不允许 2FA 绕过。版本与通道由 workflow 从 `acceptance.yaml` 规范版本 + tag/输入推导；tag 版本必须匹配规范版本（预发布比基版本）。
 
 **Tech Stack:** GitHub Actions（pnpm 12、Node 22、OIDC provenance）、npm registry、Python 生成器。
 
@@ -23,7 +23,7 @@
 ## Review Focus
 
 - **版本一致性**：`--npm-version` 覆盖后 `package.json`、npm README 的 tarball 名、`MANIFEST.package_version` 三者一致；`MANIFEST.spec_version` 仍为规范版本。
-- **通道正确**：`v1.0.0` → latest；`v1.0.0-rc.1` → next 且基版本比对通过；手动/每日 → nightly（`<spec>-nightly.<date>.<sha7>`）；非法版本必须 rc≠0。
+- **通道正确**：`v1.0.0` → latest；`v1.0.0-rc.1` → next 且基版本比对通过；手动 → nightly（`<spec>-nightly.<date>.<sha7>`）；非法版本必须 rc≠0。
 - **发布安全**：dry-run 时不得触网发布；真实发布前必须自检通过；`NPM_TOKEN` 缺失必须失败而不是静默跳过。
 - **可追溯**：provenance 与 tag 关联；发布日志打印 channel/version/registry。
 - **不越界**：工作流不执行任何写仓库操作（无 push/tag 创建）；不改 `ci.yml` 既有行为（仅可能追加静态断言）。
@@ -38,7 +38,7 @@
 
 **Files:** Modify `00-freeze/tests/spec-pack.test.yaml`
 
-**Interfaces:** 新增 static 用例：`release-npm.yml` 同时含 `tags:`、`cron:`、`pnpm publish`、`NPM_TOKEN`、`--provenance`（`min_matches: 5`）。
+**Interfaces:** 新增 static 用例：`release-npm.yml` 同时含 `tags:`、`npm stage publish`、`NPM_TOKEN`、`--provenance`、`Staged Packages`（`min_matches: 5`）。
 
 - [x] **Step 1（RED）**：新增用例；运行 spec-pack 套件 → 失败（工作流不存在）。
 
@@ -50,11 +50,11 @@
 - `build_pack(..., npm_version=None)`：包版本 = `npm_version or spec_version`；MANIFEST 增 `package_version`，`spec_version` 保持规范版本；npm README 段落按包版本渲染。
 - CLI `--npm-version V`（仅与 `--npm-out` 同用；校验 `^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`，否则 rc 2）。
 - 自测新增：覆盖版本构建 → package.json / MANIFEST.package_version 断言；非法版本 rc 2。
-- 工作流：见 Architecture；`workflow_dispatch` 输入 `channel`/`version`/`dry_run`；tag 触发按 semver 预发布后缀选 next/latest；`schedule` 每日 nightly；job 级 `env` 固定 registry；发布前 `--check` + `node verify --no-python`。
+- 工作流：见 Architecture；`workflow_dispatch` 输入 `channel`/`version`/`dry_run`；tag 触发按 semver 预发布后缀选 next/latest；手动 nightly（不做定时，避免堆积待批准的 staged 版本）；job 级 `env` 固定 registry；发布前 `--check` + `node verify --no-python`。
 
 - [x] **Step 1**：实现版本覆盖与自测；`python3 tools/build-spec-pack --self-test` 全绿。
 - [x] **Step 2**：新增工作流；`python3 tools/e2e-runner 00-freeze/tests/spec-pack.test.yaml` 全绿。
-- [x] **Step 3**：本地按工作流顺序 dry-run 复跑（`--npm-version 1.0.0-nightly.<date>.<sha>`、`--check`、node verify、`pnpm publish --dry-run`）。
+- [x] **Step 3**：本地按工作流顺序 dry-run 复跑（`--npm-version 1.0.0-nightly.<date>.<sha>`、`--check`、node verify、`npm stage publish --dry-run`）。
 
 ## Task 3（文档与计数）
 

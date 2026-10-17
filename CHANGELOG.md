@@ -18,7 +18,7 @@
 - `extensions/hr` 1.1.0：Employee 增加 `employment_type` / `work_location`（可选，受控枚举 / 非空文本，加法演进 MINOR，含 V202 迁移与 ADR-0009，issue #13）；
 - `tools/build-spec-pack`（issue #12 / P1）：从规范源生成自包含 AI 规格包（六类契约 + `vectors/` 冻结夹具 + 参考工具 + `MANIFEST.json` 逐文件 SHA-256），产物内可直接运行 `verify.tool --self-test` / `audit-verifier --vector` / `compatibility-checker --standalone` / `contract-checker`；
 - `tools/build-spec-pack --npm-out`（issue #12 / P3）：生成 `@byteforce/eis-spec` pnpm/npm 包形态（零依赖 `bin/eis-spec.js` CLI：`manifest` / `verify`（含 python 冻结向量自检）；`LICENSE`/`NOTICE` 与打包文件作为 `kind: packaging` 纳入 MANIFEST）；CI 增加 node 自检与 `pnpm pack` artifact（不发布 registry）；
-- npm 发布工作流（issue #12 / P4）：`release-npm.yml` 用仓库 `NPM_TOKEN` 发布 `@byteforce/eis-spec`（tag `v*` → `latest`、预发布 tag → `next`、每日/手动 → `nightly`；`id-token: write` + `--provenance`）；`build-spec-pack --npm-version` 支持包版本覆盖（MANIFEST 同时记录 `spec_version` 与 `package_version`）；
+- npm 发布工作流（issue #12 / P4）：`release-npm.yml` 以 staged release 方式用仓库 `NPM_TOKEN` 暂存 `@byteforce/eis-spec`（`npm stage publish`；tag `v*` → `latest`、预发布 tag → `next`、手动 → `nightly`；`id-token: write` + `--provenance`），维护者在 npmjs.com「Staged Packages」批准后公开；首个正式版 `1.0.0` 已发布；`build-spec-pack --npm-version` 支持包版本覆盖（MANIFEST 同时记录 `spec_version` 与 `package_version`）；
 - `skills/`（Agent Skills，issue #12 / P2）：`eis-create-contract` / `eis-verify-contract` / `eis-generate-audit` / `eis-generate-verifier` 四个技能（含可验证示例 `examples/im-message.schema.json`）与 `skills/README.md` 索引；
 - `docs/AI-INTEGRATION.md`：Claude Code / Codex / Pi / OpenCode 接线、通用验证约束与失败反馈闭环；`CONTRIBUTING.md` 新增「AI 辅助贡献」章节；
 - `extensions/approval` 1.0.1：区块级流转（分派/条件参与/打回重确认/撤回，MINOR，issue #4）；

@@ -64,8 +64,9 @@ cd dist/npm && pnpm pack --pack-destination ../npm-pack     # 归档 tarball（�
 CI 每次变更构建两种形态并自校验（canonical 包内运行 `verify.tool --self-test`、`audit-verifier --vector`、
 `compatibility-checker --standalone`、`contract-checker`；npm 形态校验 MANIFEST、node CLI 与 `pnpm pack`），漂移即红。
 Agent Skills（`skills/`，4 个）与 Claude Code / Codex / Pi / OpenCode 接线见
-[docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md)。发布由 `.github/workflows/release-npm.yml` 执行：
-tag `v*` → `latest`（预发布 tag → `next`）、每日/手动 → `nightly`，使用仓库 `NPM_TOKEN` 并附 provenance；手动 dry-run：`gh workflow run release-npm.yml -f dry_run=true`。
+[docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md)。发布由 `.github/workflows/release-npm.yml` 以 **staged release** 方式执行：
+tag `v*` → `latest`（预发布 tag → `next`）、手动 → `nightly`；CI 用 `npm stage publish` 暂存（`NPM_TOKEN` + provenance），
+维护者在 npmjs.com 的 **Staged Packages** 批准后公开；手动 dry-run：`gh workflow run release-npm.yml -f dry_run=true`。
 
 ---
 
