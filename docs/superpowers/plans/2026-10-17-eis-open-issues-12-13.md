@@ -104,13 +104,13 @@
 
 **Files:** 无（评估结论以 issue 评论留痕）
 
-- [ ] **Step 1**：评估：无外部依赖的阶段（CI 生成 spec-pack + MANIFEST + 自校验、4 个 Skills、AI-INTEGRATION 指南）与有依赖阶段（npm 打包/发布、provenance、Node 工具链）分离；列出需维护者决策项（npm scope 与凭证、版本/通道策略、Skills 归属、1 小时验收的演练可复现性）。
-- [ ] **Step 2**：`gh issue comment 12 --body-file <评估>`（修正原提案中与仓库现状不符的路径：`verify.tool` 在 `05-audit-contract/`、`03-time-contract/`、无 `--vector` 而用 `--self-test`/`--events`）。
-- [ ] **Step 3**：不实现 #12（依赖维护者决策与 npm 发布权限）。
+- [x] **Step 1**：评估：无外部依赖的阶段（CI 生成 spec-pack + MANIFEST + 自校验、4 个 Skills、AI-INTEGRATION 指南）与有依赖阶段（npm 打包/发布、provenance、Node 工具链）分离；列出需维护者决策项（npm scope 与凭证、版本/通道策略、Skills 归属、1 小时验收的演练可复现性）。
+- [x] **Step 2**：`gh issue comment 12 --body-file <评估>`（修正原提案中与仓库现状不符的路径：`verify.tool` 在 `05-audit-contract/`、时间契约目录为 `03-time-contract/`；冻结向量以 `audit-verifier --vector` 与 `05-audit-contract/tests/fixtures/` 为准）。
+- [x] **Step 3**：不实现 #12（依赖维护者决策与 npm 发布权限）。
 
 ## Task 6（收尾）：推送、PR、CI 与合并
 
-- [ ] **Step 1**：`git push -u origin feat/hr-employment-work-location`。
-- [ ] **Step 2**：`gh pr create --base main --title "feat(extensions/hr): 员工增加雇佣类型/工作地点（issue #13）"`，正文含验收对照、ADR 链接、`Closes #13`、`e2e-runner --all` 汇总行。
+- [x] **Step 1**：`git push -u origin feat/hr-employment-work-location`。
+- [x] **Step 2**：`gh pr create --base main --title "feat(extensions/hr): 员工增加雇佣类型/工作地点（issue #13）"`，正文含验收对照、ADR 链接、`Closes #13`、`e2e-runner --all` 汇总行。
 - [ ] **Step 3**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`。
 - [ ] **Step 4**：`git switch main && git pull`；确认 #13 关闭；在 #13 留 PR 链接评论。
