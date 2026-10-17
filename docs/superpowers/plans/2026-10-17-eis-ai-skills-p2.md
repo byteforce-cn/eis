@@ -87,7 +87,7 @@
 
 ## Task 6（收尾）：推送、PR、CI、合并与 #12 评交付
 
-- [ ] **Step 1**：提交（feat 工具与技能、docs 文档计数）；`git push -u origin feat/ai-skills`；`gh pr create`（标题 `feat(skills): AI 集成 P2——4 个 Agent Skills 与集成指南（issue #12）`，正文含技能表、验证结果、子代理演练、`Refs #12`）。
-- [ ] **Step 2**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`；`git switch main && git pull`。
-- [ ] **Step 3**：在 #12 评论 P2 交付（技能、集成指南、验收证据）与剩余 P3/P4 决策项。
-- [ ] **Step 4**：标记本计划完成（小 docs PR）。
+- [x] **Step 1**：提交（feat 工具与技能、docs 文档计数）；`git push -u origin feat/ai-skills`；`gh pr create`（标题 `feat(skills): AI 集成 P2——4 个 Agent Skills 与集成指南（issue #12）`，正文含技能表、验证结果、子代理演练、`Refs #12`）。
+- [x] **Step 2**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`；`git switch main && git pull`。
+- [x] **Step 3**：在 #12 评论 P2 交付（技能、集成指南、验收证据）与剩余 P3/P4 决策项。
+- [x] **Step 4**：标记本计划完成（小 docs PR）。
