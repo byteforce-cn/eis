@@ -1,6 +1,8 @@
 # 生成物与临时文件
 build/
 dist/
+*.tgz
+node_modules/
 *.pyc
 __pycache__/
 .venv/

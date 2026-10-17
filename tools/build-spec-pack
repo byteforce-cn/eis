@@ -59,6 +59,130 @@ VECTOR_DIRS = (
 )
 EXCLUDE_DIRS = {"__pycache__"}
 EXCLUDE_SUFFIXES = {".pyc", ".pyo"}
+NPM_PACKAGE_NAME = "@byteforce/eis-spec"
+
+# 附加到 README 末页的 npm/pnpm 段落（仅 --npm-out 模式）
+NPM_SECTION_TEMPLATE = Template("""## pnpm / npm 使用（本目录同时是 `@byteforce/eis-spec` 包形态）
+
+- CI 由 `pnpm pack` 归档为 `byteforce-eis-spec-$spec_version.tgz`；registry 发布待维护者提供凭证后启用；
+- CLI 零第三方依赖（Node >= 18）：
+
+```bash
+pnpm add ./byteforce-eis-spec-$spec_version.tgz
+pnpm exec eis-spec manifest            # MANIFEST 摘要（--json 输出全量）
+pnpm exec eis-spec verify              # 复算哈希 + 包内冻结向量自检（需 python3）
+pnpm exec eis-spec verify --no-python  # 仅完整性校验（无 Python 环境）
+```
+""")
+
+# bin/eis-spec.js：生成物，Node 内建模块，零第三方依赖
+BIN_TEMPLATE = """#!/usr/bin/env node
+// eis-spec — EIS 规格包 CLI（生成物；Node >= 18；零第三方依赖）
+// 用法:
+//   eis-spec manifest [--json]        查看 MANIFEST 摘要（--json 输出全量）
+//   eis-spec verify [--no-python]     复算 MANIFEST 哈希；默认运行包内冻结向量自检
+// 退出码: 0 通过 / 1 校验失败 / 2 用法错误
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const { spawnSync } = require("child_process");
+
+const ROOT = path.resolve(__dirname, "..");
+const MANIFEST_PATH = path.join(ROOT, "MANIFEST.json");
+
+function fail(message, code) {
+  console.error("[FAIL] " + message);
+  process.exit(code === undefined ? 1 : code);
+}
+
+function readManifest() {
+  if (!fs.existsSync(MANIFEST_PATH)) {
+    fail("缺少 MANIFEST.json：" + MANIFEST_PATH);
+  }
+  return JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
+}
+
+function sha256(file) {
+  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function verifyManifest(manifest) {
+  const problems = [];
+  for (const entry of manifest.files || []) {
+    const target = path.join(ROOT, entry.path);
+    if (!fs.existsSync(target)) {
+      problems.push("缺少文件: " + entry.path);
+      continue;
+    }
+    const size = fs.statSync(target).size;
+    if (size !== entry.size) {
+      problems.push("大小不一致: " + entry.path + "（清单 " + entry.size + "，实际 " + size + "）");
+    }
+    if (sha256(target) !== entry.sha256) {
+      problems.push("哈希不一致: " + entry.path);
+    }
+  }
+  return problems;
+}
+
+function cmdManifest(argv) {
+  const manifest = readManifest();
+  if (argv.includes("--json")) {
+    process.stdout.write(JSON.stringify(manifest, null, 2) + "\\n");
+    return;
+  }
+  console.log("package: " + manifest.package_name);
+  console.log("spec_version: " + manifest.spec_version);
+  console.log("generated_at: " + manifest.generated_at);
+  console.log("source_commit: " + (manifest.source_commit || "(unknown)"));
+  console.log("files: " + manifest.files.length);
+}
+
+function cmdVerify(argv) {
+  const manifest = readManifest();
+  const problems = verifyManifest(manifest);
+  if (problems.length > 0) {
+    problems.forEach(function (problem) { console.error("[FAIL] " + problem); });
+    process.exit(1);
+  }
+  console.log("[ok  ] MANIFEST 校验通过（" + manifest.files.length + " 个文件）");
+  if (argv.includes("--no-python")) {
+    return;
+  }
+  const python = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
+  const checks = [
+    ["05-audit-contract/verify.tool", "--self-test"],
+    ["tools/audit-verifier", "--vector"],
+    ["tools/contract-checker"],
+  ];
+  for (const args of checks) {
+    const proc = spawnSync(python, [path.join(ROOT, args[0])].concat(args.slice(1)), {
+      cwd: ROOT,
+      env: Object.assign({}, process.env, { PYTHONDONTWRITEBYTECODE: "1" }),
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    if (proc.error) {
+      fail("无法运行 " + python + ": " + proc.error.message + "（可用 --no-python 跳过）");
+    }
+    if (proc.status !== 0) {
+      fail("自检失败: " + args.join(" ") + "（退出码 " + proc.status + "）");
+    }
+  }
+}
+
+const argv = process.argv.slice(2);
+const command = argv[0];
+if (command === "manifest") {
+  cmdManifest(argv.slice(1));
+} else if (command === "verify") {
+  cmdVerify(argv.slice(1));
+} else {
+  console.error("用法: eis-spec manifest [--json] | eis-spec verify [--no-python]");
+  process.exit(2);
+}
+"""
 
 README_TEMPLATE = Template("""# EIS 规格包（自动生成）
 
@@ -102,7 +226,8 @@ python3 tools/contract-checker
 
 生成契约后必须运行 `tools/contract-checker`；审计写入代码必须通过 `tools/audit-verifier --vector`；
 独立实现的验证器必须通过 `05-audit-contract/verify.tool --self-test`。
-""")
+
+$npm_section""")
 
 
 # ---------------------------------------------------------------------------
@@ -163,15 +288,44 @@ def _entry(pack: Path, path: str, source: str, kind: str) -> dict:
             "sha256": _sha256(target), "size": target.stat().st_size}
 
 
+def _npm_package_json(version: str) -> dict:
+    """npm/pnpm 包形态的 package.json（生成物，不手工维护）。"""
+    return {
+        "name": NPM_PACKAGE_NAME,
+        "version": version,
+        "description": "EIS specification pack generated from canonical sources "
+                       "(six contracts, frozen vectors, reference tools)",
+        "license": "Apache-2.0",
+        "repository": {"type": "git", "url": "git+https://github.com/byteforce-cn/eis.git"},
+        "homepage": "https://github.com/byteforce-cn/eis",
+        "bugs": {"url": "https://github.com/byteforce-cn/eis/issues"},
+        "engines": {"node": ">=18"},
+        "files": [*CONTRACT_DIRS, "tools", "vectors", "bin", "MANIFEST.json",
+                  "README.md", "LICENSE", "NOTICE"],
+        "bin": {"eis-spec": "./bin/eis-spec.js"},
+        "exports": {
+            ".": "./MANIFEST.json",
+            "./manifest": "./MANIFEST.json",
+            "./contracts/*": "./*",
+            "./vectors/*": "./vectors/*",
+            "./rules": "./06-evolution-contract/compatibility.rules.yaml",
+            "./tools/*": "./tools/*",
+        },
+        "publishConfig": {"access": "public"},
+    }
+
+
 # ---------------------------------------------------------------------------
 # 构建与校验
 # ---------------------------------------------------------------------------
-def build_pack(out: Path, *, generated_at: str | None = None, commit: str | None = None) -> dict:
-    """构建规格包到 out（清空重建），返回 MANIFEST 字典。"""
+def build_pack(out: Path, *, generated_at: str | None = None, commit: str | None = None,
+               npm: bool = False) -> dict:
+    """构建规格包到 out（清空重建），返回 MANIFEST 字典。npm=True 时附加 pnpm/npm 包形态。"""
     out = Path(out).resolve()
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
+    version = _spec_version()
 
     files: list[dict] = []
     for contract in CONTRACT_DIRS:
@@ -195,9 +349,24 @@ def build_pack(out: Path, *, generated_at: str | None = None, commit: str | None
             shutil.copy2(src, dest)
             files.append(_entry(out, pack_rel, f"{src_dir}/{src.name}", "vector"))
 
-    version = _spec_version()
+    if npm:
+        bin_dir = out / "bin"
+        bin_dir.mkdir()
+        bin_script = bin_dir / "eis-spec.js"
+        bin_script.write_text(BIN_TEMPLATE, encoding="utf-8")
+        bin_script.chmod(0o755)
+        files.append(_entry(out, "bin/eis-spec.js", "(generated:npm)", "packaging"))
+        for name in ("LICENSE", "NOTICE"):
+            shutil.copy2(ROOT / name, out / name)
+            files.append(_entry(out, name, name, "packaging"))
+        (out / "package.json").write_text(
+            json.dumps(_npm_package_json(version), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        files.append(_entry(out, "package.json", "(generated:npm)", "packaging"))
+
     manifest = {
         "pack_schema_version": PACK_SCHEMA_VERSION,
+        "package_name": NPM_PACKAGE_NAME,
         "spec_version": version,
         "generated_at": generated_at or _generated_at(),
         "source_commit": commit if commit is not None else _source_commit(),
@@ -209,6 +378,7 @@ def build_pack(out: Path, *, generated_at: str | None = None, commit: str | None
         generated_at=manifest["generated_at"],
         source_commit=manifest["source_commit"] or "(unknown)",
         file_count=len(manifest["files"]) + 1,  # 含 README.md 自身
+        npm_section=NPM_SECTION_TEMPLATE.substitute(spec_version=version) if npm else "",
     )
     (out / "README.md").write_text(readme, encoding="utf-8")
     manifest["files"].append(_entry(out, "README.md", "(generated)", "generated"))
@@ -260,8 +430,9 @@ def verify_manifest(pack: Path) -> list[str]:
 
 
 def _is_runtime_noise(rel: str) -> bool:
-    """运行产物内工具可能生成的字节码缓存（可再生，不计入完整性）。"""
-    return "__pycache__" in rel.split("/") or rel.endswith((".pyc", ".pyo"))
+    """运行产物内工具可能生成的字节码/依赖缓存（可再生，不计入完整性）。"""
+    parts = rel.split("/")
+    return "__pycache__" in parts or "node_modules" in parts or rel.endswith((".pyc", ".pyo"))
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +521,67 @@ def cmd_self_test(args) -> int:
         report("包内 contract-checker", proc.returncode == 0)
         report("运行包内工具后 MANIFEST 仍通过", not verify_manifest(pack))
 
+        # npm/pnpm 形态（--npm-out）
+        npm_dir = Path(tmp) / "npm"
+        npm_manifest = build_pack(npm_dir, generated_at="1970-01-01T00:00:00Z",
+                                  commit="0" * 40, npm=True)
+        pkg = json.loads((npm_dir / "package.json").read_text(encoding="utf-8"))
+        report("npm：package.json 字段与版本",
+               pkg.get("name") == NPM_PACKAGE_NAME
+               and pkg.get("version") == npm_manifest["spec_version"]
+               and pkg.get("bin", {}).get("eis-spec") == "./bin/eis-spec.js"
+               and all(d in pkg.get("files", []) for d in ("01-data-contract", "tools", "vectors", "bin")))
+        packaging = {entry["path"] for entry in npm_manifest["files"] if entry["kind"] == "packaging"}
+        report("npm：器包文件登记为 packaging",
+               {"package.json", "bin/eis-spec.js", "LICENSE", "NOTICE"} <= packaging)
+        report("npm：MANIFEST 复算通过", not verify_manifest(npm_dir))
+        npm_dir2 = Path(tmp) / "npm2"
+        build_pack(npm_dir2, generated_at="1970-01-01T00:00:00Z", commit="0" * 40, npm=True)
+        report("npm：固定时间与 commit 时 MANIFEST 字节一致",
+               (npm_dir / "MANIFEST.json").read_bytes() == (npm_dir2 / "MANIFEST.json").read_bytes())
+
+        node = shutil.which("node")
+        if node:
+            proc = subprocess.run([node, "bin/eis-spec.js", "manifest", "--json"], cwd=npm_dir,
+                                  capture_output=True, text=True, timeout=120)
+            report("npm：node CLI manifest --json",
+                   proc.returncode == 0 and '"spec_version"' in proc.stdout)
+            proc = subprocess.run([node, "bin/eis-spec.js", "verify", "--no-python"], cwd=npm_dir,
+                                  capture_output=True, text=True, timeout=120)
+            report("npm：node CLI verify --no-python", proc.returncode == 0)
+            proc = subprocess.run([node, "bin/eis-spec.js", "verify"], cwd=npm_dir,
+                                  capture_output=True, text=True, timeout=300)
+            report("npm：node CLI verify（含 python 自检）", proc.returncode == 0)
+            tampered_path = npm_dir / "01-data-contract" / "object.schema.json"
+            original_bytes = tampered_path.read_bytes()
+            tampered_path.write_bytes(original_bytes + b"\n")
+            proc = subprocess.run([node, "bin/eis-spec.js", "verify", "--no-python"], cwd=npm_dir,
+                                  capture_output=True, text=True, timeout=120)
+            report("npm：node CLI 篡改检出", proc.returncode == 1)
+            tampered_path.write_bytes(original_bytes)
+            report("npm：还原后 MANIFEST 复算通过", not verify_manifest(npm_dir))
+        else:
+            print("[skip] 未发现 node，跳过 npm CLI 断言")
+
+        pnpm = shutil.which("pnpm")
+        if pnpm:
+            pack_out = Path(tmp) / "npm-pack"
+            pack_out.mkdir()
+            proc = subprocess.run([pnpm, "pack", "--pack-destination", str(pack_out)], cwd=npm_dir,
+                                  capture_output=True, text=True, timeout=300)
+            tarballs = sorted(pack_out.glob("*.tgz"))
+            report("npm：pnpm pack 产出 tarball",
+                   proc.returncode == 0 and len(tarballs) == 1
+                   and npm_manifest["spec_version"] in tarballs[0].name)
+            if tarballs:
+                listing = subprocess.run(["tar", "-tzf", str(tarballs[0])],
+                                         capture_output=True, text=True, timeout=120).stdout
+                report("npm：tarball 含 package.json 与 bin",
+                       "package/package.json" in listing and "package/bin/eis-spec.js" in listing)
+            report("npm：pack 后 MANIFEST 复算通过", not verify_manifest(npm_dir))
+        else:
+            print("[skip] 未发现 pnpm，跳过 pnpm pack 断言")
+
     print(f"自测结果: {'通过' if ok else '失败'}")
     return 0 if ok else 1
 
@@ -361,6 +593,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="build-spec-pack",
                                      description="EIS 规格包生成与校验（AI 可消费；参考实现）")
     parser.add_argument("--out", help="输出目录（默认 dist/eis-spec-pack）")
+    parser.add_argument("--npm-out", metavar="DIR",
+                        help="生成 npm/pnpm 包形态（package.json + bin/eis-spec.js + 规格内容）")
     parser.add_argument("--check", metavar="DIR", help="校验已有产物的 MANIFEST")
     parser.add_argument("--json", action="store_true", help="JSON 摘要输出")
     parser.add_argument("--self-test", action="store_true", help="自测")
@@ -375,6 +609,14 @@ def main(argv=None) -> int:
                 print(f"[FAIL] {problem}", file=sys.stderr)
             return 1
         print("[ok  ] MANIFEST 校验通过（哈希、大小与文件清单一致）")
+        return 0
+
+    if args.npm_out:
+        out = Path(args.npm_out)
+        manifest = build_pack(out, npm=True)
+        print(f"[ok  ] npm 包: {len(manifest['files'])} 个文件 → {out}")
+        print(f"[ok  ] package: {NPM_PACKAGE_NAME}@{manifest['spec_version']}"
+              "（pnpm pack 归档，不发布 registry）")
         return 0
 
     out = Path(args.out) if args.out else DEFAULT_OUT
