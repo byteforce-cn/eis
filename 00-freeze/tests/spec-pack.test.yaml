@@ -28,3 +28,10 @@ tests:
     check: present
     pattern: "(tags:|npm stage publish|NPM_TOKEN|--provenance|Staged Packages)"
     min_matches: 5
+
+  - name: "npm 发布工作流显式升级 npm（staged release 需要 npm ≥ 11）"
+    kind: static
+    target: .github/workflows/release-npm.yml
+    check: present
+    pattern: "npm install -g npm@11"
+    min_matches: 1

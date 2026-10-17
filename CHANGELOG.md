@@ -34,7 +34,7 @@
 - `tools/lib/kernel.py`：`object-field` 断言新增可选 `read_projection: true`（默认仍为 `as_of`）；
 - `.github/workflows/ci.yml`：新增 `spec-pack` 任务（构建 + MANIFEST 校验 + 产物内自校验 + artifact 上传）；
 - `tools/contract-checker`：新增 `--file` 单文件检查（`*.schema.json` / `*.openapi.yaml` / `*.api.yaml` / `*.asyncapi.yaml`），Schema 检查补充 `$ref` 解析校验；
-- 用例 133/133（相对首发 53 条新增 80 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
+- 用例 134/134（相对首发 53 条新增 81 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
 
 ## [1.0.0] — 2026-10-08（开源首发）
 

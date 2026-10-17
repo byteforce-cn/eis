@@ -49,6 +49,10 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      - name: 升级 npm（staged release 需要 npm ≥ 11）
+        run: |
+          npm install -g npm@11
+          npm -v
       - name: 解析版本与 dist-tag
         id: meta
         run: |
