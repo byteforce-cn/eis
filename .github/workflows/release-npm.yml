@@ -3,8 +3,6 @@ name: Release npm
 on:
   push:
     tags: ["v*"]
-  schedule:
-    - cron: "0 18 * * *"   # 每日 02:00（UTC+8）nightly（main 快照）
   workflow_dispatch:
     inputs:
       channel:
@@ -31,7 +29,7 @@ concurrency:
 
 jobs:
   publish:
-    name: 构建并发布 @byteforce/eis-spec
+    name: 构建并暂存发布 @byteforce/eis-spec
     if: github.repository == 'byteforce-cn/eis'
     runs-on: ubuntu-latest
     env:
@@ -86,13 +84,13 @@ jobs:
             echo "version=$VERSION"
             echo "spec_version=$SPEC_VERSION"
           } >> "$GITHUB_OUTPUT"
-          echo "发布计划：@byteforce/eis-spec@$VERSION（dist-tag: $CHANNEL，registry: npmjs.org）"
+          echo "暂存计划：@byteforce/eis-spec@$VERSION（dist-tag: $CHANNEL，registry: npmjs.org）"
       - name: 构建 npm 包并自检
         run: |
           python3 tools/build-spec-pack --npm-out dist/npm --npm-version "${{ steps.meta.outputs.version }}"
           python3 tools/build-spec-pack --check dist/npm
           node dist/npm/bin/eis-spec.js verify --no-python
-      - name: 发布到 npm（provenance）
+      - name: 暂存发布到 npm（staged release，需维护者批准）
         working-directory: dist/npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -102,10 +100,12 @@ jobs:
             echo "缺少 NPM_TOKEN secret" >&2
             exit 1
           fi
-          FLAGS="--no-git-checks --access public --tag ${{ steps.meta.outputs.channel }} --registry https://registry.npmjs.org"
+          FLAGS="--access public --tag ${{ steps.meta.outputs.channel }} --registry https://registry.npmjs.org"
           if [ "$DRY_RUN" = "true" ]; then
-            echo "dry-run：跳过 registry 发布"
-            pnpm publish --dry-run $FLAGS
-          else
-            pnpm publish $FLAGS --provenance
+            echo "dry-run：跳过 registry 暂存"
+            npm stage publish --dry-run $FLAGS
+            exit 0
           fi
+          npm stage publish $FLAGS --provenance
+          echo "已暂存 @byteforce/eis-spec@${{ steps.meta.outputs.version }}（dist-tag: ${{ steps.meta.outputs.channel }}）"
+          echo "请维护者在 npmjs.com 的 Staged Packages 标签页批准后公开。"
