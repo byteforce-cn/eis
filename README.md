@@ -17,7 +17,7 @@
 ```bash
 pip install pyyaml jsonschema
 python3 tools/e2e-runner --all
-# 预期：用例 126/126；场景 1/1；流水线 5/5；总判定：通过
+# 预期：用例 131/131；场景 1/1；流水线 5/5；总判定：通过
 ```
 
 - 审计链验证（可直接运行）：`05-audit-contract/verify.tool --self-test`
@@ -76,7 +76,7 @@ Agent Skills（`skills/`，4 个）与 Claude Code / Codex / Pi / OpenCode 接�
 3. **可演进**：能定义兼容性规则与迁移路径
 
 这三条不是口号：`tools/` 提供参考实现，一条命令即可验证本仓库全部契约——
-`python3 tools/e2e-runner --all`（126 条用例 + 端到端场景 + 工具链流水线；
+`python3 tools/e2e-runner --all`（131 条用例 + 端到端场景 + 工具链流水线；
 DDL 由 CI 在 PostgreSQL 16 上冒烟断言）。
 
 ---
@@ -190,7 +190,7 @@ eis/
 
 | 工件 | 状态 |
 |------|------|
-| 契约 Schema / OpenAPI / AsyncAPI / DDL / 测试用例 | 已实例化；126 条用例全部可执行 |
+| 契约 Schema / OpenAPI / AsyncAPI / DDL / 测试用例 | 已实例化；131 条用例全部可执行 |
 | `tools/*` 工具链（8 件） | ✅ 参考实现全部可用（Python，仅 PyYAML/jsonschema 依赖） |
 | 参考内核 `tools/lib/kernel.py` | ✅ 可执行端到端语义（命令→规则→事件→审计链→双时间轴） |
 | `05-audit-contract/verify.tool` | ✅ 冻结测试向量经实现验证一致 |

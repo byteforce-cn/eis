@@ -20,6 +20,7 @@
 - `skills/`（Agent Skills，issue #12 / P2）：`eis-create-contract` / `eis-verify-contract` / `eis-generate-audit` / `eis-generate-verifier` 四个技能（含可验证示例 `examples/im-message.schema.json`）与 `skills/README.md` 索引；
 - `docs/AI-INTEGRATION.md`：Claude Code / Codex / Pi / OpenCode 接线、通用验证约束与失败反馈闭环；`CONTRIBUTING.md` 新增「AI 辅助贡献」章节；
 - `extensions/approval` 1.0.1：区块级流转（分派/条件参与/打回重确认/撤回，MINOR，issue #4）；
+- `extensions/approval` 1.1.0：区块顺序语义（`ApprovalSection.step_order` 可选字段 + 规则 `section_order` + 错误码 `APR-409-007`；乱序确认/system 回写拒绝、`not_applicable` 不阻塞、重提保留序号，MINOR，issue #18 / ADR-0010）；
 - 审计条目 `payload_digest`（ADR-0007 / hash-chain v1.1）：事件投影 `{id,type,payload}` 规范 JSON 的 SHA-256，可选字段且仅存在时参与链哈希（v1.0 条目哈希不变）；`verify.tool`/`audit-verifier --events` 复算并检出事件正文篡改（issue #9）；
 - 授权属性协议：`04-authz-contract/attributes.api.yaml`、`attribute.rules.yaml`（ATR-001..007）与 ADR-0004（issue #3）。
 
@@ -31,7 +32,7 @@
 - `tools/lib/kernel.py`：`object-field` 断言新增可选 `read_projection: true`（默认仍为 `as_of`）；
 - `.github/workflows/ci.yml`：新增 `spec-pack` 任务（构建 + MANIFEST 校验 + 产物内自校验 + artifact 上传）；
 - `tools/contract-checker`：新增 `--file` 单文件检查（`*.schema.json` / `*.openapi.yaml` / `*.api.yaml` / `*.asyncapi.yaml`），Schema 检查补充 `$ref` 解析校验；
-- 用例 126/126（相对首发 53 条新增 73 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
+- 用例 131/131（相对首发 53 条新增 78 条），PG16 DDL 冒烟含 `hr`/`approval` 新区块表。
 
 ## [1.0.0] — 2026-10-08（开源首发）
 
