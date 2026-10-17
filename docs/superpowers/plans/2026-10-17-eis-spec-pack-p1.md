@@ -76,6 +76,6 @@
 
 ## Task 5（收尾）：推送、PR、CI、合并
 
-- [ ] **Step 1**：`git push -u origin feat/spec-pack-p1`；`gh pr create --base main`，标题 `feat(tools): spec-pack P1——CI 生成与产物内自校验（issue #12）`，正文含交付物、六条自校验结果、`Refs #12`（不关闭）。
-- [ ] **Step 2**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`；`git switch main && git pull`。
-- [ ] **Step 3**：在 #12 评论 P1 交付（产物结构、MANIFEST、CI 任务、验证命令与结果），并复述仍待决策的 P2–P4 项。
+- [x] **Step 1**：`git push -u origin feat/spec-pack-p1`；`gh pr create --base main`，标题 `feat(tools): spec-pack P1——CI 生成与产物内自校验（issue #12）`，正文含交付物、六条自校验结果、`Refs #12`（不关闭）。
+- [x] **Step 2**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`；`git switch main && git pull`。
+- [x] **Step 3**：在 #12 评论 P1 交付（产物结构、MANIFEST、CI 任务、验证命令与结果），并复述仍待决策的 P2–P4 项。
