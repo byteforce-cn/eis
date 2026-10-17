@@ -22,9 +22,16 @@ tests:
     pattern: "(--npm-out|pnpm/action-setup|pnpm pack|eis-spec-npm)"
     min_matches: 4
 
-  - name: "npm 发布工作流包含 tag / nightly / NPM_TOKEN 与 provenance"
+  - name: "npm 发布工作流包含 staged release、tag 与 provenance"
     kind: static
     target: .github/workflows/release-npm.yml
     check: present
-    pattern: "(tags:|cron:|pnpm publish|NPM_TOKEN|--provenance)"
+    pattern: "(tags:|npm stage publish|NPM_TOKEN|--provenance|Staged Packages)"
     min_matches: 5
+
+  - name: "npm 发布工作流显式升级 npm（staged release 需要 npm ≥ 11）"
+    kind: static
+    target: .github/workflows/release-npm.yml
+    check: present
+    pattern: "npm install -g npm@11"
+    min_matches: 1

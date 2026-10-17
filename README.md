@@ -17,7 +17,7 @@
 ```bash
 pip install pyyaml jsonschema
 python3 tools/e2e-runner --all
-# 预期：用例 133/133；场景 1/1；流水线 5/5；总判定：通过
+# 预期：用例 134/134；场景 1/1；流水线 5/5；总判定：通过
 ```
 
 - 审计链验证（可直接运行）：`05-audit-contract/verify.tool --self-test`
@@ -64,8 +64,9 @@ cd dist/npm && pnpm pack --pack-destination ../npm-pack     # 归档 tarball（�
 CI 每次变更构建两种形态并自校验（canonical 包内运行 `verify.tool --self-test`、`audit-verifier --vector`、
 `compatibility-checker --standalone`、`contract-checker`；npm 形态校验 MANIFEST、node CLI 与 `pnpm pack`），漂移即红。
 Agent Skills（`skills/`，4 个）与 Claude Code / Codex / Pi / OpenCode 接线见
-[docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md)。发布由 `.github/workflows/release-npm.yml` 执行：
-tag `v*` → `latest`（预发布 tag → `next`）、每日/手动 → `nightly`，使用仓库 `NPM_TOKEN` 并附 provenance；手动 dry-run：`gh workflow run release-npm.yml -f dry_run=true`。
+[docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md)。发布由 `.github/workflows/release-npm.yml` 以 **staged release** 方式执行：
+tag `v*` → `latest`（预发布 tag → `next`）、手动 → `nightly`；CI 用 `npm stage publish` 暂存（`NPM_TOKEN` + provenance），
+维护者在 npmjs.com 的 **Staged Packages** 批准后公开；手动 dry-run：`gh workflow run release-npm.yml -f dry_run=true`。
 
 ---
 
@@ -79,7 +80,7 @@ tag `v*` → `latest`（预发布 tag → `next`）、每日/手动 → `nightly
 3. **可演进**：能定义兼容性规则与迁移路径
 
 这三条不是口号：`tools/` 提供参考实现，一条命令即可验证本仓库全部契约——
-`python3 tools/e2e-runner --all`（133 条用例 + 端到端场景 + 工具链流水线；
+`python3 tools/e2e-runner --all`（134 条用例 + 端到端场景 + 工具链流水线；
 DDL 由 CI 在 PostgreSQL 16 上冒烟断言）。
 
 ---
@@ -193,7 +194,7 @@ eis/
 
 | 工件 | 状态 |
 |------|------|
-| 契约 Schema / OpenAPI / AsyncAPI / DDL / 测试用例 | 已实例化；133 条用例全部可执行 |
+| 契约 Schema / OpenAPI / AsyncAPI / DDL / 测试用例 | 已实例化；134 条用例全部可执行 |
 | `tools/*` 工具链（8 件） | ✅ 参考实现全部可用（Python，仅 PyYAML/jsonschema 依赖） |
 | 参考内核 `tools/lib/kernel.py` | ✅ 可执行端到端语义（命令→规则→事件→审计链→双时间轴） |
 | `05-audit-contract/verify.tool` | ✅ 冻结测试向量经实现验证一致 |
