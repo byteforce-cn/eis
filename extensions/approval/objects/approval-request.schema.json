@@ -46,7 +46,7 @@
             "type": "string",
             "format": "uuid"
           },
-          "description": "区块级流转关联的 ApprovalSection ID（简单模式省略）"
+          "description": "区块级流转关联的 ApprovalSection ID（数组顺序 = 处理顺序，与各区块 step_order 一致；简单模式省略）"
         },
         "withdrawn_reason": {
           "type": ["string", "null"],

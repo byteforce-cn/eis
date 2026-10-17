@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/approval/object/approval-section/v1",
+  "title": "ApprovalSection",
+  "description": "审批区块：单据内按属主分区确认的节点。支持条件参与（applicable=false → not_applicable，不阻塞完成）、打回重确认与 system 回写。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["request_id", "key", "title", "owner", "applicable", "state"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "所属审批申请 ID"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "description": "区块键（单内唯一，如 master/cost/account）"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "description": "区块属主（权限标识 approval.section.confirm.<owner>，如 hr/finance/system）"
+        },
+        "applicable": {
+          "type": "boolean",
+          "description": "条件参与：false 表示本例不适用，不阻塞单据完成"
+        },
+        "state": {
+          "type": "string",
+          "enum": ["pending", "confirmed", "rejected", "not_applicable"],
+          "description": "区块状态；confirmed 与 not_applicable 均视为就绪"
+        },
+        "confirmer": {
+          "type": ["string", "null"],
+          "format": "uuid",
+          "description": "确认人（system 回写时为 system 主体）"
+        },
+        "decided_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "comment": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  ]
+}

@@ -239,6 +239,144 @@ tests:
         - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.cost}", field: state, expect: confirmed}
         - {kind: audit-chain, expect: valid, min_entries: 6}
 
+  - name: "区块乱序确认/回写必须拒绝（APR-409-007）"
+    kind: scenario
+    scenario:
+      id: approval.section-order-reject
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c209"}
+            sections:
+              - {key: master, title: 员工主数据, owner: hr}
+              - {key: cost, title: 成本与薪酬, owner: finance}
+              - {key: account, title: 建号与权限, owner: system}
+          events: [approval.request.submitted]
+        - id: T2
+          actor: fin_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.cost}"}
+          expect_status: rejected
+          expect_code: APR-409-007
+        - id: T3
+          actor: sys_bot
+          command: approval.section.complete
+          payload: {section_id: "${steps.T1.created.sections.account}"}
+          expect_status: rejected
+          expect_code: APR-409-007
+        - id: T4
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.master}"}
+          events: [approval.section.confirmed]
+        - id: T5
+          actor: fin_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.cost}"}
+          events: [approval.section.confirmed]
+        - id: T6
+          actor: sys_bot
+          command: approval.section.complete
+          payload: {section_id: "${steps.T1.created.sections.account}"}
+          events: [approval.section.completed, approval.request.completed]
+      assert:
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.master}", field: step_order, expect: 0}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.cost}", field: step_order, expect: 1}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.account}", field: step_order, expect: 2}
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: approved}
+        - {kind: events, absent: [approval.section.rejected]}
+
+  - name: "不适用的前序区块不阻塞，但待确认前序仍阻塞"
+    kind: scenario
+    scenario:
+      id: approval.section-order-not-applicable
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c210"}
+            sections:
+              - {key: master, title: 员工主数据, owner: hr}
+              - {key: project, title: 项目归属, owner: pm, applicable: false}
+              - {key: cost, title: 成本与薪酬, owner: finance}
+          events: [approval.request.submitted]
+        - id: T2
+          actor: fin_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.cost}"}
+          expect_status: rejected
+          expect_code: APR-409-007
+        - id: T3
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.master}"}
+          events: [approval.section.confirmed]
+        - id: T4
+          actor: fin_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.cost}"}
+          events: [approval.section.confirmed, approval.request.completed]
+      assert:
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.project}", field: state, expect: not_applicable}
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: approved}
+
+  - name: "重提后顺序重新生效（step_order 保留）"
+    kind: scenario
+    scenario:
+      id: approval.section-order-resubmit
+      authz: *authz
+      steps:
+        - id: T1
+          actor: buyer
+          command: approval.request.submit
+          payload:
+            operation: hr.employee.activate
+            target: {type: hr_employee, id: "01900000-0000-7000-8000-00000000c211"}
+            sections:
+              - {key: master, title: 员工主数据, owner: hr}
+              - {key: cost, title: 成本与薪酬, owner: finance}
+        - id: T2
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.master}"}
+        - id: T3
+          actor: fin_owner
+          command: approval.section.reject
+          payload: {section_id: "${steps.T1.created.sections.cost}", comment: 口径不符}
+          events: [approval.section.rejected, approval.request.rejected]
+        - id: T4
+          actor: buyer
+          command: approval.request.resubmit
+          payload: {request_id: "${steps.T1.created.id}"}
+          events: [approval.request.resubmitted]
+        - id: T5
+          actor: fin_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.cost}"}
+          expect_status: rejected
+          expect_code: APR-409-007
+        - id: T6
+          actor: hr_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.master}"}
+          events: [approval.section.confirmed]
+        - id: T7
+          actor: fin_owner
+          command: approval.section.confirm
+          payload: {section_id: "${steps.T1.created.sections.cost}"}
+          events: [approval.section.confirmed, approval.request.completed]
+      assert:
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.master}", field: step_order, expect: 0}
+        - {kind: object-field, type: approval_section, id: "${steps.T1.created.sections.cost}", field: step_order, expect: 1}
+        - {kind: object-field, type: approval_request, id: "${steps.T1.created.id}", field: status, expect: approved}
+
   - name: "有人确认后撤回必须拒绝"
     kind: scenario
     scenario:
@@ -343,6 +481,23 @@ tests:
     new: extensions/approval/objects/approval-request.schema.json
     expect_level: MINOR
     expect_kinds: ["可选字段新增", "枚举取值扩展"]
+
+  - name: "区块顺序字段加法演进对 ApprovalSection 判定 MINOR"
+    kind: compat
+    old: extensions/approval/tests/compat/approval-section-v1.schema.json
+    new: extensions/approval/objects/approval-section.schema.json
+    expect_level: MINOR
+    expect_kinds: ["可选字段新增"]
+
+  - name: "区块顺序字段可生成加法迁移（可空列 + 回滚）"
+    kind: migrate
+    old: extensions/approval/tests/compat/approval-section-v1.schema.json
+    new: extensions/approval/objects/approval-section.schema.json
+    table: approval_section
+    expect_contains:
+      - "ADD COLUMN step_order BIGINT;"
+    rollback_contains:
+      - "DROP COLUMN IF EXISTS step_order;"
 
   # ---- 读取面权限目录（issue #8）：声明即判据，参考实现按声明执行 ----
   - name: "读取面权限：approval.request.read 授予具备该权限的主体"
