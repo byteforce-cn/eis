@@ -1,8 +1,8 @@
-# manifest.yaml — 人力资源域扩展（v1.0.0）
+# manifest.yaml — 人力资源域扩展（v1.1.0）
 extension:
   id: "hr"
   name: "人力资源域扩展"
-  version: "1.0.0"
+  version: "1.1.0"
   core_version: "1.0.0"
 
   dependencies: []
@@ -94,7 +94,7 @@ extension:
       description: "执行账号供给任务"
     - id: "hr.employee.read"
       kind: "read"
-      description: "读取员工名册/详情（组织、岗位、状态、联系方式、离职原因）"
+      description: "读取员工名册/详情（组织、岗位、状态、联系方式、雇佣类型、工作地点、离职原因）"
       scope: "same_department"
       scope_description: "可选 ABAC：读取方主组织 = 目标员工主组织；未声明条件即全量读取，需显式授予"
     - id: "hr.attributes.read"

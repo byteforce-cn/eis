@@ -1,4 +1,4 @@
-# extensions/hr — 人力资源域扩展（v1.0.0）
+# extensions/hr — 人力资源域扩展（v1.1.0）
 
 人事事实的唯一来源：向身份域供给登录用户（建号/启用/禁用），向授权判定与审批提供
 组织/岗位/职级/汇报链上下文。双时间轴对象，独立版本化，只依赖核心 `core_version: 1.0.0`。
@@ -7,11 +7,15 @@
 
 | 对象 | 说明 | 关键不变量 |
 |------|------|-----------|
-| `Employee` | 员工主数据；`employee_no` 服务端生成；`id_number_hash` 写入专用 | 工号唯一；证件散列在非终态唯一；在职必有主岗 |
+| `Employee` | 员工主数据；`employee_no` 服务端生成；`id_number_hash` 写入专用；`employment_type` / `work_location` 可选 | 工号唯一；证件散列在非终态唯一；在职必有主岗 |
 | `OrganizationUnit` | 组织单元树（company/department/team） | 上级链无环；子级组织必须挂在启用组织下 |
 | `Position` | 岗位；`reports_to_position_id` 汇报链 | 汇报链无环；必须属于启用组织 |
 | `Assignment` | 员工-岗位任职（有效期段，`is_primary` 主岗） | 同一员工至多一个有效主岗；组织与岗位一致 |
 | `ProvisioningTask` | 向身份域的供给任务（建号/启用/禁用） | 动作与员工状态匹配；由 system 主体回写 |
+
+`Employee.employment_type`（受控枚举 `full_time` 全职 / `part_time` 兼职 / `intern` 实习 /
+`contract` 劳务）与 `Employee.work_location`（办公地 / 城市，非空文本）于 v1.1.0 加法演进引入（ADR-0009）：
+均可选，缺省与显式 null 等价（落 NULL），由 `hr.employee.create` / `hr.employee.update` 写入，读投影可读。
 
 ## 2. 员工状态机
 
@@ -33,8 +37,8 @@ pending_onboarding ────────────────► cancelled
 | `hr.org.unit.update` | 更新名称/上级/状态（组织树无环） | HR-409-005 |
 | `hr.position.define` | 定义岗位（编码唯一、组织启用） | HR-409-001 / HR-409-006 |
 | `hr.position.update` | 更新岗位/汇报链（无环） | HR-409-005 |
-| `hr.employee.create` | 建档；服务端生成工号；证件散列防重 | HR-409-002 |
-| `hr.employee.update` | 更新姓名/联系方式/主组织（终态不可更新） | HR-403-001 |
+| `hr.employee.create` | 建档；服务端生成工号；证件散列防重；可选雇佣类型/工作地点 | HR-409-002 |
+| `hr.employee.update` | 更新姓名/联系方式/主组织/雇佣类型/工作地点（终态不可更新） | HR-403-001 |
 | `hr.employee.activate` | 转在职（必须有有效主岗） | HR-409-004 |
 | `hr.employee.cancel` | 取消入职（仅待入职） | HR-403-001 |
 | `hr.assignment.assign` | 分配任职（主岗唯一、岗位/组织启用） | HR-409-003 / HR-409-006 |
@@ -69,7 +73,9 @@ pending_onboarding ────────────────► cancelled
 ## 6. 迁移
 
 - `migrations/V201__hr_initial.sql`：初始迁移（与 `tools/schema-compiler compile hr` 产物对齐）；
-- `migrations/V201__hr_initial.rollback.sql`：回滚（逆序 DROP）。
+- `migrations/V201__hr_initial.rollback.sql`：回滚（逆序 DROP）；
+- `migrations/V202__hr_employee_employment_fields.sql`：员工雇佣类型/工作地点（可空列 + 受控枚举约束，加法演进 v1.1.0）；
+- `migrations/V202__hr_employee_employment_fields.rollback.sql`：回滚（先 DROP 约束再 DROP 列）。
 
 CI 在 PostgreSQL 16 上执行 `build/ddl/hr.ddl` 冒烟；生产部署以迁移脚本为准并纳入版本表。
 
@@ -80,7 +86,8 @@ python3 tools/e2e-runner extensions/hr/tests/hr.test.yaml
 ```
 
 用例覆盖：全链路上岗、工号生成、组织/岗位唯一与无环、主岗唯一、在职必有主岗、
-证件防重与返聘、敏感字段脱敏与幂等、结束主岗级联终态、供给任务状态匹配。
+证件防重与返聘、敏感字段脱敏与幂等、结束主岗级联终态、供给任务状态匹配、
+雇佣类型/工作地点写入/更新/读投影回读与非法值拒绝、v1.0→v1.1 加法兼容性与迁移生成。
 
 处理器实现见 `handlers.py`（通过内核注册机制加载，无需修改内核源码，见 `extensions/README.md` §6）。
 

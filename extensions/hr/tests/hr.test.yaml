@@ -75,6 +75,81 @@ tests:
         - {kind: object-count, type: hr_employee, where: {employee_no: EMP-000001}, expect: 1}
         - {kind: object-count, type: hr_employee, where: {employee_no: EMP-000002}, expect: 1}
 
+  - name: "雇佣类型/工作地点：建档写入、更新与读投影回读（缺省为 null）"
+    kind: scenario
+    scenario:
+      id: hr.employment-work-location
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 张三, hire_date: "2026-10-01", employment_type: full_time, work_location: 上海}
+          events: [hr.employee.created]
+        - id: T2
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 李四, hire_date: "2026-10-01"}
+          events: [hr.employee.created]
+        - id: T3
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 王五, hire_date: "2026-10-01", employment_type: part_time, work_location: 北京}
+          events: [hr.employee.created]
+        - id: T4
+          actor: hr_admin
+          command: hr.employee.update
+          payload: {employee_id: "${steps.T3.created.id}", employment_type: intern, work_location: 杭州}
+          events: [hr.employee.updated]
+      assert:
+        - {kind: object-field, type: hr_employee, id: "${steps.T1.created.id}", field: employment_type, expect: full_time, read_projection: true}
+        - {kind: object-field, type: hr_employee, id: "${steps.T1.created.id}", field: work_location, expect: 上海, read_projection: true}
+        - {kind: object-field, type: hr_employee, id: "${steps.T2.created.id}", field: employment_type, expect: null}
+        - {kind: object-field, type: hr_employee, id: "${steps.T2.created.id}", field: work_location, expect: null}
+        - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: employment_type, expect: intern}
+        - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: work_location, expect: 杭州}
+
+  - name: "雇佣类型/工作地点非法取值必须拒绝且不落库"
+    kind: scenario
+    scenario:
+      id: hr.employment-fields-invalid
+      authz: *authz
+      steps:
+        - id: T1
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 周八, hire_date: "2026-10-01", employment_type: freelance}
+          expect_status: rejected
+          expect_code: HR-400-001
+        - id: T2
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 吴九, hire_date: "2026-10-01", work_location: ""}
+          expect_status: rejected
+          expect_code: HR-400-001
+        - id: T3
+          actor: hr_admin
+          command: hr.employee.create
+          payload: {name: 郑十, hire_date: "2026-10-01", employment_type: part_time}
+          events: [hr.employee.created]
+        - id: T4
+          actor: hr_admin
+          command: hr.employee.update
+          payload: {employee_id: "${steps.T3.created.id}", employment_type: freelance}
+          expect_status: rejected
+          expect_code: HR-400-001
+        - id: T5
+          actor: hr_admin
+          command: hr.employee.update
+          payload: {employee_id: "${steps.T3.created.id}", work_location: ""}
+          expect_status: rejected
+          expect_code: HR-400-001
+      assert:
+        - {kind: object-count, type: hr_employee, where: {name: 周八}, expect: 0}
+        - {kind: object-count, type: hr_employee, where: {name: 吴九}, expect: 0}
+        - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: employment_type, expect: part_time}
+        - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: work_location, expect: null}
+
   - name: "组织编码重复必须拒绝"
     kind: scenario
     scenario:
@@ -455,6 +530,39 @@ tests:
     check: present
     pattern: "CREATE TABLE hr_(organization_unit|position|employee|assignment|provisioning_task)"
     min_matches: 5
+
+  - name: "V202 迁移必须随契约分发并覆盖雇佣类型/工作地点"
+    kind: static
+    target: extensions/hr/migrations/V202__hr_employee_employment_fields.sql
+    check: present
+    pattern: "(ADD COLUMN employment_type TEXT;|ADD COLUMN work_location TEXT;|ADD CONSTRAINT ck_hr_employee_employment_type)"
+    min_matches: 3
+
+  - name: "V202 回滚必须剔除新增列与约束"
+    kind: static
+    target: extensions/hr/migrations/V202__hr_employee_employment_fields.rollback.sql
+    check: present
+    pattern: "DROP (?:COLUMN IF EXISTS (?:employment_type|work_location)|CONSTRAINT IF EXISTS ck_hr_employee_employment_type)"
+    min_matches: 3
+
+  - name: "雇佣类型/工作地点加法演进对 Employee 判定 MINOR"
+    kind: compat
+    old: extensions/hr/tests/compat/employee-v1.schema.json
+    new: extensions/hr/objects/employee.schema.json
+    expect_level: MINOR
+    expect_kinds: ["可选字段新增"]
+
+  - name: "雇佣类型/工作地点可生成加法迁移（可空列 + 回滚）"
+    kind: migrate
+    old: extensions/hr/tests/compat/employee-v1.schema.json
+    new: extensions/hr/objects/employee.schema.json
+    table: hr_employee
+    expect_contains:
+      - "ADD COLUMN employment_type TEXT;"
+      - "ADD COLUMN work_location TEXT;"
+    rollback_contains:
+      - "DROP COLUMN IF EXISTS employment_type;"
+      - "DROP COLUMN IF EXISTS work_location;"
 
   - name: "供给动作与员工状态不匹配必须拒绝"
     kind: scenario

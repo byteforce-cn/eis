@@ -26,6 +26,7 @@ ID_NUMBER_CONTEXT = "eis:hr:hr_employee:id_number:v1"
 
 NON_TERMINAL = ("pending_onboarding", "active")
 TERMINAL = ("terminated", "cancelled")
+EMPLOYMENT_TYPES = ("full_time", "part_time", "intern", "contract")
 
 CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,31}$")
 
@@ -61,6 +62,20 @@ def _valid_date(value) -> bool:
 
 def _today(api) -> str:
     return api.ts(api.now())[:10]
+
+
+def _optional_choice(api, value, allowed, label):
+    """可选受控枚举：None 允许；其余取值必须在 allowed 内。"""
+    if value is not None and value not in allowed:
+        raise api.reject("HR-400-001", f"{label} 非法（{'/'.join(allowed)}）")
+    return value
+
+
+def _optional_text(api, value, label):
+    """可选非空文本：None 允许；其余必须为非空字符串。"""
+    if value is not None and (not isinstance(value, str) or not value.strip()):
+        raise api.reject("HR-400-001", f"{label} 必须为非空字符串或 null")
+    return value
 
 
 def _require_code(api, code, label):
@@ -264,12 +279,15 @@ def create_employee(api, payload, actor, command_id):
         )
         if duplicate:
             raise api.reject("HR-409-002", f"证件散列与未终态员工重复: {duplicate['employee_no']}")
+    employment_type = _optional_choice(api, payload.get("employment_type"), EMPLOYMENT_TYPES, "employment_type")
+    work_location = _optional_text(api, payload.get("work_location"), "work_location")
     org_unit_id = payload.get("org_unit_id")
     if org_unit_id is not None:
         _org_unit(api, org_unit_id)
     employee = api.create_object("hr_employee", {
         "employee_no": _next_employee_no(api), "name": name, "status": "pending_onboarding",
-        "hire_date": hire_date, "org_unit_id": org_unit_id, "contact": payload.get("contact"),
+        "hire_date": hire_date, "employment_type": employment_type, "work_location": work_location,
+        "org_unit_id": org_unit_id, "contact": payload.get("contact"),
         "id_type": payload.get("id_type"), "id_number_hash": id_hash,
         "terminated_at": None, "terminated_reason": None,
     }, actor)
@@ -289,6 +307,11 @@ def update_employee(api, payload, actor, command_id):
         updates["name"] = payload["name"]
     if "contact" in payload:
         updates["contact"] = payload["contact"]
+    if "employment_type" in payload:
+        updates["employment_type"] = _optional_choice(
+            api, payload["employment_type"], EMPLOYMENT_TYPES, "employment_type")
+    if "work_location" in payload:
+        updates["work_location"] = _optional_text(api, payload["work_location"], "work_location")
     if "org_unit_id" in payload:
         if payload["org_unit_id"] is not None:
             _org_unit(api, payload["org_unit_id"])
