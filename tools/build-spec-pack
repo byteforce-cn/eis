@@ -80,6 +80,7 @@ README_TEMPLATE = Template("""# EIS 规格包（自动生成）
 
 ```bash
 pip install pyyaml jsonschema
+export PYTHONDONTWRITEBYTECODE=1  # 不在包内生成 .pyc（保持产物与 MANIFEST 一致）
 python3 05-audit-contract/verify.tool --self-test
 python3 tools/audit-verifier --vector
 python3 tools/audit-verifier vectors/audit/valid.chain.json
@@ -249,9 +250,18 @@ def verify_manifest(pack: Path) -> list[str]:
         if not path.is_file():
             continue
         rel = path.relative_to(pack).as_posix()
-        if rel != "MANIFEST.json" and rel not in listed:
+        if rel == "MANIFEST.json":
+            continue
+        if rel not in listed and _is_runtime_noise(rel):
+            continue
+        if rel not in listed:
             problems.append(f"未登记文件: {rel}")
     return problems
+
+
+def _is_runtime_noise(rel: str) -> bool:
+    """运行产物内工具可能生成的字节码缓存（可再生，不计入完整性）。"""
+    return "__pycache__" in rel.split("/") or rel.endswith((".pyc", ".pyo"))
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +276,8 @@ def cmd_self_test(args) -> int:
         ok = ok and cond
 
     def run_in(pack: Path, argv: list[str]):
-        return subprocess.run([sys.executable, *argv], cwd=pack,
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        return subprocess.run([sys.executable, *argv], cwd=pack, env=env,
                               capture_output=True, text=True, timeout=300)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -337,6 +348,7 @@ def cmd_self_test(args) -> int:
         report("包内兼容性负例（breaking 触发阈值）", proc.returncode == 1)
         proc = run_in(pack, ["tools/contract-checker"])
         report("包内 contract-checker", proc.returncode == 0)
+        report("运行包内工具后 MANIFEST 仍通过", not verify_manifest(pack))
 
     print(f"自测结果: {'通过' if ok else '失败'}")
     return 0 if ok else 1

@@ -69,6 +69,8 @@ jobs:
   spec-pack:
     name: Spec Pack 构建与自校验
     runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"   # 运行产物内工具不生成 .pyc，保持 artifact 与 MANIFEST 一致
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

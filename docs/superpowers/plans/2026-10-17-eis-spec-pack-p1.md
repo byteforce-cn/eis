@@ -22,7 +22,7 @@
 ## Review Focus
 
 - **包内路径可运行**：`audit-verifier` 依据 `eis_common.ROOT` 找 `05-audit-contract/verify.tool`；镜像必须包含六个契约目录原名，且 `tools/lib/{eis_common,eis_compat}.py` 同层就位。
-- **MANIFEST 可复算**：每个文件 `sha256`/`size` 与磁盘一致；篡改任一文件后 `--check` 必须报错；缺文件、多余文件（如 `__pycache__`/`.pyc`）必须失败。
+- **MANIFEST 可复算**：每个文件 `sha256`/`size` 与磁盘一致；篡改任一文件后 `--check` 必须报错；缺文件与多余文件（除运行产物内工具可再生的 `__pycache__`/`.pyc`）必须失败；CI 与自测用 `PYTHONDONTWRITEBYTECODE=1` 保持 artifact 洁净。
 - **确定性**：固定 `SOURCE_DATE_EPOCH`/`generated_at` 时两次构建的 `MANIFEST.json` 字节一致；文件列表按路径排序且不重复。
 - **向量口径**：`vectors/audit/` 含合法/篡改/断链/缺口夹具与事件导出；`audit-verifier --all` 会故意失败（含篡改夹具），因此自校验只逐条验证合法链与 digest 链，不扫全目录。
 - **负例**：`compatibility-checker` 对 breaking 夹具必须退出 1（`--fail-on MAJOR`），防止「校验永远绿」。
