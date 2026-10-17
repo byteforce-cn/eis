@@ -719,7 +719,10 @@ def _run_assertion(kernel: Kernel, assertion: dict, context: dict):
         return True, "审计链验证通过"
     if kind == "object-field":
         obj_id = resolve_tokens(assertion["id"], context)
-        row = kernel.as_of(assertion["type"], obj_id)
+        if assertion.get("read_projection"):
+            row = kernel.read_projection(assertion["type"], obj_id)
+        else:
+            row = kernel.as_of(assertion["type"], obj_id)
         if row is None:
             return False, f"对象不存在: {assertion['type']}/{obj_id}"
         actual = row.get(assertion["field"])

@@ -70,9 +70,25 @@ def sql_literal(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def domain_properties(doc: dict) -> tuple[dict, set]:
+    """提取领域属性与 required：顶层 + allOf 内联项。
+
+    allOf 中的外部 $ref 属核心元结构（由 core.ddl 管理），跳过不生成列；
+    与 schema-compiler 的 object_fields 口径一致（扩展对象 schema 的领域字段在 allOf[1]）。
+    """
+    props = dict(doc.get("properties", {}) or {})
+    required = set(doc.get("required", []) or [])
+    for item in doc.get("allOf", []) or []:
+        if not isinstance(item, dict) or "$ref" in item:
+            continue
+        props.update(item.get("properties", {}) or {})
+        required.update(item.get("required", []) or [])
+    return props, required
+
+
 def generate(old: dict, new: dict, table: str, version: str) -> tuple[str, str]:
-    op, np_ = old.get("properties", {}), new.get("properties", {})
-    oreq, nreq = set(old.get("required", [])), set(new.get("required", []))
+    op, oreq = domain_properties(old)
+    np_, nreq = domain_properties(new)
 
     mig: list[str] = [
         "-- ============================================================================",
@@ -212,6 +228,20 @@ def cmd_self_test(args) -> int:
                "非标量" in mig_non
                and not re.search(r"ADD COLUMN d \w+ DEFAULT", mig_non)
                and not re.search(r"ALTER COLUMN d SET NOT NULL;", mig_non))
+
+        # 扩展对象 Schema（allOf[1] 内联领域字段 + allOf[0] 外部 $ref 元结构）
+        old_ext = {"allOf": [{"$ref": "../../../01-data-contract/object.schema.json"},
+                             {"properties": {"a": {"type": "string"}}, "required": ["a"]}]}
+        new_ext = {"allOf": [{"$ref": "../../../01-data-contract/object.schema.json"},
+                             {"properties": {"a": {"type": "string"},
+                                            "employment_type": {"type": ["string", "null"]}},
+                              "required": ["a"]}]}
+        mig_ext, roll_ext = generate(old_ext, new_ext, "hr_employee", "1.1.0")
+        report("allOf 扩展 Schema 生成可选新增列",
+               "ADD COLUMN employment_type TEXT;" in mig_ext
+               and "DROP COLUMN IF EXISTS employment_type;" in roll_ext)
+        report("allOf 外部 $ref 元结构被跳过（不报错、不生成元列）",
+               "ADD COLUMN id TEXT" not in mig_ext and "ADD COLUMN valid_from" not in mig_ext)
 
         out = Path(tmp) / "migration"
         out.mkdir()

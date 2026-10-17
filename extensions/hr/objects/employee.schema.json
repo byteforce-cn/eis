@@ -30,6 +30,16 @@
           "format": "date",
           "description": "入职日期"
         },
+        "employment_type": {
+          "type": ["string", "null"],
+          "enum": ["full_time", "part_time", "intern", "contract"],
+          "description": "雇佣类型：全职 full_time / 兼职 part_time / 实习 intern / 劳务 contract（可选，历史数据可空）"
+        },
+        "work_location": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "工作地点（办公地 / 城市；可选，历史数据可空）"
+        },
         "org_unit_id": {
           "type": ["string", "null"],
           "format": "uuid",
