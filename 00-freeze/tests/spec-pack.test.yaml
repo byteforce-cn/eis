@@ -21,3 +21,10 @@ tests:
     check: present
     pattern: "(--npm-out|pnpm/action-setup|pnpm pack|eis-spec-npm)"
     min_matches: 4
+
+  - name: "npm 发布工作流包含 tag / nightly / NPM_TOKEN 与 provenance"
+    kind: static
+    target: .github/workflows/release-npm.yml
+    check: present
+    pattern: "(tags:|cron:|pnpm publish|NPM_TOKEN|--provenance)"
+    min_matches: 5
