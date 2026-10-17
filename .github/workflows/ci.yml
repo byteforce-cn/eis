@@ -65,3 +65,32 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f 03-time-contract/query-templates.sql
       - name: 冒烟断言（时点 / 半开区间 / append-only / 扩展函数）
         run: psql -v ON_ERROR_STOP=1 -f tools/ci/ddl-smoke.sql
+
+  spec-pack:
+    name: Spec Pack 构建与自校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖
+        run: pip install pyyaml jsonschema
+      - name: 构建 spec-pack
+        run: python3 tools/build-spec-pack --out dist/eis-spec-pack
+      - name: 校验 MANIFEST（哈希与文件清单）
+        run: python3 tools/build-spec-pack --check dist/eis-spec-pack
+      - name: 产物内自校验（冻结向量 / 审计链 / 兼容性 / 契约）
+        working-directory: dist/eis-spec-pack
+        run: |
+          python3 05-audit-contract/verify.tool --self-test
+          python3 tools/audit-verifier --vector
+          python3 tools/audit-verifier vectors/audit/valid.chain.json
+          python3 tools/audit-verifier vectors/audit/valid-digest.chain.json --events vectors/audit/digest-events.json
+          python3 tools/compatibility-checker --old vectors/evolution/schema-v1.json --new vectors/evolution/schema-v2-minor.json --standalone --fail-on MAJOR
+          python3 tools/contract-checker
+      - name: 上传产物（eis-spec-pack）
+        uses: actions/upload-artifact@v4
+        with:
+          name: eis-spec-pack
+          path: dist/eis-spec-pack

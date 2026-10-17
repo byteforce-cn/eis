@@ -1,5 +1,6 @@
 # 生成物与临时文件
 build/
+dist/
 *.pyc
 __pycache__/
 .venv/
