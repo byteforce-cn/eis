@@ -75,7 +75,7 @@
 
 ## Task 5（收尾）：推送、PR、CI、合并与 #12 评论
 
-- [ ] **Step 1**：提交（feat 生成器与 CI、docs 文档计数）；`git push -u origin feat/spec-pack-p3-pnpm`；`gh pr create`（标题 `feat(tools): spec-pack P3——pnpm 包形态与 pack 产物（issue #12）`，正文含结构、验证结果、`Refs #12`）。
-- [ ] **Step 2**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`；`git switch main && git pull`。
-- [ ] **Step 3**：在 #12 评论 P3 交付（包结构、CLI、pnpm pack artifact、验证证据）与仅剩的 P4 凭证项。
-- [ ] **Step 4**：标记本计划完成（小 docs PR）。
+- [x] **Step 1**：提交（feat 生成器与 CI、docs 文档计数）；`git push -u origin feat/spec-pack-p3-pnpm`；`gh pr create`（标题 `feat(tools): spec-pack P3——pnpm 包形态与 pack 产物（issue #12）`，正文含结构、验证结果、`Refs #12`）。
+- [x] **Step 2**：`gh pr checks --watch` 全绿；`gh pr merge --squash --delete-branch`；`git switch main && git pull`。
+- [x] **Step 3**：在 #12 评论 P3 交付（包结构、CLI、pnpm pack artifact、验证证据）与仅剩的 P4 凭证项。
+- [x] **Step 4**：标记本计划完成（小 docs PR）。
