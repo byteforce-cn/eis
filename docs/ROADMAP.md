@@ -13,7 +13,7 @@
       `vectors/` 冻结夹具 + 参考工具 + `MANIFEST.json` 逐文件 SHA-256），CI 构建并在产物内自校验；
 - [x] **AI 规格包 P2**（issue #12）：4 个 Agent Skills（`skills/`）与 `docs/AI-INTEGRATION.md`、`CONTRIBUTING.md`「AI 辅助贡献」；
 - [x] **AI 规格包 P3**（issue #12）：npm/pnpm 包形态（`--npm-out` 生成 `@byteforce/eis-spec` + 零依赖 CLI）+ CI `pnpm pack` 归档；
-- [ ] **AI 规格包 P4**（issue #12）：registry 发布与 provenance / 通道（nightly / latest / next）；待维护者提供 npm scope 凭证；
+- [x] **AI 规格包 P4**（issue #12）：CI 发布（`.github/workflows/release-npm.yml`：tag `v*` → `latest`、预发布 tag → `next`、每日/手动 → `nightly`；`NPM_TOKEN` + provenance）；
 - [ ] **审计增强**：链头锚定参考方案（按期签名并发布链头 hash）、审计导出/归档格式；
 - [x] **扩展扩充**：`extensions/hr`（人员/组织/任职/供给）已引入 v1.0.0（含可执行用例与 V201 迁移），当前 v1.1.0（员工雇佣类型/工作地点，V202，issue #13）；
       `extensions/asset`（资产）待社区贡献（见 CONTRIBUTING）；
