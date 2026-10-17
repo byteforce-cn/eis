@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""build-spec-pack — 从规范源生成 EIS 规格包（AI 可消费；issue #12 / P1）
+
+用途: 把六类契约、冻结向量与参考工具打包为自包含目录（保持源仓库相对路径，
+      产物内工具零修改即可运行），并生成 MANIFEST.json（逐文件 SHA-256 与源路径）。
+      规格包为生成物、不提交；CI 每次变更重建并在产物内自校验。
+
+用法:
+  build-spec-pack [--out DIR] [--json]   构建（默认 dist/eis-spec-pack）
+  build-spec-pack --check DIR            校验已有产物的 MANIFEST（哈希/大小/未登记文件）
+  build-spec-pack --self-test            自测（临时目录构建 + 包内工具校验 + 负例）
+
+说明:
+  - 规范版本取自 acceptance.yaml 的 version（唯一来源，缺失即失败）；
+  - SOURCE_DATE_EPOCH 可固定 generated_at，使构建可复现；
+  - 本工具不依赖 PyYAML/jsonschema；产物内工具需要时由调用方安装
+    （pip install pyyaml jsonschema）。
+退出码: 0 成功 / 1 自测或校验失败 / 2 用法或输入错误
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from string import Template
+
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_OUT = ROOT / "dist" / "eis-spec-pack"
+PACK_SCHEMA_VERSION = "1.0.0"
+
+# 打包范围（issue #12 / P1）：六类核心契约 + 冻结向量 + 参考工具；不含 extensions/cases。
+CONTRACT_DIRS = (
+    "01-data-contract",
+    "02-operation-contract",
+    "03-time-contract",
+    "04-authz-contract",
+    "05-audit-contract",
+    "06-evolution-contract",
+)
+TOOL_FILES = (
+    "tools/contract-checker",
+    "tools/compatibility-checker",
+    "tools/audit-verifier",
+    "tools/lib/eis_common.py",
+    "tools/lib/eis_compat.py",
+)
+VECTOR_DIRS = (
+    ("05-audit-contract/tests/fixtures", "vectors/audit"),
+    ("06-evolution-contract/tests/fixtures", "vectors/evolution"),
+)
+EXCLUDE_DIRS = {"__pycache__"}
+EXCLUDE_SUFFIXES = {".pyc", ".pyo"}
+
+README_TEMPLATE = Template("""# EIS 规格包（自动生成）
+
+- 规范版本：$spec_version
+- 生成时间：$generated_at（源 commit：$source_commit）
+- 生成器：`byteforce-cn/eis` 的 `tools/build-spec-pack`；本包为 CI 生成物，**禁止手工修改**
+
+## 目录（保持源仓库相对路径，产物内工具零修改可直接运行）
+
+| 路径 | 内容 |
+|------|------|
+| `01-data-contract/` … `06-evolution-contract/` | 六类契约：Schema / OpenAPI / AsyncAPI / 规则 / DDL / 可执行用例 |
+| `vectors/audit/` | 审计链冻结夹具（合法 / 篡改 / 断链 / 缺口 + 事件导出） |
+| `vectors/evolution/` | 兼容性 / 迁移夹具（v1 → v2 兼容与破坏两对） |
+| `tools/` | 参考工具 `contract-checker` / `compatibility-checker` / `audit-verifier` 与 `lib/`；审计验证器 `verify.tool` 在 `05-audit-contract/` |
+| `MANIFEST.json` | 共 $file_count 个文件的源路径、大小与 SHA-256 |
+
+## 自校验（在包根目录执行）
+
+```bash
+pip install pyyaml jsonschema
+export PYTHONDONTWRITEBYTECODE=1  # 不在包内生成 .pyc（保持产物与 MANIFEST 一致）
+python3 05-audit-contract/verify.tool --self-test
+python3 tools/audit-verifier --vector
+python3 tools/audit-verifier vectors/audit/valid.chain.json
+python3 tools/audit-verifier vectors/audit/valid-digest.chain.json --events vectors/audit/digest-events.json
+python3 tools/compatibility-checker --old vectors/evolution/schema-v1.json --new vectors/evolution/schema-v2-minor.json --standalone --fail-on MAJOR
+python3 tools/contract-checker
+```
+
+全部退出码为 0 即产物与规范源一致；逐文件哈希见 `MANIFEST.json`（在源仓库内可用
+`tools/build-spec-pack --check <包目录>` 复算）。
+
+## 给 AI 代理的阅读顺序
+
+1. `01-data-contract/` 元结构（`object` / `command` / `event` / `view` / `temporal`）与 `core.ddl`；
+2. `02-operation-contract/command.openapi.yaml`、`error-codes.yaml`；
+3. `03-time-contract/temporal.rules.yaml` 与 `05-audit-contract/hash-chain.spec.md`；
+4. `04-authz-contract/attribute.rules.yaml`、`resolution.api.yaml`；
+5. `06-evolution-contract/compatibility.rules.yaml`（兼容性判定的唯一权威）。
+
+生成契约后必须运行 `tools/contract-checker`；审计写入代码必须通过 `tools/audit-verifier --vector`；
+独立实现的验证器必须通过 `05-audit-contract/verify.tool --self-test`。
+""")
+
+
+# ---------------------------------------------------------------------------
+# 工具函数
+# ---------------------------------------------------------------------------
+def _iter_files(base: Path):
+    for path in sorted(base.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(base)
+        if any(part in EXCLUDE_DIRS for part in rel.parts):
+            continue
+        if path.suffix in EXCLUDE_SUFFIXES:
+            continue
+        yield path
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _spec_version() -> str:
+    """规范版本唯一来源：acceptance.yaml 的 version。"""
+    text = (ROOT / "acceptance.yaml").read_text(encoding="utf-8")
+    match = re.search(r'^version:\s*"([^"]+)"', text, re.M)
+    if not match:
+        raise SystemExit("[FAIL] acceptance.yaml 缺少 version 字段（规范版本唯一来源）")
+    return match.group(1)
+
+
+def _source_commit():
+    try:
+        proc = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=10)
+        if proc.returncode == 0:
+            return proc.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def _generated_at() -> str:
+    epoch = os.environ.get("SOURCE_DATE_EPOCH", "")
+    if epoch.isdigit():
+        moment = datetime.fromtimestamp(int(epoch), timezone.utc)
+    else:
+        moment = datetime.now(timezone.utc)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _entry(pack: Path, path: str, source: str, kind: str) -> dict:
+    target = pack / path
+    return {"path": path, "source": source, "kind": kind,
+            "sha256": _sha256(target), "size": target.stat().st_size}
+
+
+# ---------------------------------------------------------------------------
+# 构建与校验
+# ---------------------------------------------------------------------------
+def build_pack(out: Path, *, generated_at: str | None = None, commit: str | None = None) -> dict:
+    """构建规格包到 out（清空重建），返回 MANIFEST 字典。"""
+    out = Path(out).resolve()
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+
+    files: list[dict] = []
+    for contract in CONTRACT_DIRS:
+        for src in _iter_files(ROOT / contract):
+            rel = src.relative_to(ROOT).as_posix()
+            dest = out / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            files.append(_entry(out, rel, rel, "contract"))
+    for tool_rel in TOOL_FILES:
+        src = ROOT / tool_rel
+        dest = out / tool_rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        files.append(_entry(out, tool_rel, tool_rel, "tool"))
+    for src_dir, pack_dir in VECTOR_DIRS:
+        for src in _iter_files(ROOT / src_dir):
+            pack_rel = f"{pack_dir}/{src.name}"
+            dest = out / pack_rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            files.append(_entry(out, pack_rel, f"{src_dir}/{src.name}", "vector"))
+
+    version = _spec_version()
+    manifest = {
+        "pack_schema_version": PACK_SCHEMA_VERSION,
+        "spec_version": version,
+        "generated_at": generated_at or _generated_at(),
+        "source_commit": commit if commit is not None else _source_commit(),
+        "generator": "tools/build-spec-pack",
+        "files": sorted(files, key=lambda item: item["path"]),
+    }
+    readme = README_TEMPLATE.substitute(
+        spec_version=version,
+        generated_at=manifest["generated_at"],
+        source_commit=manifest["source_commit"] or "(unknown)",
+        file_count=len(manifest["files"]) + 1,  # 含 README.md 自身
+    )
+    (out / "README.md").write_text(readme, encoding="utf-8")
+    manifest["files"].append(_entry(out, "README.md", "(generated)", "generated"))
+    manifest["files"].sort(key=lambda item: item["path"])
+    (out / "MANIFEST.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def verify_manifest(pack: Path) -> list[str]:
+    """复算 MANIFEST：返回问题列表（空列表 = 通过）。"""
+    pack = Path(pack)
+    manifest_path = pack / "MANIFEST.json"
+    if not manifest_path.exists():
+        return [f"缺少文件: MANIFEST.json（{pack}）"]
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"MANIFEST.json 解析失败: {exc}"]
+
+    problems: list[str] = []
+    listed: set[str] = set()
+    for entry in manifest.get("files", []):
+        rel = entry.get("path", "")
+        listed.add(rel)
+        target = pack / rel
+        if not target.exists():
+            problems.append(f"缺少文件: {rel}")
+            continue
+        actual_size = target.stat().st_size
+        if actual_size != entry.get("size"):
+            problems.append(f"大小不一致: {rel}（清单 {entry.get('size')}，实际 {actual_size}）")
+        actual_hash = _sha256(target)
+        if actual_hash != entry.get("sha256"):
+            problems.append(f"哈希不一致: {rel}")
+    for path in sorted(pack.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(pack).as_posix()
+        if rel == "MANIFEST.json":
+            continue
+        if rel not in listed and _is_runtime_noise(rel):
+            continue
+        if rel not in listed:
+            problems.append(f"未登记文件: {rel}")
+    return problems
+
+
+def _is_runtime_noise(rel: str) -> bool:
+    """运行产物内工具可能生成的字节码缓存（可再生，不计入完整性）。"""
+    return "__pycache__" in rel.split("/") or rel.endswith((".pyc", ".pyo"))
+
+
+# ---------------------------------------------------------------------------
+# 自测
+# ---------------------------------------------------------------------------
+def cmd_self_test(args) -> int:
+    ok = True
+
+    def report(name, cond):
+        nonlocal ok
+        print(f"[{'ok  ' if cond else 'FAIL'}] {name}")
+        ok = ok and cond
+
+    def run_in(pack: Path, argv: list[str]):
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        return subprocess.run([sys.executable, *argv], cwd=pack, env=env,
+                              capture_output=True, text=True, timeout=300)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pack = Path(tmp) / "pack"
+        manifest = build_pack(pack, generated_at="1970-01-01T00:00:00Z", commit="0" * 40)
+
+        required = [
+            "01-data-contract/object.schema.json",
+            "06-evolution-contract/compatibility.rules.yaml",
+            "05-audit-contract/verify.tool",
+            "vectors/audit/valid-digest.chain.json",
+            "vectors/audit/digest-events.json",
+            "vectors/evolution/schema-v2-minor.json",
+            "tools/contract-checker",
+            "tools/audit-verifier",
+            "tools/lib/eis_common.py",
+            "tools/lib/eis_compat.py",
+            "README.md",
+            "MANIFEST.json",
+        ]
+        missing = [path for path in required if not (pack / path).exists()]
+        report(f"必需路径齐全（缺失 {missing}）" if missing else "必需路径齐全", not missing)
+
+        problems = verify_manifest(pack)
+        report(f"MANIFEST 复算通过（问题 {problems[:2]}）" if problems else "MANIFEST 复算通过",
+               not problems)
+
+        paths = [entry["path"] for entry in manifest["files"]]
+        report("文件列表有序且无重复",
+               paths == sorted(paths) and len(paths) == len(set(paths)))
+        report("无缓存/字节码文件",
+               not any("__pycache__" in path or path.endswith(".pyc") for path in paths))
+
+        readme = (pack / "README.md").read_text(encoding="utf-8")
+        report("README 注入规范版本与文件数",
+               manifest["spec_version"] in readme and str(len(manifest["files"])) in readme)
+
+        pack2 = Path(tmp) / "pack2"
+        build_pack(pack2, generated_at="1970-01-01T00:00:00Z", commit="0" * 40)
+        report("固定时间与 commit 时 MANIFEST 字节一致",
+               (pack / "MANIFEST.json").read_bytes() == (pack2 / "MANIFEST.json").read_bytes())
+
+        tampered = pack2 / "01-data-contract" / "object.schema.json"
+        tampered.write_bytes(tampered.read_bytes() + b"\n")
+        report("篡改文件后 MANIFEST 校验必须报错", bool(verify_manifest(pack2)))
+        (pack2 / "01-data-contract" / "extra.txt").write_text("x", encoding="utf-8")
+        report("未登记文件必须报错",
+               any("extra.txt" in problem for problem in verify_manifest(pack2)))
+
+        proc = run_in(pack, ["05-audit-contract/verify.tool", "--self-test"])
+        report("包内 verify.tool --self-test", proc.returncode == 0)
+        proc = run_in(pack, ["tools/audit-verifier", "--vector"])
+        report("包内 audit-verifier --vector", proc.returncode == 0)
+        proc = run_in(pack, ["tools/audit-verifier", "vectors/audit/valid.chain.json"])
+        report("包内合法审计链验证", proc.returncode == 0)
+        proc = run_in(pack, ["tools/audit-verifier", "vectors/audit/valid-digest.chain.json",
+                             "--events", "vectors/audit/digest-events.json"])
+        report("包内 payload_digest 链验证", proc.returncode == 0)
+        proc = run_in(pack, ["tools/compatibility-checker",
+                             "--old", "vectors/evolution/schema-v1.json",
+                             "--new", "vectors/evolution/schema-v2-minor.json",
+                             "--standalone", "--fail-on", "MAJOR"])
+        report("包内兼容性判定（minor 通过）", proc.returncode == 0)
+        proc = run_in(pack, ["tools/compatibility-checker",
+                             "--old", "vectors/evolution/schema-v1.json",
+                             "--new", "vectors/evolution/schema-v2-breaking.json",
+                             "--standalone", "--fail-on", "MAJOR"])
+        report("包内兼容性负例（breaking 触发阈值）", proc.returncode == 1)
+        proc = run_in(pack, ["tools/contract-checker"])
+        report("包内 contract-checker", proc.returncode == 0)
+        report("运行包内工具后 MANIFEST 仍通过", not verify_manifest(pack))
+
+    print(f"自测结果: {'通过' if ok else '失败'}")
+    return 0 if ok else 1
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="build-spec-pack",
+                                     description="EIS 规格包生成与校验（AI 可消费；参考实现）")
+    parser.add_argument("--out", help="输出目录（默认 dist/eis-spec-pack）")
+    parser.add_argument("--check", metavar="DIR", help="校验已有产物的 MANIFEST")
+    parser.add_argument("--json", action="store_true", help="JSON 摘要输出")
+    parser.add_argument("--self-test", action="store_true", help="自测")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        return cmd_self_test(args)
+    if args.check:
+        problems = verify_manifest(Path(args.check))
+        if problems:
+            for problem in problems:
+                print(f"[FAIL] {problem}", file=sys.stderr)
+            return 1
+        print("[ok  ] MANIFEST 校验通过（哈希、大小与文件清单一致）")
+        return 0
+
+    out = Path(args.out) if args.out else DEFAULT_OUT
+    manifest = build_pack(out)
+    if args.json:
+        print(json.dumps({
+            "out": str(out),
+            "spec_version": manifest["spec_version"],
+            "generated_at": manifest["generated_at"],
+            "source_commit": manifest["source_commit"],
+            "file_count": len(manifest["files"]),
+        }, ensure_ascii=False, indent=2))
+    else:
+        print(f"[ok  ] spec-pack: {len(manifest['files'])} 个文件 → {out}")
+        print(f"[ok  ] MANIFEST.json: spec_version={manifest['spec_version']} "
+              f"commit={manifest['source_commit'] or '(unknown)'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

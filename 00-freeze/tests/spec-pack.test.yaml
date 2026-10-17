@@ -1,0 +1,16 @@
+# spec-pack P1 用例（issue #12）：tools/build-spec-pack 自测与 CI 接线
+# 运行：tools/e2e-runner 00-freeze/tests/spec-pack.test.yaml
+suite: spec-pack
+
+tests:
+  - name: "spec-pack 自测：构建、MANIFEST 哈希复算与产物内工具校验"
+    kind: cli
+    args: [tools/build-spec-pack, --self-test]
+    stdout_contains: ["自测结果: 通过"]
+
+  - name: "CI 工作流包含 spec-pack 构建、产物内校验与 artifact 上传"
+    kind: static
+    target: .github/workflows/ci.yml
+    check: present
+    pattern: "(build-spec-pack --out|verify.tool --self-test|upload-artifact)"
+    min_matches: 3

@@ -17,7 +17,7 @@
 ```bash
 pip install pyyaml jsonschema
 python3 tools/e2e-runner --all
-# 预期：用例 114/114；场景 1/1；流水线 5/5；总判定：通过
+# 预期：用例 116/116；场景 1/1；流水线 5/5；总判定：通过
 ```
 
 - 审计链验证（可直接运行）：`05-audit-contract/verify.tool --self-test`
@@ -47,6 +47,24 @@ tools/compatibility-checker --old old.schema.json --new new.schema.json --rules 
 
 ---
 
+## AI 规格包（spec-pack，P1）
+
+`tools/build-spec-pack` 从规范源生成自包含的 AI 可消费规格包（六类契约 + 冻结向量 + 参考工具 +
+`MANIFEST.json` 逐文件 SHA-256 与源路径），产物内工具零修改可直接运行：
+
+```bash
+python3 tools/build-spec-pack --out dist/eis-spec-pack   # 生成（dist/ 不提交）
+python3 tools/build-spec-pack --check dist/eis-spec-pack # 复算 MANIFEST 哈希
+python3 tools/build-spec-pack --self-test                # 构建 + 包内工具自校验 + 负例
+```
+
+CI 每次变更构建产物并在包内运行 `verify.tool --self-test`、`audit-verifier --vector`、
+`compatibility-checker --standalone` 与 `contract-checker` 自校验（漂移即红）；
+后续阶段（Agent Skills、npm 封装与发布）规划见 [issue #12](https://github.com/byteforce-cn/eis/issues/12)
+与 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
+---
+
 ## 规范的本质
 
 每条契约必须满足：
@@ -57,7 +75,7 @@ tools/compatibility-checker --old old.schema.json --new new.schema.json --rules 
 3. **可演进**：能定义兼容性规则与迁移路径
 
 这三条不是口号：`tools/` 提供参考实现，一条命令即可验证本仓库全部契约——
-`python3 tools/e2e-runner --all`（114 条用例 + 端到端场景 + 工具链流水线；
+`python3 tools/e2e-runner --all`（116 条用例 + 端到端场景 + 工具链流水线；
 DDL 由 CI 在 PostgreSQL 16 上冒烟断言）。
 
 ---
@@ -171,7 +189,7 @@ eis/
 
 | 工件 | 状态 |
 |------|------|
-| 契约 Schema / OpenAPI / AsyncAPI / DDL / 测试用例 | 已实例化；114 条用例全部可执行 |
+| 契约 Schema / OpenAPI / AsyncAPI / DDL / 测试用例 | 已实例化；116 条用例全部可执行 |
 | `tools/*` 工具链（8 件） | ✅ 参考实现全部可用（Python，仅 PyYAML/jsonschema 依赖） |
 | 参考内核 `tools/lib/kernel.py` | ✅ 可执行端到端语义（命令→规则→事件→审计链→双时间轴） |
 | `05-audit-contract/verify.tool` | ✅ 冻结测试向量经实现验证一致 |

@@ -9,6 +9,10 @@
 - [ ] **独立验证工件**（issue #10 后续项）：六类契约的公开 JSON Schema（数据/操作/时间/
       授权/审计/演进）与独立契约 lint CLI；当前已交付 `compatibility-checker --standalone`、
       纯 stdlib 核心 `tools/lib/eis_compat.py` 与 `compatibility.rules.schema.json`（ADR-0008）；
+- [x] **AI 规格包 P1**（issue #12）：`tools/build-spec-pack` 从规范源生成自包含规格包（六类契约 +
+      `vectors/` 冻结夹具 + 参考工具 + `MANIFEST.json` 逐文件 SHA-256），CI 构建并在产物内自校验；
+- [ ] **AI 规格包 P2–P4**（issue #12）：Agent Skills 与 `docs/AI-INTEGRATION.md`；npm 封装与发布
+      （provenance / 通道）；待维护者决策 npm scope、凭证与仓库边界（见 issue #12 评估评论）；
 - [ ] **审计增强**：链头锚定参考方案（按期签名并发布链头 hash）、审计导出/归档格式；
 - [x] **扩展扩充**：`extensions/hr`（人员/组织/任职/供给）已引入 v1.0.0（含可执行用例与 V201 迁移），当前 v1.1.0（员工雇佣类型/工作地点，V202，issue #13）；
       `extensions/asset`（资产）待社区贡献（见 CONTRIBUTING）；
