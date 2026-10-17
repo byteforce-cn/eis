@@ -38,3 +38,4 @@ EIS 的核心契约已冻结。任何修改（解冻请求）必须走以下流�
 | [0007](0007-audit-payload-digest.md) | 审计条目 payload_digest（事件正文篡改检出） | Accepted |
 | [0008](0008-standalone-compatibility-checker.md) | compatibility-checker 独立模式（技术中立采纳） | Accepted |
 | [0009](0009-hr-employment-work-location.md) | HR 扩展 Employee 增加雇佣类型/工作地点（加法演进） | Accepted |
+| [0010](0010-approval-section-order.md) | 审批区块顺序语义（ApprovalSection.step_order） | Accepted |

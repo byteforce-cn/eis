@@ -3,7 +3,8 @@
 
 简单模式：submit → decide（v1.0.0 既有语义，不变）。
 区块模式：submit(sections) → section.confirm/reject/complete → 全部就绪 ⟺ 单据完成；
-        rejected 后 resubmit 重置全部确认；无人确认前可 withdraw。
+        step_order 声明处理顺序，确认/回写仅当前序就绪（APR-409-007，规则 section_order）；
+        rejected 后 resubmit 重置全部确认（step_order 保留）；无人确认前可 withdraw。
 """
 from __future__ import annotations
 
@@ -50,6 +51,29 @@ def _section(api, section_id):
 
 def _sections_of(api, request_id):
     return [r for r in api.current_objects("approval_section") if r["request_id"] == request_id]
+
+
+def _sections_in_order(api, request):
+    """按处理顺序返回区块：step_order 优先，历史数据为空时按 section_ids 位置回退。"""
+    sections = _sections_of(api, request["id"])
+    position = {sid: i for i, sid in enumerate(request.get("section_ids") or [])}
+    fallback = len(position)
+
+    def sort_key(section):
+        index = position.get(section["id"], fallback)
+        order = section.get("step_order")
+        return (order if order is not None else index, index)
+
+    return sorted(sections, key=sort_key)
+
+
+def _require_prerequisites(api, request, section):
+    """顺序门（规则 section_order）：全部前序区块就绪（confirmed/not_applicable）方可确认/回写。"""
+    for other in _sections_in_order(api, request):
+        if other["id"] == section["id"]:
+            return
+        if other["state"] not in READY_STATES:
+            raise api.reject("APR-409-007", f"前序区块未就绪: {other['key']}（{other['state']}）")
 
 
 def _all_ready(sections):
@@ -101,11 +125,11 @@ def submit_request(api, payload, actor, command_id):
     request_id = api.new_id()
     created_sections = {}
     sections = []
-    for spec in raw_sections:
+    for index, spec in enumerate(raw_sections):
         applicable = bool(spec.get("applicable", True))
         section = api.create_object("approval_section", {
             "request_id": request_id, "key": spec["key"], "title": spec["title"],
-            "owner": spec["owner"], "applicable": applicable,
+            "owner": spec["owner"], "applicable": applicable, "step_order": index,
             "state": "pending" if applicable else "not_applicable",
             "confirmer": None, "decided_at": None, "comment": None,
         }, actor)
@@ -157,6 +181,7 @@ def confirm_section(api, payload, actor, command_id):
     if section["state"] != "pending":
         raise api.reject("APR-409-003", f"区块状态不允许确认: {section['state']}")
     _require_owner_permission(api, actor, section["owner"])
+    _require_prerequisites(api, request, section)
     api.update_object("approval_section", section["id"], {
         "state": "confirmed", "confirmer": actor, "decided_at": _now(api),
         "comment": payload.get("comment"),
@@ -200,6 +225,7 @@ def complete_section(api, payload, actor, command_id):
         raise api.reject("APR-409-003", f"单据状态不允许回写: {request['status']}")
     if section["state"] != "pending":
         raise api.reject("APR-409-003", f"区块状态不允许回写: {section['state']}")
+    _require_prerequisites(api, request, section)
     api.update_object("approval_section", section["id"], {
         "state": "confirmed", "confirmer": actor, "decided_at": _now(api),
         "comment": payload.get("comment"),

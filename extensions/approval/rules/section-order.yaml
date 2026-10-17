@@ -1,0 +1,22 @@
+# rules/section-order.yaml — 区块按声明顺序处理（approval v1.1.0）
+rule:
+  id: "approval.section_order"
+  name: "区块确认遵守处理顺序（前序就绪前置）"
+  statement: "区块确认（approval.section.confirm / approval.section.complete）仅当同一请求内所有 step_order 更小的适用区块均已就绪（state ∈ confirmed, not_applicable）时受理；not_applicable 区块计为就绪、不阻塞；request.section_ids 数组顺序与各区块 step_order 一致；resubmit 只重置状态、不改变 step_order；历史数据 step_order 为空时按 section_ids 位置回退"
+  applies_to:
+    - "operations/section-confirm.openapi.yaml"
+    - "operations/section-complete.openapi.yaml"
+  on_violation:
+    enforcement: "prevent"
+    error_code: "APR-409-007"
+    error_message: "前序区块未就绪，不可确认: {key}（{state}）"
+  tests:
+    - name: "乱序确认被拒"
+      input: "sections=[master(hr,0), cost(finance,1)]，先确认 cost"
+      expect: "rejected code=APR-409-007"
+    - name: "顺序确认通过"
+      input: "sections=[master(hr,0), cost(finance,1)]，先 master 后 cost"
+      expect: "request.status=approved，事件 approval.request.completed"
+    - name: "不适用区块不阻塞"
+      input: "sections=[master(hr,0), project(pm,applicable=false,1), cost(finance,2)]，master 确认后确认 cost"
+      expect: "project.state=not_applicable 不阻塞，cost 确认后 approved"

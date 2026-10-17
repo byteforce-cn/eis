@@ -1,8 +1,8 @@
-# manifest.yaml — 审批域扩展（v1.0.0，骨架）
+# manifest.yaml — 审批域扩展（v1.1.0，骨架）
 extension:
   id: "approval"
   name: "审批域扩展"
-  version: "1.0.1"
+  version: "1.1.0"
   core_version: "1.0.0"
 
   dependencies: []
@@ -60,6 +60,8 @@ extension:
       file: "rules/no-self-approval.yaml"
     - name: "block_readiness"
       file: "rules/block-readiness.yaml"
+    - name: "section_order"
+      file: "rules/section-order.yaml"
     - name: "resubmit_reset"
       file: "rules/resubmit-reset.yaml"
     - name: "withdraw_timing"
@@ -70,6 +72,8 @@ extension:
       expression: "decision.decider != request.requester"
     - name: "全部区块就绪 ⟺ 单据完成"
       expression: "request.status == approved implies all(section.state in (confirmed, not_applicable))"
+    - name: "确认顺序受前序就绪约束"
+      expression: "section.state == confirmed implies all(prior where prior.step_order < section.step_order: prior.state in (confirmed, not_applicable))"
     - name: "重提后不得存在已确认区块"
       expression: "after request.resubmit: forall(section, section.state != confirmed)"
     - name: "无人确认前可撤回"

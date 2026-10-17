@@ -34,6 +34,11 @@
           "type": "boolean",
           "description": "条件参与：false 表示本例不适用，不阻塞单据完成"
         },
+        "step_order": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "处理序号（同一请求内 0 起递增，与请求 section_ids 数组顺序一致）；确认/回写仅当所有更小序号的适用区块就绪（confirmed/not_applicable）；历史数据可空（按 section_ids 位置回退）"
+        },
         "state": {
           "type": "string",
           "enum": ["pending", "confirmed", "rejected", "not_applicable"],
