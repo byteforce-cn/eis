@@ -1,0 +1,112 @@
+# operations/blocks.openapi.yaml — 黑名单命令（im v1.0.0，ADR-0023）
+openapi: 3.1.0
+info:
+  title: IM 协作触达层 — 黑名单
+  version: 1.0.0
+  description: |
+    命令：im.user.block / im.user.unblock。
+    - 同一对 (user_id, blocked_user_id) 至多一个 active 黑名单关系；重复拉黑 → IM-409-010
+    - 拉黑同时把已接受的好友关系置为 removed（保留历史 + 审计）
+    - 取消拉黑是写（revoked_at/revoked_by），未拉黑 → IM-409-010
+
+paths:
+  /commands/im.user.block:
+    post:
+      operationId: imUserBlock
+      summary: 拉黑用户
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: IM-400-002 不能拉黑自己 / EIS-400-001 载荷非法
+        '409':
+          description: IM-409-010 已在黑名单 / EIS-409-001 幂等冲突
+
+  /commands/im.user.unblock:
+    post:
+      operationId: imUserUnblock
+      summary: 取消拉黑
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnblockCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '409':
+          description: IM-409-010 不在黑名单 / EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    BlockCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.user.block
+        payload:
+          type: object
+          required: [user_id]
+          properties:
+            user_id:
+              type: string
+              format: uuid
+        idempotency_key:
+          type: string
+
+    UnblockCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.user.unblock
+        payload:
+          type: object
+          required: [user_id]
+          properties:
+            user_id:
+              type: string
+              format: uuid
+        idempotency_key:
+          type: string
+
+    Accepted:
+      type: object
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: accepted
+        event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        locator:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1

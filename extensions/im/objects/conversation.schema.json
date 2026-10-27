@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/im/object/conversation/v1",
+  "title": "ImConversation",
+  "description": "用户维度的会话设置快照（置顶/免打扰/隐藏）。会话本身不承载消息；消息按 chat_id 归集。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["chat_id", "user_id", "pinned", "muted", "hidden"],
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "user_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "会话设置所属用户"
+        },
+        "pinned": {
+          "type": "boolean",
+          "description": "是否置顶"
+        },
+        "muted": {
+          "type": "boolean",
+          "description": "是否免打扰"
+        },
+        "hidden": {
+          "type": "boolean",
+          "description": "是否隐藏"
+        }
+      }
+    }
+  ]
+}

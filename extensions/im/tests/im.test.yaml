@@ -1,0 +1,411 @@
+# IM 协作触达层验证用例（im v1.0.0，ADR-0023）
+# 运行：tools/e2e-runner extensions/im/tests/im.test.yaml
+suite: im
+x-common:
+  authz: &authz
+    principals:
+      - {id: "01900000-0000-7000-8000-000000000401", type: person, key: im_admin, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000402", type: person, key: im_member, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000403", type: person, key: im_other, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000404", type: person, key: im_viewer, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    roles:
+      - id: "01900000-0000-7000-8000-0000000004a1"
+        key: im-admin
+        permissions:
+          - im.message.send
+          - im.message.edit
+          - im.message.recall
+          - im.message.read
+          - im.conversation.read
+          - im.conversation.settings.update
+          - im.read.position.report
+          - im.relationship.read
+          - im.group.create
+          - im.group.update
+          - im.group.dissolve
+          - im.group.member.add
+          - im.group.member.remove
+          - im.group.member.role.update
+          - im.friend.request
+          - im.friend.request.decide
+          - im.friend.remove
+          - im.user.block
+          - im.user.unblock
+        valid_from: "2026-01-01T00:00:00Z"
+        recorded_at: "2026-01-01T00:00:00Z"
+      - id: "01900000-0000-7000-8000-0000000004a2"
+        key: im-member
+        permissions:
+          - im.message.send
+          - im.message.edit
+          - im.message.recall
+          - im.message.read
+          - im.conversation.read
+          - im.conversation.settings.update
+          - im.read.position.report
+          - im.relationship.read
+          - im.group.create
+          - im.group.member.add
+          - im.group.member.remove
+          - im.group.member.role.update
+          - im.friend.request
+          - im.friend.request.decide
+          - im.friend.remove
+          - im.user.block
+          - im.user.unblock
+        valid_from: "2026-01-01T00:00:00Z"
+        recorded_at: "2026-01-01T00:00:00Z"
+      - id: "01900000-0000-7000-8000-0000000004a3"
+        key: im-viewer
+        permissions:
+          - im.message.read
+          - im.conversation.read
+          - im.relationship.read
+        valid_from: "2026-01-01T00:00:00Z"
+        recorded_at: "2026-01-01T00:00:00Z"
+    bindings:
+      - {id: "01900000-0000-7000-8000-0000000004b1", principal: "01900000-0000-7000-8000-000000000401", role: "01900000-0000-7000-8000-0000000004a1", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000004b2", principal: "01900000-0000-7000-8000-000000000402", role: "01900000-0000-7000-8000-0000000004a2", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000004b3", principal: "01900000-0000-7000-8000-000000000403", role: "01900000-0000-7000-8000-0000000004a2", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000004b4", principal: "01900000-0000-7000-8000-000000000404", role: "01900000-0000-7000-8000-0000000004a3", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+
+tests:
+  - name: "建群 → 发消息 → 编辑 → 撤回（版本追加 + external_refs + 审计）"
+    kind: scenario
+    scenario:
+      id: im.message-lifecycle
+      authz: *authz
+      steps:
+        - id: T1
+          actor: im_admin
+          command: im.group.create
+          payload:
+            name: 项目群
+            member_ids: ["01900000-0000-7000-8000-000000000402", "01900000-0000-7000-8000-000000000403"]
+          events: [im.group.created]
+        - id: T2
+          actor: im_admin
+          command: im.message.send
+          payload:
+            chat_id: "${steps.T1.created.id}"
+            client_msg_id: "msg-1"
+            payload_type: 1
+            content: {text: "hello"}
+            external_refs: [{system: approval, id: AP-1}]
+          events: [im.message.sent]
+        - id: T3
+          actor: im_member
+          command: im.message.send
+          payload:
+            chat_id: "${steps.T1.created.id}"
+            client_msg_id: "msg-2"
+            payload_type: 1
+            content: {text: "hi"}
+          events: [im.message.sent]
+        - id: T4
+          actor: im_admin
+          command: im.message.edit
+          payload:
+            message_id: "${steps.T2.created.id}"
+            base_version: 1
+            content: {text: "hello v2"}
+          events: [im.message.edited]
+        - id: T4b
+          actor: im_member
+          command: im.message.edit
+          payload:
+            message_id: "${steps.T2.created.id}"
+            base_version: 2
+            content: {text: "not mine"}
+          expect_status: rejected
+          expect_code: IM-403-003
+        - id: T5
+          actor: im_admin
+          command: im.message.recall
+          payload: {message_id: "${steps.T2.created.id}"}
+          events: [im.message.recalled]
+      assert:
+        - {kind: object-field, type: im_message, id: "${steps.T2.created.id}", field: status, expect: recalled}
+        - {kind: object-field, type: im_message, id: "${steps.T2.created.id}", field: version, expect: 3}
+        - {kind: object-field, type: im_message, id: "${steps.T2.created.id}", field: server_seq, expect: 1}
+        - {kind: object-field, type: im_message, id: "${steps.T2.created.id}", field: external_refs, expect: [{system: approval, id: AP-1}]}
+        - {kind: object-field, type: im_message, id: "${steps.T3.created.id}", field: server_seq, expect: 2}
+        - {kind: temporal-history, type: im_message, id: "${steps.T2.created.id}", expect_versions: 3}
+        - {kind: audit-chain, expect: valid, min_entries: 5}
+        - {kind: idempotency, step: T2}
+
+  - name: "发送幂等：同一 (chat_id, client_msg_id) 重复 → IM-409-001；server_seq 按会话递增"
+    kind: scenario
+    scenario:
+      id: im.send-idempotency
+      authz: *authz
+      steps:
+        - id: T1
+          actor: im_admin
+          command: im.group.create
+          payload: {name: 幂等群}
+          events: [im.group.created]
+        - id: T2
+          actor: im_admin
+          command: im.message.send
+          payload: {chat_id: "${steps.T1.created.id}", client_msg_id: "c-1", payload_type: 0, content: {text: "one"}}
+          events: [im.message.sent]
+        - id: T3
+          actor: im_admin
+          command: im.message.send
+          payload: {chat_id: "${steps.T1.created.id}", client_msg_id: "c-1", payload_type: 0, content: {text: "duplicate"}}
+          expect_status: rejected
+          expect_code: IM-409-001
+        - id: T4
+          actor: im_admin
+          command: im.message.send
+          payload: {chat_id: "${steps.T1.created.id}", client_msg_id: "c-2", payload_type: 0, content: {text: "two"}}
+          events: [im.message.sent]
+      assert:
+        - {kind: object-count, type: im_message, where: {chat_id: "${steps.T1.created.id}"}, expect: 2}
+        - {kind: object-field, type: im_message, id: "${steps.T4.created.id}", field: server_seq, expect: 2}
+
+  - name: "编辑冲突 → IM-409-002；撤回后编辑 → IM-409-003"
+    kind: scenario
+    scenario:
+      id: im.edit-conflict
+      authz: *authz
+      steps:
+        - id: T1
+          actor: im_admin
+          command: im.group.create
+          payload: {name: 编辑群}
+        - id: T2
+          actor: im_admin
+          command: im.message.send
+          payload: {chat_id: "${steps.T1.created.id}", client_msg_id: "e-1", payload_type: 0, content: {text: "v1"}}
+        - id: T3
+          actor: im_admin
+          command: im.message.edit
+          payload: {message_id: "${steps.T2.created.id}", base_version: 1, content: {text: "v2"}}
+          events: [im.message.edited]
+        - id: T4
+          actor: im_admin
+          command: im.message.edit
+          payload: {message_id: "${steps.T2.created.id}", base_version: 1, content: {text: "stale"}}
+          expect_status: rejected
+          expect_code: IM-409-002
+        - id: T5
+          actor: im_admin
+          command: im.message.recall
+          payload: {message_id: "${steps.T2.created.id}"}
+          events: [im.message.recalled]
+        - id: T6
+          actor: im_admin
+          command: im.message.edit
+          payload: {message_id: "${steps.T2.created.id}", base_version: 2, content: {text: "after-recall"}}
+          expect_status: rejected
+          expect_code: IM-409-003
+      assert:
+        - {kind: object-field, type: im_message, id: "${steps.T2.created.id}", field: status, expect: recalled}
+        - {kind: object-field, type: im_message, id: "${steps.T2.created.id}", field: version, expect: 3}
+        - {kind: object-field, type: im_message, id: "${steps.T2.created.id}", field: content, expect: {text: v2}}
+
+  - name: "群成员：移出群墓碑 → 非成员发送拒绝 → 解散后写命令拒绝"
+    kind: scenario
+    scenario:
+      id: im.group-membership
+      authz: *authz
+      steps:
+        - id: T1
+          actor: im_admin
+          command: im.group.create
+          payload: {name: 成员群, member_ids: ["01900000-0000-7000-8000-000000000402"]}
+        - id: T2
+          actor: im_admin
+          command: im.group.member.add
+          payload: {group_id: "${steps.T1.created.id}", user_ids: ["01900000-0000-7000-8000-000000000403"]}
+          events: [im.group.member.added]
+        - id: T3
+          actor: im_admin
+          command: im.group.member.remove
+          payload: {group_id: "${steps.T1.created.id}", user_id: "01900000-0000-7000-8000-000000000402", reason: "调岗"}
+          events: [im.group.member.removed]
+        - id: T4
+          actor: im_member
+          command: im.message.send
+          payload: {chat_id: "${steps.T1.created.id}", client_msg_id: "m-1", payload_type: 0, content: {text: "still here?"}}
+          expect_status: rejected
+          expect_code: IM-403-001
+        - id: T5
+          actor: im_admin
+          command: im.group.dissolve
+          payload: {group_id: "${steps.T1.created.id}"}
+          events: [im.group.dissolved]
+        - id: T6
+          actor: im_admin
+          command: im.group.member.add
+          payload: {group_id: "${steps.T1.created.id}", user_ids: ["01900000-0000-7000-8000-000000000402"]}
+          expect_status: rejected
+          expect_code: IM-409-003
+        - id: T7
+          actor: im_admin
+          command: im.message.send
+          payload: {chat_id: "${steps.T1.created.id}", client_msg_id: "m-2", payload_type: 0, content: {text: "closed"}}
+          expect_status: rejected
+          expect_code: IM-409-003
+      assert:
+        - {kind: object-field, type: im_group, id: "${steps.T1.created.id}", field: status, expect: dissolved}
+        - {kind: object-field, type: im_group, id: "${steps.T1.created.id}", field: version, expect: 2}
+        - {kind: object-count, type: im_group_member, where: {group_id: "${steps.T1.created.id}", left_at: null}, expect: 2}
+        - {kind: object-count, type: im_group_member, where: {group_id: "${steps.T1.created.id}", user_id: "01900000-0000-7000-8000-000000000402", left_at: null}, expect: 0}
+        - {kind: audit-chain, expect: valid, min_entries: 3}
+
+  - name: "好友申请 → 接受 → 拉黑解除好友 → 取消拉黑后可重新申请"
+    kind: scenario
+    scenario:
+      id: im.friendship-block
+      authz: *authz
+      steps:
+        - id: T1
+          actor: im_admin
+          command: im.friend.request
+          payload: {to_user_id: "01900000-0000-7000-8000-000000000402"}
+          events: [im.friend.requested]
+        - id: T2
+          actor: im_member
+          command: im.friend.request.decide
+          payload: {friendship_id: "${steps.T1.created.id}", decision: accept}
+          events: [im.friend.accepted]
+        - id: T3
+          actor: im_admin
+          command: im.user.block
+          payload: {user_id: "01900000-0000-7000-8000-000000000402"}
+          events: [im.user.blocked]
+        - id: T4
+          actor: im_member
+          command: im.friend.request
+          payload: {to_user_id: "01900000-0000-7000-8000-000000000401"}
+          expect_status: rejected
+          expect_code: IM-409-007
+        - id: T5
+          actor: im_admin
+          command: im.user.unblock
+          payload: {user_id: "01900000-0000-7000-8000-000000000402"}
+          events: [im.user.unblocked]
+        - id: T6
+          actor: im_member
+          command: im.friend.request
+          payload: {to_user_id: "01900000-0000-7000-8000-000000000401"}
+          events: [im.friend.requested]
+      assert:
+        - {kind: object-field, type: im_friendship, id: "${steps.T1.created.id}", field: status, expect: pending}
+        - {kind: object-field, type: im_friendship, id: "${steps.T1.created.id}", field: from_user_id, expect: "01900000-0000-7000-8000-000000000402"}
+        - {kind: object-field, type: im_block, id: "${steps.T3.created.id}", field: revoked_by, expect: "01900000-0000-7000-8000-000000000401"}
+        - {kind: object-count, type: im_block, where: {revoked_at: null}, expect: 0}
+        - {kind: temporal-history, type: im_friendship, id: "${steps.T1.created.id}", expect_versions: 4}
+        - {kind: audit-chain, expect: valid, min_entries: 4}
+
+  - name: "已读位点单调 + 会话设置乐观锁"
+    kind: scenario
+    scenario:
+      id: im.read-and-settings
+      authz: *authz
+      steps:
+        - id: T1
+          actor: im_admin
+          command: im.read.position.report
+          payload: {chat_id: dm-settings-1, endpoint_id: dev-1, last_seq: 5}
+          events: [im.read.position.reported]
+        - id: T2
+          actor: im_admin
+          command: im.read.position.report
+          payload: {chat_id: dm-settings-1, endpoint_id: dev-1, last_seq: 3}
+          expect_status: rejected
+          expect_code: IM-409-004
+        - id: T3
+          actor: im_admin
+          command: im.read.position.report
+          payload: {chat_id: dm-settings-1, endpoint_id: dev-1, last_seq: 5}
+          events: [im.read.position.reported]
+        - id: T4
+          actor: im_admin
+          command: im.conversation.settings.update
+          payload: {chat_id: dm-settings-1, changes: {pinned: true}}
+          events: [im.conversation.settings-changed]
+        - id: T5
+          actor: im_admin
+          command: im.conversation.settings.update
+          payload: {chat_id: dm-settings-1, changes: {muted: true}, expected_version: 1}
+          events: [im.conversation.settings-changed]
+        - id: T6
+          actor: im_admin
+          command: im.conversation.settings.update
+          payload: {chat_id: dm-settings-1, changes: {hidden: true}, expected_version: 1}
+          expect_status: rejected
+          expect_code: IM-409-002
+      assert:
+        - {kind: object-field, type: im_read_position, id: "${steps.T1.created.id}", field: last_seq, expect: 5}
+        - {kind: object-field, type: im_read_position, id: "${steps.T1.created.id}", field: version, expect: 1}
+        - {kind: object-field, type: im_conversation, id: "${steps.T4.created.id}", field: pinned, expect: true}
+        - {kind: object-field, type: im_conversation, id: "${steps.T4.created.id}", field: muted, expect: true}
+        - {kind: object-field, type: im_conversation, id: "${steps.T4.created.id}", field: hidden, expect: false}
+        - {kind: object-field, type: im_conversation, id: "${steps.T4.created.id}", field: version, expect: 2}
+
+  - name: "直聊（无群对象）按会话维度分配 server_seq"
+    kind: scenario
+    scenario:
+      id: im.direct-chat
+      authz: *authz
+      steps:
+        - id: T1
+          actor: im_admin
+          command: im.message.send
+          payload: {chat_id: dm-direct-1, client_msg_id: d-1, payload_type: 0, content: {text: "ping"}}
+        - id: T2
+          actor: im_member
+          command: im.message.send
+          payload: {chat_id: dm-direct-1, client_msg_id: d-2, payload_type: 0, content: {text: "pong"}}
+      assert:
+        - {kind: object-field, type: im_message, id: "${steps.T1.created.id}", field: server_seq, expect: 1}
+        - {kind: object-field, type: im_message, id: "${steps.T2.created.id}", field: server_seq, expect: 2}
+        - {kind: object-count, type: im_message, where: {chat_id: dm-direct-1}, expect: 2}
+
+  - name: "授权：只读主体发送消息 → NO_PERMISSION"
+    kind: scenario
+    scenario:
+      id: im.authz-denied
+      authz: *authz
+      steps:
+        - id: T1
+          actor: im_viewer
+          command: im.message.send
+          payload: {chat_id: dm-denied, client_msg_id: x-1, payload_type: 0, content: {text: "nope"}}
+          expect_status: rejected
+          expect_code: NO_PERMISSION
+      assert:
+        - {kind: object-count, type: im_message, expect: 0}
+        - {kind: audit-chain, expect: valid}
+
+  - name: "迁移提供消息/成员/好友/黑名单/已读位点当前行唯一索引"
+    kind: static
+    target: extensions/im/migrations/V401__im_initial.sql
+    check: present
+    pattern: "uq_im_(message_client_msg|message_server_seq|group_member_pair|friendship_pair|block_pair|read_position_endpoint)_current"
+    min_matches: 6
+
+  - name: "消息规则覆盖 IM-MSG-001..009 且声明 Transient 不入契约"
+    kind: static
+    target: extensions/im/rules/im-message.rules.yaml
+    check: present
+    pattern: 'id: "IM-MSG-00[1-9]"'
+    min_matches: 9
+
+  - name: "群组规则覆盖 IM-GRP-001..008"
+    kind: static
+    target: extensions/im/rules/im-group.rules.yaml
+    check: present
+    pattern: 'id: "IM-GRP-00[1-8]"'
+    min_matches: 8
+
+  - name: "关系规则覆盖 IM-REL-001..007"
+    kind: static
+    target: extensions/im/rules/im-relationship.rules.yaml
+    check: present
+    pattern: 'id: "IM-REL-00[1-7]"'
+    min_matches: 7

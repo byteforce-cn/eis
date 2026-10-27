@@ -51,3 +51,4 @@ EIS 的核心契约已冻结。任何修改（解冻请求）必须走以下流�
 | [0020](0020-late-fact-kernel-modeling.md) | 参考内核建模迟到事实（T-R011） | Accepted |
 | [0021](0021-scheduler-execution-semantics.md) | 定时任务 / 日终批处理执行语义（extensions/scheduler） | Accepted |
 | [0022](0022-reconciliation-extension.md) | 业务对账域扩展（独立 extensions/reconciliation） | Accepted |
+| [0023](0023-im-collaboration-extension.md) | IM 协作触达层扩展（extensions/im，issue #41 重写落地） | Accepted |

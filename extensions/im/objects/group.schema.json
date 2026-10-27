@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/im/object/group/v1",
+  "title": "ImGroup",
+  "description": "群组实体；id 同时作为该群的 chat_id（消息的 chat_id = im_group.id）。解散是一次写（追加版本 + 审计）。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["name", "owner_user_id", "status"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "avatar": {
+          "type": ["string", "null"]
+        },
+        "owner_user_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "群主；群主不可被移出，需先转让或解散"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "dissolved"],
+          "description": "active = 正常；dissolved = 已解散（历史消息保留）"
+        },
+        "dissolved_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "dissolved_by": {
+          "type": ["string", "null"],
+          "format": "uuid"
+        }
+      }
+    }
+  ]
+}

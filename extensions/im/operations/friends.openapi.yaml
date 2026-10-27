@@ -1,0 +1,161 @@
+# operations/friends.openapi.yaml — 好友关系命令（im v1.0.0，ADR-0023）
+openapi: 3.1.0
+info:
+  title: IM 协作触达层 — 好友
+  version: 1.0.0
+  description: |
+    命令：im.friend.request / im.friend.request.decide / im.friend.remove。
+    - 同一对用户至多一个当前好友关系；pending/accepted 重复申请 → IM-409-008
+    - 黑名单（任一方向）阻止好友申请 → IM-409-007
+    - 仅被申请人可接受/拒绝（IM-403-002）；已处理 → IM-409-009
+    - 删好友是状态写（status=removed，保留历史 + 审计）
+
+paths:
+  /commands/im.friend.request:
+    post:
+      operationId: imFriendRequest
+      summary: 发起好友申请
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FriendRequestCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: IM-400-002 不能向自己申请 / EIS-400-001 载荷非法
+        '409':
+          description: IM-409-007 黑名单 / IM-409-008 关系已存在 / EIS-409-001 幂等冲突
+
+  /commands/im.friend.request.decide:
+    post:
+      operationId: imFriendRequestDecide
+      summary: 接受/拒绝好友申请
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecideCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '403':
+          description: IM-403-002 仅被申请人可处理
+        '404':
+          description: IM-404-001 申请不存在
+        '409':
+          description: IM-409-009 申请已处理 / EIS-409-001 幂等冲突
+
+  /commands/im.friend.remove:
+    post:
+      operationId: imFriendRemove
+      summary: 删除好友
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveFriendCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '404':
+          description: IM-404-001 好友关系不存在
+        '409':
+          description: EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    FriendRequestCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.friend.request
+        payload:
+          type: object
+          required: [to_user_id]
+          properties:
+            to_user_id:
+              type: string
+              format: uuid
+        idempotency_key:
+          type: string
+
+    DecideCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.friend.request.decide
+        payload:
+          type: object
+          required: [friendship_id, decision]
+          properties:
+            friendship_id:
+              type: string
+              format: uuid
+            decision:
+              type: string
+              enum: [accept, reject]
+        idempotency_key:
+          type: string
+
+    RemoveFriendCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.friend.remove
+        payload:
+          type: object
+          required: [peer_user_id]
+          properties:
+            peer_user_id:
+              type: string
+              format: uuid
+        idempotency_key:
+          type: string
+
+    Accepted:
+      type: object
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: accepted
+        event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        locator:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1

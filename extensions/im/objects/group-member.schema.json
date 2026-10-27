@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/im/object/group-member/v1",
+  "title": "ImGroupMember",
+  "description": "群成员关系。left_at 非空即墓碑；移出群追加版本并写审计；重新入群复用同一对象（清空 left_at）。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["group_id", "user_id", "role", "joined_at"],
+      "properties": {
+        "group_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "群组 ID（= 群的 chat_id）"
+        },
+        "user_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["owner", "admin", "member"],
+          "description": "群主 / 管理员 / 成员"
+        },
+        "mute_until": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "禁言截止（UTC）；null = 未禁言"
+        },
+        "joined_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "入群时间（重新入群时刷新）"
+        },
+        "left_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "离群时间；非空即墓碑"
+        }
+      }
+    }
+  ]
+}

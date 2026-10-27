@@ -1,0 +1,188 @@
+# operations/group-members.openapi.yaml — 群成员命令（im v1.0.0，ADR-0023）
+openapi: 3.1.0
+info:
+  title: IM 协作触达层 — 群成员
+  version: 1.0.0
+  description: |
+    命令：im.group.member.add / im.group.member.remove / im.group.member.role.update。
+    - 加成员/移出群要求操作者为群主或管理员；改角色/禁言仅群主
+    - 移出群是墓碑（left_at 非空，追加版本 + 审计）；重新入群复用同一对象
+    - 群主不可被移出（IM-409-006），需先转让或解散
+
+paths:
+  /commands/im.group.member.add:
+    post:
+      operationId: imGroupMemberAdd
+      summary: 加群成员
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddMembersCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '403':
+          description: IM-403-001 非群主/管理员
+        '404':
+          description: IM-404-001 群不存在
+        '409':
+          description: IM-409-003 群已解散 / EIS-409-001 幂等冲突
+
+  /commands/im.group.member.remove:
+    post:
+      operationId: imGroupMemberRemove
+      summary: 移出群/退群
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveMemberCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '403':
+          description: IM-403-001 无操作权限
+        '404':
+          description: IM-404-001 群/成员不存在
+        '409':
+          description: IM-409-003 群已解散 / IM-409-006 群主不可移出 / EIS-409-001 幂等冲突
+
+  /commands/im.group.member.role.update:
+    post:
+      operationId: imGroupMemberRoleUpdate
+      summary: 改群成员角色/禁言
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMemberRoleCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '403':
+          description: IM-403-001 非群主
+        '404':
+          description: IM-404-001 群/成员不存在
+        '409':
+          description: IM-409-003 群已解散 / IM-409-006 群主角色不可改 / EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    AddMembersCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.group.member.add
+        payload:
+          type: object
+          required: [group_id, user_ids]
+          properties:
+            group_id:
+              type: string
+              format: uuid
+            user_ids:
+              type: array
+              minItems: 1
+              items:
+                type: string
+                format: uuid
+            role:
+              type: string
+              enum: [admin, member]
+        idempotency_key:
+          type: string
+
+    RemoveMemberCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.group.member.remove
+        payload:
+          type: object
+          required: [group_id, user_id]
+          properties:
+            group_id:
+              type: string
+              format: uuid
+            user_id:
+              type: string
+              format: uuid
+            reason:
+              type: string
+              nullable: true
+        idempotency_key:
+          type: string
+
+    UpdateMemberRoleCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.group.member.role.update
+        payload:
+          type: object
+          required: [group_id, user_id, role]
+          properties:
+            group_id:
+              type: string
+              format: uuid
+            user_id:
+              type: string
+              format: uuid
+            role:
+              type: string
+              enum: [admin, member]
+            mute_until:
+              type: string
+              format: date-time
+              nullable: true
+        idempotency_key:
+          type: string
+
+    Accepted:
+      type: object
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: accepted
+        event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        locator:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1

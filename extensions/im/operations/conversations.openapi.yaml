@@ -1,0 +1,132 @@
+# operations/conversations.openapi.yaml — 会话设置与已读位点（im v1.0.0，ADR-0023）
+openapi: 3.1.0
+info:
+  title: IM 协作触达层 — 会话
+  version: 1.0.0
+  description: |
+    命令：im.conversation.settings.update / im.read.position.report。
+    - 会话设置按 (chat_id, user_id) 唯一；expected_version 乐观锁，冲突 → IM-409-002
+    - 已读位点按 (chat_id, user_id, endpoint_id) 唯一；last_seq 单调推进，回退 → IM-409-004
+    - 会话设置与已读位点均写审计事件（高频位点可由子系统另走非契约路径）
+
+paths:
+  /commands/im.conversation.settings.update:
+    post:
+      operationId: imConversationSettingsUpdate
+      summary: 更新会话设置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '409':
+          description: IM-409-002 版本冲突 / EIS-409-001 幂等冲突
+
+  /commands/im.read.position.report:
+    post:
+      operationId: imReadPositionReport
+      summary: 上报已读位点
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReadReportCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '409':
+          description: IM-409-004 位点回退 / EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    SettingsCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.conversation.settings.update
+        payload:
+          type: object
+          required: [chat_id, changes]
+          properties:
+            chat_id:
+              type: string
+              minLength: 1
+            changes:
+              type: object
+              minProperties: 1
+              additionalProperties: false
+              properties:
+                pinned:
+                  type: boolean
+                muted:
+                  type: boolean
+                hidden:
+                  type: boolean
+            expected_version:
+              type: integer
+              minimum: 1
+        idempotency_key:
+          type: string
+
+    ReadReportCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.read.position.report
+        payload:
+          type: object
+          required: [chat_id, endpoint_id, last_seq]
+          properties:
+            chat_id:
+              type: string
+              minLength: 1
+            endpoint_id:
+              type: string
+              minLength: 1
+            last_seq:
+              type: integer
+              minimum: 0
+        idempotency_key:
+          type: string
+
+    Accepted:
+      type: object
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: accepted
+        event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        locator:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
