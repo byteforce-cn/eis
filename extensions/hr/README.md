@@ -1,4 +1,4 @@
-# extensions/hr — 人力资源域扩展（v1.1.0）
+# extensions/hr — 人力资源域扩展（v1.2.0）
 
 人事事实的唯一来源：向身份域供给登录用户（建号/启用/禁用），向授权判定与审批提供
 组织/岗位/职级/汇报链上下文。双时间轴对象，独立版本化，只依赖核心 `core_version: 1.0.0`。
@@ -28,6 +28,17 @@ pending_onboarding ────────────────► cancelled
 ```
 
 四态与材料齐全度/审批节点解耦：证明材料与单据流转属审批域（`extensions/approval`），不进员工状态。
+
+### 2.1 调用方约束（v1.2.0，ADR-0013）
+
+`hr.employee.activate` / `hr.employee.cancel` 声明 `callers: ["system"]`：**只有审批服务身份
+（system principal）可调**，用户会话即使持有命令权限也会被拒（`EIS-403-002`）。这是 AUD-01
+（SPA 直调 activate 绕过审批）的契约化堵口：UI 隐藏与角色绑定不构成服务端约束。
+
+- 内核位置：`/check` 放行后、处理器之前做主体类型预检（fail-closed）；
+- 投影：`operations/employee-{activate,cancel}.openapi.yaml` 的 `x-eis-callers: [system]`，由
+  `contract-checker` 与 manifest 双向校验；
+- **未覆盖**："必须存在已通过的入职审批单"属跨扩展前置（hr → approval），需扩展跨引用机制，另立 ADR（#30 步骤 2）。
 
 ## 3. 命令
 
@@ -87,7 +98,8 @@ python3 tools/e2e-runner extensions/hr/tests/hr.test.yaml
 
 用例覆盖：全链路上岗、工号生成、组织/岗位唯一与无环、主岗唯一、在职必有主岗、
 证件防重与返聘、敏感字段脱敏与幂等、结束主岗级联终态、供给任务状态匹配、
-雇佣类型/工作地点写入/更新/读投影回读与非法值拒绝、v1.0→v1.1 加法兼容性与迁移生成。
+雇佣类型/工作地点写入/更新/读投影回读与非法值拒绝、v1.0→v1.1 加法兼容性与迁移生成、
+v1.2 调用方约束（用户主体持有权限仍拒 `EIS-403-002` / 审批服务主体允许）。
 
 处理器实现见 `handlers.py`（通过内核注册机制加载，无需修改内核源码，见 `extensions/README.md` §6）。
 

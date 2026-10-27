@@ -67,7 +67,7 @@ composition:
 | `iam` | 1.0.0 | 身份与访问管理：账户/凭证/角色/绑定/会话；SoD 预检、root 保护 | 完整（含可执行用例） |
 | `inventory` | 1.0.0 | 物品/出入库/库存余额；收货；库存非负 | 完整（含可执行用例） |
 | `approval` | 1.1.0 | 审批申请/决定/区块；提交与决定、区块流转（顺序语义）、打回重确认、撤回；禁止自审 | 完整（含可执行用例） |
-| `hr` | 1.1.0 | 组织/岗位/员工（含雇佣类型/工作地点）/任职/供给任务；双时间轴；证件散列防重 | 完整（含可执行用例与 V201/V202 迁移） |
+| `hr` | 1.2.0 | 组织/岗位/员工（含雇佣类型/工作地点）/任职/供给任务；双时间轴；证件散列防重；`activate`/`cancel` 仅限系统主体（ADR-0013） | 完整（含可执行用例与 V201/V202 迁移） |
 
 ## 6. 命令处理器注册（可执行用例）
 
@@ -125,6 +125,7 @@ def handle_action(api, payload, actor, command_id):
 | `description` | 权限语义（中文一句话） |
 | `scope` | 可选：行级范围语义标识（如 `same_department`），以属性快照 ABAC 条件求值（ADR-0004） |
 | `scope_description` | 可选：`scope` 的语义说明（人读） |
+| `callers` | 可选：允许的调用方**主体类型**（数组，取值 `person` / `system`）；缺省不限制（ADR-0013） |
 
 纪律：
 
@@ -134,4 +135,6 @@ def handle_action(api, payload, actor, command_id):
   `approval.section.confirmx` 均不匹配 `approval.section.confirm.*`）；
 - 读取面接入 `/check`（fail-closed）；命令面沿用内核命令级预检；
 - `kind: service` 的权限不得授予用户会话或经 BFF/SPA 暴露；
+- 声明 `callers` 的命令：参考内核在 `/check` 放行后、处理器之前做主体类型预检，越权以 `EIS-403-002` 拒绝；**fail-closed**（主体不存在/类型缺失同样拒绝）；
+- `callers` 的权威**只在 manifest**；operations 契约用 `x-eis-callers: [system]` 做同值投影供 API 消费方阅读，`contract-checker` 双向校验（缺投影 / 缺声明 / 值不一致 / 非法枚举均失败）；
 - 核心通用查询 API 由部署边界保护，不要求域级权限（ADR-0006）。

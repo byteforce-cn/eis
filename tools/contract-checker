@@ -339,6 +339,9 @@ def check_error_codes(report: Report) -> None:
 
 
 PERMISSION_KINDS = {"command", "read", "service"}
+# 允许的主体类型（ADR-0013）：person = 用户会话；system = 服务身份
+CALLER_TYPES = {"person", "system"}
+CALLER_EXTENSION = "x-eis-callers"
 # 动态属主权限允许且仅允许尾部 .*（如 approval.section.confirm.*）
 PERMISSION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+(\.\*)?$")
 
@@ -396,6 +399,16 @@ def check_manifest_permissions(path: Path, ext_id: str, ext: dict) -> list[str]:
             problems.append(f"权限 {pid} 的 kind 非法（command/read/service）: {entry.get('kind')!r}")
         if not entry.get("description"):
             problems.append(f"权限 {pid} 缺少 description")
+        callers = entry.get("callers")
+        if callers is not None:
+            if not isinstance(callers, list) or not callers:
+                problems.append(f"权限 {pid} 的 callers 必须为非空数组")
+            else:
+                unknown = sorted({c for c in callers if c not in CALLER_TYPES})
+                if unknown:
+                    problems.append(f"权限 {pid} 的 callers 含非法主体类型（person/system）: {unknown}")
+                if len(set(callers)) != len(callers):
+                    problems.append(f"权限 {pid} 的 callers 有重复项")
     used: set[str] = set()
     tests_dir = path.parent / "tests"
     if tests_dir.is_dir():
@@ -405,6 +418,54 @@ def check_manifest_permissions(path: Path, ext_id: str, ext: dict) -> list[str]:
     if undeclared:
         problems.append(f"测试引用了未声明的权限: {undeclared}")
     return problems
+
+
+def operation_command_types(doc: dict) -> dict[str, dict]:
+    """扩展 operations 契约：{命令类型: operation 对象}（仅 /commands/<type> POST）。"""
+    out: dict[str, dict] = {}
+    for path, item in (doc.get("paths") or {}).items():
+        match = re.fullmatch(r"/commands/([a-z][a-z0-9_.]*)", path)
+        if not match:
+            continue
+        op = item.get("post") if isinstance(item, dict) else None
+        if isinstance(op, dict):
+            out[match.group(1)] = op
+    return out
+
+
+def check_operation_callers(report: Report, manifests: dict, root: Path = ROOT) -> None:
+    """校验 x-eis-callers 投影与 manifest.callers 双向一致（ADR-0013）。
+
+    权威在 manifest（内核只读它）；operations 契约的投影只供 API 消费方阅读，
+    因此两者必须同值：缺投影 / 缺声明 / 值不一致 / 非法枚举均失败。
+    """
+    for path in sorted((root / "extensions").glob("*/operations/*.openapi.yaml")):
+        ext = manifests.get(path.parent.parent.name) or {}
+        perms = {p.get("id"): p for p in ext.get("permissions", []) if isinstance(p, dict)}
+        problems: list[str] = []
+        for cmd_type, op in operation_command_types(load_yaml(path)).items():
+            declared = perms.get(cmd_type, {})
+            manifest_callers = declared.get("callers")
+            projected = op.get(CALLER_EXTENSION)
+            if projected is not None:
+                if not isinstance(projected, list) or not projected:
+                    problems.append(f"{cmd_type}: {CALLER_EXTENSION} 必须为非空数组")
+                else:
+                    unknown = sorted({c for c in projected if c not in CALLER_TYPES})
+                    if unknown:
+                        problems.append(f"{cmd_type}: {CALLER_EXTENSION} 含非法主体类型: {unknown}")
+            if manifest_callers is not None and projected is None:
+                problems.append(f"{cmd_type}: manifest 声明了 callers 但契约缺 {CALLER_EXTENSION}")
+            elif projected is not None and manifest_callers is None:
+                problems.append(f"{cmd_type}: 契约声明了 {CALLER_EXTENSION} 但 manifest 未声明 callers")
+            elif (manifest_callers is not None and projected is not None
+                  and sorted(manifest_callers) != sorted(projected)):
+                problems.append(
+                    f"{cmd_type}: callers({manifest_callers}) 与 {CALLER_EXTENSION}({projected}) 不一致")
+        if problems:
+            report.fail(f"{rel(path)}: 调用方约束检查", "\n".join(problems))
+        else:
+            report.ok(f"{rel(path)}: 调用方约束检查")
 
 
 def check_manifests(report: Report, root: Path = ROOT) -> dict:
@@ -656,6 +717,54 @@ def cmd_self_test(args) -> int:
                 report.ok(f"自测：通配不得匹配 {bad_ref}")
             else:
                 report.fail(f"自测：通配错误匹配 {bad_ref}", detail)
+
+    # 命令调用方约束（ADR-0013）：投影与 manifest 双向一致；非法枚举必须被拒
+    with _tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        ext_dir = root / "extensions" / "demo"
+        (ext_dir / "operations").mkdir(parents=True)
+
+        def write_caller_case(manifest_callers, op_callers) -> None:
+            permission = {"id": "demo.run", "kind": "command", "description": "执行"}
+            if manifest_callers is not None:
+                permission["callers"] = manifest_callers
+            (ext_dir / "manifest.yaml").write_text(
+                _yaml.safe_dump({"extension": {
+                    "id": "demo", "version": "1.0.0", "core_version": "1.0.0",
+                    "operations": [{"name": "demoRun", "contract": "operations/run.openapi.yaml"}],
+                    "permissions": [permission],
+                }}, allow_unicode=True, sort_keys=False), encoding="utf-8")
+            op = {"operationId": "demoRun", "responses": {"202": {"description": "ok"}}}
+            if op_callers is not None:
+                op[CALLER_EXTENSION] = op_callers
+            (ext_dir / "operations" / "run.openapi.yaml").write_text(
+                _yaml.safe_dump({
+                    "openapi": "3.1.0", "info": {"title": "t", "version": "1.0.0"},
+                    "paths": {"/commands/demo.run": {"post": op}},
+                }, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+        def caller_report() -> Report:
+            r = Report("tmp")
+            manifests = check_manifests(r, root=root)
+            check_operation_callers(r, manifests, root=root)
+            return r
+
+        write_caller_case(["system"], ["system"])
+        if caller_report().success:
+            report.ok("自测：调用方约束声明与投影一致时通过")
+        else:
+            report.fail("自测：调用方约束一致时误报")
+        for manifest_callers, op_callers, label in (
+            (None, ["system"], "投影缺声明"),
+            (["system"], None, "声明缺投影"),
+            (["system"], ["person"], "声明与投影不一致"),
+            (["service"], ["service"], "非法主体类型"),
+        ):
+            write_caller_case(manifest_callers, op_callers)
+            if caller_report().success:
+                report.fail(f"自测：调用方约束漂移未被检出（{label}）")
+            else:
+                report.ok(f"自测：调用方约束漂移被检出（{label}）")
     report.print()
     return 0 if report.success else 1
 
@@ -698,6 +807,7 @@ def main(argv=None) -> int:
     check_asyncapi(report)
     check_error_codes(report)
     manifests = check_manifests(report)
+    check_operation_callers(report, manifests)
     check_compositions(report, manifests)
     if args.json:
         print(json.dumps(report.to_json(), ensure_ascii=False, indent=2))
