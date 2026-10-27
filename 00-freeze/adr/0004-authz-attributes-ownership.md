@@ -1,5 +1,10 @@
 # ADR-0004：授权属性的属主与来源（拉取为准，推送为可选物化）
 
+> **后续演进（ADR-0015）**：本文提到的「调用方传条件」（`/check --require-attribute` /
+> `require_attributes`）已被 ADR-0015 取代——条件改为声明侧 `manifest.permissions[].condition`，
+> `/check` 不再接受调用方传入的条件。本文其余内容（属性属主、拉取为准、快照三态）不变。
+
+
 - **状态**：Accepted
 - **日期**：2026-10-11
 - **决策者**：核心维护者（EIS Spec 维护方）

@@ -143,5 +143,5 @@ rule:
 - `python3 tools/contract-checker --self-test`：30 条全过（新增 7 条跨扩展断言）；
 - `python3 tools/contract-checker`：全过（hr 依赖/规则引用完整）；
 - `python3 tools/e2e-runner extensions/hr/tests/hr.test.yaml`：29/29（含无审批单拒绝）；
-- `python3 tools/e2e-runner --all`：全绿（用例计数不变：154/154）；
+- `python3 tools/e2e-runner --all`：全绿（本 ADR 落地时 154/154；后续 ADR-0020 增加 1 条用例）。
 - 反例：删除依赖声明、引用未声明对象、`applies_to` 错配、版本漂移、占用 `EIS-` 错误码、`where` 非标量、依赖环——均被 `contract-checker` 检出。

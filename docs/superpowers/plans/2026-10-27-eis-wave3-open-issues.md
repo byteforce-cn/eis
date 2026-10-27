@@ -63,8 +63,8 @@
 
 ## Task 7：RFC #41 IM 扩展
 
-- [ ] 回帖评审结论（收窄为「持久化业务状态的协作触达层」；Transient 机制不入契约）；
-      接受则按扩展 PR 交付，不接受则记录理由并关闭
+- [x] 回帖评审结论（收窄为「持久化业务状态的协作触达层」；Transient 机制不入契约；草案需按 EIS 元结构重写）
+- [ ] `extensions/im/` 实现 PR（manifest + objects + operations + handlers + rules + 用例 + ADR）
 
 ## Task 8：#45 T-R011 迟到事实（P2）
 
