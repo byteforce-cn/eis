@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 边界说明（informative，ADR-0012 §4.2）：`docs/ORCHESTRATION-BOUNDARY.md`（#35：步骤走命令、补偿=反向命令、部分完成可读）、`docs/INTEGRATION-BOUNDARY.md`（#38：集成方式由部署方选型、`external_refs` 约定、属主域命令裁决冲突）、`docs/OPERATIONS.md`（#39：备份分层、恢复后校验、RPO/RTO 模板；不新增 L5）；
 - 可靠投递扩展 `extensions/outbox/`（ADR-0018 / issue #31、#34）：Outbox + Inbox 契约
   （`outbox.ddl`、OBX-001..012、`manifest.kind: runtime`）；`tools/relay` 提供状态机参考
   （分片内顺序屏障、确认后置、租约回收、指数退避/死信、Inbox 幂等）与 PostgreSQL 语句模板

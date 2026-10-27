@@ -57,9 +57,9 @@
 
 ## Task 6：informative 文档（P2）
 
-- [ ] `docs/ORCHESTRATION-BOUNDARY.md`（#35）：步骤走命令、补偿=反向命令、`locator` 贯通审计
-- [ ] `docs/INTEGRATION-BOUNDARY.md`（#38）：EIS 不定义集成方式；`external_refs` 约定；冲突由属主域命令裁决
-- [ ] `docs/OPERATIONS.md`（#39）：备份范围/恢复后校验/RPO-RTO 模板；首页标明不构成合规等级
+- [x] `docs/ORCHESTRATION-BOUNDARY.md`（#35）：步骤走命令、补偿=反向命令、`locator` 贯通审计
+- [x] `docs/INTEGRATION-BOUNDARY.md`（#38）：EIS 不定义集成方式；`external_refs` 约定；冲突由属主域命令裁决
+- [x] `docs/OPERATIONS.md`（#39）：备份范围/恢复后校验/RPO-RTO 模板；首页标明不构成合规等级
 
 ## Task 7：RFC #41 IM 扩展
 
