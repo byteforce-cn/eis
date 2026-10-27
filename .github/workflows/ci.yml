@@ -61,6 +61,10 @@ jobs:
             echo "== $f"
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
+      - name: 执行 Outbox/Inbox 投递契约 DDL
+        run: psql -v ON_ERROR_STOP=1 -f extensions/outbox/outbox.ddl
+      - name: Outbox/Inbox 冒烟断言（唯一约束/状态机/租约/Inbox）
+        run: psql -v ON_ERROR_STOP=1 -f tools/ci/outbox-smoke.sql
       - name: 执行查询模板（展开示例依赖扩展表）
         run: psql -v ON_ERROR_STOP=1 -f 03-time-contract/query-templates.sql
       - name: 冒烟断言（时点 / 半开区间 / append-only / 扩展函数）

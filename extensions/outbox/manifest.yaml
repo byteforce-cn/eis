@@ -1,0 +1,18 @@
+# manifest.yaml — 可靠投递扩展（Outbox/Inbox，跨域运行时；ADR-0012 §4.2 / ADR-0018）
+extension:
+  id: "outbox"
+  kind: "runtime"   # runtime：跨域运行时扩展，无业务对象（ADR-0018）
+  name: "可靠投递扩展（Outbox/Inbox）"
+  version: "1.0.0"
+  core_version: "1.0.0"
+
+  dependencies: []
+  conflicts: []
+
+  # 运行时能力扩展：不定义业务对象/命令/读取面，只提供投递表与规则。
+  objects: []
+  operations: []
+  rules:
+    - name: "delivery"
+      file: "rules/delivery.rules.yaml"
+  permissions: []

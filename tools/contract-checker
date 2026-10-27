@@ -492,6 +492,9 @@ def check_manifests(report: Report, root: Path = ROOT) -> dict:
             problems.append(f"extension.version 非语义化版本: {ext.get('version')}")
         if not ext.get("core_version"):
             problems.append("缺少 extension.core_version")
+        kind = ext.get("kind", "domain")
+        if kind not in ("domain", "runtime"):
+            problems.append(f"extension.kind 非法（domain/runtime）: {kind!r}")
         for section in ("objects", "operations", "rules"):
             for entry in ext.get(section, []):
                 ref_file = entry.get("schema") or entry.get("contract") or entry.get("file")

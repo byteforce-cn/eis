@@ -37,11 +37,11 @@
 
 ## Task 3：#31 Outbox/Relay 投递契约（P1，扩展层）
 
-- [ ] `extensions/outbox/`：`manifest.yaml`、`outbox.ddl`（状态机 + 租约 + `(aggregate_id, seq)` 唯一 + 分片索引）、
+- [x] `extensions/outbox/`：`manifest.yaml`、`outbox.ddl`（状态机 + 租约 + `(aggregate_id, seq)` 唯一 + 分片索引）、
       `rules/delivery.rules.yaml`（原子捕获/分片内串行/确认后置/租约回收/死信/清理）、`README.md`
-- [ ] Inbox 最小语义并入（#34 已裁决）：`(consumer_group, event_id)` 唯一 + `processing/done/dead`
-- [ ] `tools/relay`：`SKIP LOCKED` + 退避 + 毒消息；`--self-test`（确定性存储）
-- [ ] 用例：`kind: static` + `kind: migrate`；DDL 由 CI PostgreSQL 任务冒烟
+- [x] Inbox 最小语义并入（#34 已裁决）：`(consumer_group, event_id)` 唯一 + `processing/done/dead`
+- [x] `tools/relay`：`SKIP LOCKED` + 退避 + 毒消息；`--self-test`（确定性存储）
+- [x] 用例：`kind: static` + `kind: cli`；DDL 由 CI PostgreSQL 任务冒烟
 
 ## Task 4：#40② 参考内核执行扩展对象 Schema（P1）
 

@@ -1,0 +1,65 @@
+# Outbox/Inbox 投递契约验证用例（ADR-0018）
+# 运行：tools/e2e-runner extensions/outbox/tests/outbox.test.yaml
+suite: outbox
+tests:
+  - name: "Outbox DDL：聚合计顺序身份（(aggregate_id, seq) 唯一 + event_id 唯一）"
+    kind: static
+    target: extensions/outbox/outbox.ddl
+    check: present
+    pattern: "UNIQUE \\(aggregate_id, seq\\)"
+
+  - name: "Outbox DDL：事件只入 Outbox 一次（event_id 唯一）"
+    kind: static
+    target: extensions/outbox/outbox.ddl
+    check: present
+    pattern: "UNIQUE \\(event_id\\)"
+
+  - name: "Outbox DDL：状态机 pending/processing/sent/dead"
+    kind: static
+    target: extensions/outbox/outbox.ddl
+    check: present
+    pattern: "'pending', 'processing', 'sent', 'dead'"
+
+  - name: "Outbox DDL：processing 必须持有租约（lease_owner + lease_expires_at）"
+    kind: static
+    target: extensions/outbox/outbox.ddl
+    check: present
+    pattern: "ck_outbox_processing_lease"
+
+  - name: "Inbox DDL：消费幂等唯一键 (consumer_group, event_id)"
+    kind: static
+    target: extensions/outbox/outbox.ddl
+    check: present
+    pattern: "PRIMARY KEY \\(consumer_group, event_id\\)"
+
+  - name: "投递规则覆盖 OBX-001..012"
+    kind: static
+    target: extensions/outbox/rules/delivery.rules.yaml
+    check: present
+    pattern: 'id: "OBX-0(0[1-9]|1[0-2])"'
+    min_matches: 12
+
+  - name: "规则明确 outbox 不是事件历史（禁止回放）"
+    kind: static
+    target: extensions/outbox/rules/delivery.rules.yaml
+    check: present
+    pattern: "不是事件历史"
+
+  - name: "relay 状态机自测（顺序屏障/确认后置/租约/死信/Inbox）"
+    kind: cli
+    args: [tools/relay, --self-test]
+    expect_exit: 0
+    stdout_contains: ["relay 自测通过"]
+
+  - name: "relay PostgreSQL 模板使用 FOR UPDATE SKIP LOCKED"
+    kind: cli
+    args: [tools/relay, --print-sql]
+    expect_exit: 0
+    stdout_contains: ["FOR UPDATE SKIP LOCKED", "inbox_message"]
+
+  - name: "README 要求生产段/消费段分段监控"
+    kind: static
+    target: extensions/outbox/README.md
+    check: present
+    pattern: "outbox lag|consumer_group_lag|消费段滞后"
+    min_matches: 2
