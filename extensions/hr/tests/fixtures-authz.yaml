@@ -1,5 +1,5 @@
 # 授权夹具（hr 读取面，ADR-0006）：读取权限目录的可执行判据。
-# - hr-admin：人事管理员（person，有 hr.employee.read；带属性快照演示 same_department 条件）；
+# - hr-admin：人事管理员（person，有 hr.employee.read；带属性快照，供声明侧条件求值）；
 # - hr-employee：普通员工（person，无读取权限）→ 必须拒绝；
 # - hr-service：系统主体（system，有 hr.attributes.read）→ 属性快照仅服务间可拉取。
 fixtures:

@@ -1,6 +1,7 @@
 # 授权属性夹具（04-authz-contract，v1.0.0 加法演进）
 # 依据：attribute.rules.yaml（ATR-002/004/006）、attributes.api.yaml
-# 供 authz-resolver attributes / check --require-attribute 与 kind: authz 使用。
+# 供 authz-resolver attributes / check 与 kind: authz 使用；
+# 授权条件（ADR-0015）由声明文件提供（conditions.yaml），调用方不得自行传入条件。
 fixtures:
   principals:
     - id: "01900000-0000-7000-8000-000000000201"
@@ -13,12 +14,27 @@ fixtures:
       key: "outage"
       valid_from: "2026-01-01T00:00:00Z"
       recorded_at: "2026-01-01T00:00:00Z"
+    - id: "01900000-0000-7000-8000-000000000203"
+      type: "person"
+      key: "requester"
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
 
   roles:
     - id: "01900000-0000-7000-8000-0000000002a1"
       key: "approver"
       name: "审批人"
-      permissions: ["purchase.request.approve"]
+      permissions:
+        - "purchase.request.approve"
+        - "purchase.request.approve.senior"
+        - "purchase.request.approve.lead"
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+
+    - id: "01900000-0000-7000-8000-0000000002a2"
+      key: "requester"
+      name: "申请人"
+      permissions: ["purchase.request.create"]
       valid_from: "2026-01-01T00:00:00Z"
       recorded_at: "2026-01-01T00:00:00Z"
 
@@ -32,6 +48,12 @@ fixtures:
     - id: "01900000-0000-7000-8000-0000000002b2"
       principal: "01900000-0000-7000-8000-000000000202"
       role: "01900000-0000-7000-8000-0000000002a1"
+      scope: {}
+      valid_from: "2026-01-01T00:00:00Z"
+      recorded_at: "2026-01-01T00:00:00Z"
+    - id: "01900000-0000-7000-8000-0000000002b3"
+      principal: "01900000-0000-7000-8000-000000000203"
+      role: "01900000-0000-7000-8000-0000000002a2"
       scope: {}
       valid_from: "2026-01-01T00:00:00Z"
       recorded_at: "2026-01-01T00:00:00Z"

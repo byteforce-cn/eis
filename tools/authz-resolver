@@ -27,6 +27,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from eis_common import ROOT, load_yaml  # noqa: E402
+from eis_conditions import (  # noqa: E402
+    REASON_MISMATCH,
+    REASON_MISSING,
+    evaluate_condition,
+    load_conditions_file,
+    load_declared_conditions,
+)
 
 SOD_RULES_PATH = ROOT / "04-authz-contract" / "sod.rules.yaml"
 
@@ -35,22 +42,6 @@ SCOPE_KEYS = {
     "same_organization": "organization",
     "same_warehouse": "warehouse",
 }
-
-_MISSING = object()
-
-
-def _attr_get(node, path: str):
-    """按点分路径读取快照嵌套值；缺失返回 _MISSING。"""
-    cursor = node
-    for part in path.split("."):
-        if isinstance(cursor, dict) and part in cursor:
-            cursor = cursor[part]
-        elif isinstance(cursor, list) and part.isdigit() and int(part) < len(cursor):
-            cursor = cursor[int(part)]
-        else:
-            return _MISSING
-    return cursor
-
 
 # ---------------------------------------------------------------------------
 # 时间
@@ -87,8 +78,11 @@ def in_range(entity: dict, as_of: datetime, recorded_as_of: datetime | None) -> 
 # 授权解析
 # ---------------------------------------------------------------------------
 class Authz:
-    def __init__(self, fixtures: dict, sod_rules: list[dict] | None = None):
+    def __init__(self, fixtures: dict, sod_rules: list[dict] | None = None,
+                 conditions: dict[str, dict] | None = None):
         fx = fixtures.get("fixtures", fixtures)
+        # 条件声明（ADR-0015）：权威在 extensions/*/manifest.yaml；只有声明方可用。
+        self.conditions = load_declared_conditions() if conditions is None else dict(conditions)
         self.principals = fx.get("principals", [])
         self.roles = fx.get("roles", [])
         self.bindings = fx.get("bindings", [])
@@ -231,46 +225,44 @@ class Authz:
             "snapshot": item.get("snapshot", {}),
         }
 
-    def _attribute_gate(self, principal_ref, as_of, recorded_as_of, require_attributes):
-        """属性条件门禁；返回 None 表示通过，否则返回拒绝结果（fail-closed）。"""
-        if not require_attributes:
+    def _condition_gate(self, permission, principal_ref, as_of, recorded_as_of=None):
+        """授权条件求值（ADR-0015）；返回 None 表示通过，否则返回拒绝结果（fail-closed）。"""
+        condition = self.conditions.get(permission)
+        if not condition:
             return None
         attrs = self.attributes(principal_ref, as_of, recorded_as_of)
         state = attrs["attribute_state"]
-        if state == "missing":
-            return {"allowed": False, "reason": f"属性缺失（fail-closed），无法求值: {sorted(require_attributes)}",
-                    "reason_code": "ATTRIBUTE_MISSING", "warnings": [], "attribute_state": state}
-        if state == "stale":
-            return {"allowed": False, "reason": "属性快照过期（fail-closed）",
-                    "reason_code": "ATTRIBUTE_STALE", "warnings": [], "attribute_state": state}
-        if state == "source_unavailable":
-            return {"allowed": False, "reason": "属性属主不可达（fail-closed）",
-                    "reason_code": "ATTRIBUTE_SOURCE_UNAVAILABLE", "warnings": [],
-                    "attribute_state": state}
-        for key, expected in require_attributes.items():
-            actual = _attr_get(attrs["snapshot"], key)
-            if actual != expected:
-                return {"allowed": False, "reason": f"属性条件不满足: {key}",
-                        "reason_code": "ATTRIBUTE_MISMATCH", "warnings": [],
-                        "attribute_state": state}
-        return None
+        if state != "fresh":
+            return {"allowed": False,
+                    "reason": f"属性快照 {state}（fail-closed），授权条件无法求值",
+                    "reason_code": attrs.get("reason_code") or REASON_MISSING,
+                    "warnings": [], "attribute_state": state}
+        ok, reason, path = evaluate_condition(condition, attrs.get("snapshot") or {})
+        if ok:
+            return None
+        if reason == REASON_MISSING:
+            detail = f"属性条件无法求值（路径缺失，fail-closed）: {path}"
+        else:
+            detail = f"授权条件不满足: {path}"
+        return {"allowed": False, "reason": detail, "reason_code": reason or REASON_MISMATCH,
+                "warnings": [], "attribute_state": state}
 
-    def check(self, principal_ref: str, permission: str, as_of, recorded_as_of=None,
-              require_attributes=None) -> dict:
+    def check(self, principal_ref: str, permission: str, as_of, recorded_as_of=None) -> dict:
         p = self.principal(principal_ref)
         as_of_dt = parse_ts(as_of)
         recorded_dt = parse_ts(recorded_as_of) if recorded_as_of else None
-        # 属性条件先于权限判定：缺失/过期/不匹配均 fail-closed（ATR-006/007）
-        gate = self._attribute_gate(p["id"], as_of, recorded_as_of, require_attributes)
-        if gate is not None:
-            return gate
         held = []
         for _b, role, scope, _src in self._grants(p["id"], as_of_dt, recorded_dt):
             for perm in role.get("permissions", []):
                 held.append((perm, scope))
+        # 先判权限是否持有：未持有不得因属性状态泄漏额外信息
         if not any(perm == permission for perm, _ in held):
             return {"allowed": False, "reason": f"主体在 {as_of} 无权限 {permission}",
                     "reason_code": "NO_PERMISSION", "warnings": []}
+        # 条件只收窄、不授予：声明侧求值，缺失/过期/不匹配均 fail-closed（ATR-006/007）
+        gate = self._condition_gate(permission, p["id"], as_of, recorded_as_of)
+        if gate is not None:
+            return gate
         # prevent 级 SoD：请求的权限与已持有权限同作用域冲突 → 拒绝
         for rule in self.sod_rules:
             if permission not in rule.get("conflicting_permissions", []):
@@ -286,8 +278,9 @@ class Authz:
                             "reason_code": rule["id"], "warnings": []}
         warnings = [w["rule"] for w in self._sod_conflicts(p["id"], as_of_dt, recorded_dt, mode="warn")]
         result = {"allowed": True, "reason": "允许", "reason_code": "ALLOWED", "warnings": warnings}
-        if require_attributes:
-            result["attribute_state"] = self.attributes(principal_ref, as_of, recorded_as_of)["attribute_state"]
+        if permission in self.conditions:
+            result["attribute_state"] = self.attributes(
+                principal_ref, as_of, recorded_as_of)["attribute_state"]
         return result
 
     def _conflicts_in_scope(self, permission, others, held, scope_key) -> bool:
@@ -364,11 +357,20 @@ def cmd_self_test(args) -> int:
                               "primary_position": {"position_id": "01900000-0000-7000-8000-0000000000d1",
                                                    "code": "P001", "title": "经理", "grade": "M2",
                                                    "org_unit_id": "01900000-0000-7000-8000-0000000000e1",
-                                                   "org_unit_code": "D001", "is_primary": True}}},
+                                                   "org_unit_code": "D001", "is_primary": True},
+                              "positions": [
+                                  {"position_id": "01900000-0000-7000-8000-0000000000d1",
+                                   "code": "P001", "title": "经理", "grade": "M2",
+                                   "org_unit_id": "01900000-0000-7000-8000-0000000000e1",
+                                   "org_unit_code": "D001", "is_primary": True},
+                                  {"position_id": "01900000-0000-7000-8000-0000000000d2",
+                                   "code": "P003", "title": "架构师", "grade": "P6",
+                                   "org_unit_id": "01900000-0000-7000-8000-0000000000e1",
+                                   "org_unit_code": "D001", "is_primary": False}]}},
             ],
         }
     }
-    a = Authz(fixtures)
+    a = Authz(fixtures, conditions={})
     report = []
 
     def expect(name, cond):
@@ -402,19 +404,36 @@ def cmd_self_test(args) -> int:
     attrs = a.attributes("away", "2026-09-30T12:00:00Z")
     expect("无属性快照（missing）", attrs["attribute_state"] == "missing"
            and attrs["reason_code"] == "ATTRIBUTE_MISSING")
-    # 8. 属性条件：匹配通过 / 不匹配拒绝 / 过期 fail-closed
-    r = a.check("away", "purchase.request.approve", "2026-10-15T12:00:00Z",
-                require_attributes={"primary_position.grade": "M2"})
-    expect("属性条件匹配允许", r["allowed"] is True and r["attribute_state"] == "fresh")
-    r = a.check("away", "purchase.request.approve", "2026-10-15T12:00:00Z",
-                require_attributes={"primary_position.grade": "P5"})
-    expect("属性条件不匹配拒绝", r["allowed"] is False and r["reason_code"] == "ATTRIBUTE_MISMATCH")
-    r = a.check("away", "purchase.request.approve", "2026-11-15T12:00:00Z",
-                require_attributes={"primary_position.grade": "M2"})
-    expect("过期属性 fail-closed", r["allowed"] is False and r["reason_code"] == "ATTRIBUTE_STALE")
-    # 9. 不依赖属性的判定不受影响
-    r = a.check("away", "purchase.request.approve", "2026-10-15T12:00:00Z")
-    expect("不依赖属性的判定不受影响", r["allowed"] is True)
+    # 8. 授权条件声明（ADR-0015）：匹配 / 不匹配 / 过期 / 缺失 / 任一岗位语义
+    cond_m2 = {"all": [{"attribute": "primary_position.grade", "op": "in", "values": ["M2"]}]}
+    cond_p5 = {"all": [{"attribute": "primary_position.grade", "op": "in", "values": ["P5"]}]}
+    ac = Authz(fixtures, conditions={"purchase.request.approve": cond_m2})
+    r = ac.check("away", "purchase.request.approve", "2026-10-15T12:00:00Z")
+    expect("条件匹配允许", r["allowed"] is True and r["attribute_state"] == "fresh")
+    ac_p5 = Authz(fixtures, conditions={"purchase.request.approve": cond_p5})
+    r = ac_p5.check("away", "purchase.request.approve", "2026-10-15T12:00:00Z")
+    expect("条件不匹配拒绝", r["allowed"] is False and r["reason_code"] == "ATTRIBUTE_MISMATCH")
+    r = ac.check("away", "purchase.request.approve", "2026-11-15T12:00:00Z")
+    expect("条件遇上过期快照 fail-closed", r["allowed"] is False
+           and r["reason_code"] == "ATTRIBUTE_STALE")
+    r = ac.check("agent", "purchase.request.approve", "2026-10-15T12:00:00Z")
+    expect("条件遇上无快照 fail-closed", r["allowed"] is False
+           and r["reason_code"] == "ATTRIBUTE_MISSING")
+    r = ac.check("agent", "purchase.request.create", "2026-10-15T12:00:00Z")
+    expect("未持有权限不泄漏属性状态", r["allowed"] is False
+           and r["reason_code"] == "NO_PERMISSION")
+    cond_any = {"all": [{"attribute": "positions[*].grade", "op": "in", "values": ["P6"]}]}
+    aw = Authz(fixtures, conditions={"purchase.request.approve": cond_any})
+    r = aw.check("away", "purchase.request.approve", "2026-10-15T12:00:00Z")
+    expect("positions[*] 任一岗位命中", r["allowed"] is True)
+    cond_notin = {"all": [{"attribute": "positions[*].grade", "op": "not_in", "values": ["P6"]}]}
+    an = Authz(fixtures, conditions={"purchase.request.approve": cond_notin})
+    r = an.check("away", "purchase.request.approve", "2026-10-15T12:00:00Z")
+    expect("positions[*] not_in 全称语义（存在 P6 即不满足）",
+           r["allowed"] is False and r["reason_code"] == "ATTRIBUTE_MISMATCH")
+    # 9. 不依赖条件的判定不受属性状态影响
+    r = a.check("agent", "purchase.request.approve", "2026-10-15T12:00:00Z")
+    expect("无条件声明时不拉取属性（无快照仍允许）", r["allowed"] is True)
 
     failed = [name for name, cond in report if not cond]
     for name, cond in report:
@@ -441,8 +460,8 @@ def main(argv=None) -> int:
     p_check = sub.add_parser("check", help="检查权限")
     add_common(p_check)
     p_check.add_argument("--permission", required=True)
-    p_check.add_argument("--require-attribute", action="append", default=[], metavar="KEY=VALUE",
-                         help="属性条件（可重复）；缺失/过期/不匹配 fail-closed（ATR-006/007）")
+    p_check.add_argument("--conditions", metavar="FILE",
+                         help="条件声明文件（参考实现测试用；缺省读取 extensions/*/manifest.yaml）")
 
     p_sod = sub.add_parser("sod-check", help="列出 SoD 冲突")
     add_common(p_sod)
@@ -457,7 +476,8 @@ def main(argv=None) -> int:
         parser.print_help()
         return 2
     try:
-        authz = Authz(load_fixtures(args.fixtures))
+        conditions = load_conditions_file(args.conditions) if getattr(args, "conditions", None) else None
+        authz = Authz(load_fixtures(args.fixtures), conditions=conditions)
     except (OSError, KeyError) as exc:
         print(f"夹具加载失败: {exc}", file=sys.stderr)
         return 2
@@ -465,15 +485,7 @@ def main(argv=None) -> int:
         scope_filter = json.loads(args.scope_json) if args.scope_json else None
         out = authz.resolve(args.principal, args.as_of, args.recorded_as_of, scope_filter)
     elif args.cmd == "check":
-        require = {}
-        for item in args.require_attribute:
-            key, sep, value = item.partition("=")
-            if not sep or not key:
-                print(f"--require-attribute 需形如 KEY=VALUE: {item}", file=sys.stderr)
-                return 2
-            require[key] = value
-        out = authz.check(args.principal, args.permission, args.as_of, args.recorded_as_of,
-                          require or None)
+        out = authz.check(args.principal, args.permission, args.as_of, args.recorded_as_of)
     elif args.cmd == "attributes":
         out = authz.attributes(args.principal, args.as_of, args.recorded_as_of)
     else:

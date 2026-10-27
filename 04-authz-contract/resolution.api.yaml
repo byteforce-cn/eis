@@ -58,6 +58,11 @@ paths:
     post:
       summary: 检查权限
       operationId: checkPermission
+      description: |
+        权限判定：先判「是否持有」，再按声明求值授权条件（ADR-0015）。
+        - 条件权威在 extensions/*/manifest.yaml 的 permissions[].condition；
+        - 请求**不得携带条件**（本 API 无该字段）；条件只能由声明侧提供；
+        - 条件只收窄、不授予；快照缺失/过期/属主不可达/路径缺失一律 fail-closed（ATR-006/007）。
       requestBody:
         required: true
         content:
@@ -93,7 +98,9 @@ paths:
                     description: >-
                       机器可读原因码：SOD-xxx（职责分离冲突）/ NO_PERMISSION /
                       ATTRIBUTE_MISSING / ATTRIBUTE_STALE / ATTRIBUTE_SOURCE_UNAVAILABLE /
-                      ATTRIBUTE_MISMATCH（属性条件，见 attribute.rules.yaml ATR-006/007）
+                      ATTRIBUTE_MISMATCH（声明侧授权条件求值，见 attribute.rules.yaml
+                      ATR-006/007/009 与 condition_language）；拒绝原因只含属性路径与状态，
+                      不含属性值全文
                   attribute_state:
                     type: string
                     enum: [fresh, stale, missing, source_unavailable, not_required]

@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 授权条件声明面（ADR-0015 / issue #28、#29）：`manifest.permissions[].condition`（受限 DSL：单层 `all`/`any` + `attribute`/`op`/`values`）；路径必须落在 `04` 属性快照 `AttributeSet` 内（支持 `positions[*]` 的「任一岗位」语义），`contract-checker` 校验路径/op/结构；判定方按声明求值（`eq`/`in` 存在语义、`neq`/`not_in` 全称语义），快照缺失/过期/属主不可达/路径缺失一律 fail-closed；**移除参考实现的调用方条件入口**（`require_attributes` / `--require-attribute`），条件只由声明侧提供、只收窄不授予；`attribute.rules.yaml` 新增 ATR-009 与 `condition_language`；
 - 命令响应定位（ADR-0014 / issue #32①）：`CommandAccepted` 增可选 `locator`（聚合根 ID / 流程实例 ID）与 `version`（对象版本，与 `01` 的 `version` 同语义）；明确 MUST「命令响应不携带读模型投影」与「失败响应不带定位符」；参考内核在受理结果输出 `locator`/`version`，hr 场景断言「返回的 version == 随后读到的对象 version」；`min_version` 读后写等待（#32②）仍待独立 ADR；
 - 命令调用方约束（ADR-0013）：`manifest.permissions[].callers`（`person` / `system`）为唯一权威，扩展 operations 契约用 `x-eis-callers` 同值投影；`contract-checker` 双向校验（缺投影/缺声明/值不一致/非法枚举均失败），并新增自测断言；参考内核在 `/check` 放行后、处理器之前做主体类型预检，越权以新错误码 `EIS-403-002`（`caller_not_allowed`）拒绝，fail-closed（issue #30 步骤 1）；
 - `extensions/hr` 1.2.0：`hr.employee.activate` / `hr.employee.cancel` 声明 `callers: ["system"]`——仅审批服务身份可调，用户会话持有权限同样被拒（AUD-01 的契约化堵口）；既有用例的 activate/cancel 步骤改用审批服务主体，并新增反例场景；
@@ -16,7 +17,7 @@
 
 ### 变更
 
-- 用例 137/137（新增 hr 调用方约束场景与命令响应定位用例），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
+- 用例 141/141（新增授权条件声明/求值/fail-closed 用例与内核自测；移除调用方传条件的反模式用例），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
 
 ## [Unreleased] — 2026-10-17（开放 issue 修复）
 

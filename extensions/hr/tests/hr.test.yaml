@@ -679,24 +679,3 @@ tests:
     expect_allowed: false
     expect_code: NO_PERMISSION
 
-  - name: "同部门范围（ABAC）：属性条件匹配允许"
-    kind: authz
-    fixture: extensions/hr/tests/fixtures-authz.yaml
-    op: check
-    principal: hr-admin
-    permission: hr.employee.read
-    as_of: "2026-10-15T12:00:00Z"
-    require_attributes: {primary_position.org_unit_code: D001}
-    expect_allowed: true
-    expect_attribute_state: fresh
-
-  - name: "同部门范围（ABAC）：属性条件不匹配拒绝"
-    kind: authz
-    fixture: extensions/hr/tests/fixtures-authz.yaml
-    op: check
-    principal: hr-admin
-    permission: hr.employee.read
-    as_of: "2026-10-15T12:00:00Z"
-    require_attributes: {primary_position.org_unit_code: D999}
-    expect_allowed: false
-    expect_code: ATTRIBUTE_MISMATCH

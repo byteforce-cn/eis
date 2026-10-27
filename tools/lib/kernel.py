@@ -49,6 +49,7 @@ from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 
 from eis_common import ROOT, load_yaml
+from eis_conditions import load_declared_conditions
 
 VERIFY_TOOL = ROOT / "05-audit-contract" / "verify.tool"
 GENESIS_PREV_HASH = "0" * 64
@@ -285,7 +286,8 @@ class Kernel:
     """EIS 参考内核：命令受理 → 规则 → 事件 → 审计链 → 双时间轴对象。"""
 
     def __init__(self, clock_start="2026-10-08T09:00:00Z", authz_fixtures: dict | None = None,
-                 field_hash_keys: list[str] | None = None):
+                 field_hash_keys: list[str] | None = None,
+                 permission_conditions: dict[str, dict] | None = None):
         self.clock = parse_ts(clock_start)
         self._id_ns = 0x0190F2E3A12C
         self._id_counter = 0
@@ -301,9 +303,15 @@ class Kernel:
         # 授权（可选）：actor → principal；为空则不做权限判定
         self.authz = None
         self.authz_by_key: dict[str, str] = {}
+        # 授权条件声明（ADR-0015）：权威在 extensions/*/manifest.yaml
+        self.permission_conditions: dict[str, dict] = (
+            dict(permission_conditions) if permission_conditions is not None
+            else load_declared_conditions(ROOT)
+        )
         if authz_fixtures:
             authz_mod = load_authz_module()
-            self.authz = authz_mod.Authz({"fixtures": authz_fixtures})
+            self.authz = authz_mod.Authz({"fixtures": authz_fixtures},
+                                         conditions=self.permission_conditions)
             for p in authz_fixtures.get("principals", []):
                 self.authz_by_key[p.get("key", p["id"])] = p["id"]
 
@@ -1010,6 +1018,62 @@ def _self_test() -> bool:
            all(entry.get("payload_digest") == _VT.compute_payload_digest(
                [by_id[eid] for eid in entry["payload"]["event_ids"]])
                for entry in kernel.audit))
+    # 授权条件声明（ADR-0015）：命令级预检按声明求值；只收窄、不授予
+    cond_principal_ok = "01900000-0000-7000-8000-000000000401"
+    cond_principal_bad = "01900000-0000-7000-8000-000000000402"
+    cond_principal_missing = "01900000-0000-7000-8000-000000000403"
+    cond_role = "01900000-0000-7000-8000-0000000004a1"
+    cond_fixtures = {
+        "principals": [
+            {"id": p, "type": "person", "key": p[-3:],
+             "valid_from": "2026-01-01T00:00:00Z", "recorded_at": "2026-01-01T00:00:00Z"}
+            for p in (cond_principal_ok, cond_principal_bad, cond_principal_missing)
+        ],
+        "roles": [{"id": cond_role, "key": "poster",
+                   "permissions": ["accounting.voucher.post"],
+                   "valid_from": "2026-01-01T00:00:00Z", "recorded_at": "2026-01-01T00:00:00Z"}],
+        "bindings": [
+            {"id": f"01900000-0000-7000-8000-0000000004b{i}",
+             "principal": p, "role": cond_role, "scope": {},
+             "valid_from": "2026-01-01T00:00:00Z", "recorded_at": "2026-01-01T00:00:00Z"}
+            for i, p in enumerate((cond_principal_ok, cond_principal_bad,
+                                   cond_principal_missing), start=1)
+        ],
+        "attributes": [
+            {"principal": cond_principal_ok, "as_of": "2026-10-01T00:00:00Z",
+             "recorded_at": "2026-10-01T00:00:00Z", "expires_at": "2026-12-01T00:00:00Z",
+             "source": "hr", "snapshot": {"primary_position": {"grade": "M2"}}},
+            {"principal": cond_principal_bad, "as_of": "2026-10-01T00:00:00Z",
+             "recorded_at": "2026-10-01T00:00:00Z", "expires_at": "2026-12-01T00:00:00Z",
+             "source": "hr", "snapshot": {"primary_position": {"grade": "P1"}}},
+        ],
+    }
+    cond = {"all": [{"attribute": "primary_position.grade", "op": "in", "values": ["M2"]}]}
+    k3 = Kernel(authz_fixtures=cond_fixtures,
+                permission_conditions={"accounting.voucher.post": cond})
+    voucher_data = {"number": "记-9", "voucher_date": "2026-10-05", "status": "draft",
+                    "lines": [{"account_code": "1405", "debit": "10.00", "currency": "CNY"},
+                              {"account_code": "2202", "credit": "10.00", "currency": "CNY"}]}
+    ok_voucher = "01900000-0000-7000-8000-0000000004f1"
+    bad_voucher = "01900000-0000-7000-8000-0000000004f2"
+    k3.seed("voucher", ok_voucher, dict(voucher_data), cond_principal_ok)
+    k3.seed("voucher", bad_voucher, dict(voucher_data), cond_principal_bad)
+    r = k3.submit({"type": "accounting.voucher.post",
+                   "payload": {"voucher_id": ok_voucher, "post_date": "2026-10-05"},
+                   "idempotency_key": "cond-ok"}, cond_principal_ok)
+    report("命令授权条件匹配允许", r["status"] == "accepted")
+    r = k3.submit({"type": "accounting.voucher.post",
+                   "payload": {"voucher_id": bad_voucher, "post_date": "2026-10-05"},
+                   "idempotency_key": "cond-bad"}, cond_principal_bad)
+    report("命令授权条件不匹配拒绝（ATTRIBUTE_MISMATCH）",
+           r["status"] == "rejected" and r.get("code") == "ATTRIBUTE_MISMATCH")
+    r = k3.submit({"type": "accounting.voucher.post",
+                   "payload": {"voucher_id": "01900000-0000-7000-8000-0000000004f3",
+                               "post_date": "2026-10-05"},
+                   "idempotency_key": "cond-missing"}, cond_principal_missing)
+    report("命令授权条件缺快照 fail-closed（ATTRIBUTE_MISSING）",
+           r["status"] == "rejected" and r.get("code") == "ATTRIBUTE_MISSING")
+
     tampered_events = copy.deepcopy(kernel.events)
     tampered_events[0]["payload"] = dict(tampered_events[0]["payload"], __tampered__=True)
     report("事件正文篡改被检出（payload_digest_mismatch）", any(
