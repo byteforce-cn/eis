@@ -1,0 +1,54 @@
+# 操作契约验证用例：读接口 min_version（ADR-0017，issue #32②）
+# 运行：tools/e2e-runner 02-operation-contract/tests/read-after-write.test.yaml
+suite: read-after-write
+tests:
+  - name: "命令响应的 version 可作为读接口 min_version（未追平 → 409 + Retry-After）"
+    kind: scenario
+    scenario:
+      id: read-min-version-lag
+      setup:
+        objects:
+          - type: voucher
+            id: "01900000-0000-7000-8000-00000000e101"
+            actor: "01900000-0000-7000-8000-000000000101"
+            data:
+              number: "记-2026-10-2001"
+              voucher_date: "2026-10-05"
+              status: draft
+              lines:
+                - {account_code: "1405", debit: "10.00", currency: CNY}
+                - {account_code: "2202", credit: "10.00", currency: CNY}
+      steps: []
+      assert:
+        - {kind: read-min-version, type: voucher, id: "01900000-0000-7000-8000-00000000e101",
+           min_version: 1, expect_status: 200}
+        - {kind: read-min-version, type: voucher, id: "01900000-0000-7000-8000-00000000e101",
+           min_version: 2, expect_status: 409}
+
+  - name: "写入追平后 200 且返回版本 >= min_version"
+    kind: scenario
+    scenario:
+      id: read-min-version-caught-up
+      setup:
+        objects:
+          - type: voucher
+            id: "01900000-0000-7000-8000-00000000e102"
+            actor: "01900000-0000-7000-8000-000000000101"
+            data:
+              number: "记-2026-10-2002"
+              voucher_date: "2026-10-05"
+              status: draft
+              lines:
+                - {account_code: "1405", debit: "10.00", currency: CNY}
+                - {account_code: "2202", credit: "10.00", currency: CNY}
+      steps:
+        - id: T1
+          actor: "01900000-0000-7000-8000-000000000101"
+          command: accounting.voucher.post
+          payload: {voucher_id: "01900000-0000-7000-8000-00000000e102", post_date: "2026-10-05"}
+          events: [accounting.voucher.posted]
+      assert:
+        - {kind: read-min-version, type: voucher, id: "01900000-0000-7000-8000-00000000e102",
+           min_version: 2, expect_status: 200}
+        - {kind: read-min-version, type: voucher, id: "01900000-0000-7000-8000-00000000e102",
+           min_version: 3, expect_status: 409}

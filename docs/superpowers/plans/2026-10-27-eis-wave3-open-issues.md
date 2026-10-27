@@ -30,10 +30,10 @@
 
 ## Task 2：#32② 读接口 `min_version` 等待语义（P2）
 
-- [ ] ADR：`GET` 对象支持 `min_version`；未就绪统一 `409 + Retry-After`（不使用 202/阻塞）
-- [ ] `02-operation-contract/query.openapi.yaml`：参数 + 409 响应 + 语义（对象版本，非投影水位）
-- [ ] 参考内核：读接口按 `min_version` 判定；scenario 断言「落后 → 409；追平 → 200 且 `version >= N`」
-- [ ] 用例 + 计数
+- [x] ADR：`GET` 对象支持 `min_version`；未就绪统一 `409 + Retry-After`（不使用 202/阻塞）
+- [x] `02-operation-contract/query.openapi.yaml`：参数 + 409 响应 + 语义（对象版本，非投影水位）
+- [x] 参考内核：读接口按 `min_version` 判定；scenario 断言「落后 → 409；追平 → 200 且 `version >= N`」
+- [x] 用例 + 计数
 
 ## Task 3：#31 Outbox/Relay 投递契约（P1，扩展层）
 
