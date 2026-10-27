@@ -119,6 +119,27 @@ class Rejected(Exception):
 # ---------------------------------------------------------------------------
 # 授权（复用 authz-resolver 的语义实现）
 # ---------------------------------------------------------------------------
+def load_permission_callers() -> dict[str, tuple[str, ...]]:
+    """载入扩展 manifest 的调用方约束（ADR-0013）：命令 → 允许的主体类型。
+
+    权威只在 manifest.permissions[].callers；operations 契约的 x-eis-callers 是
+    可校验投影（contract-checker 双向校验），内核不解析 OpenAPI。
+    """
+    callers: dict[str, tuple[str, ...]] = {}
+    ext_root = ROOT / "extensions"
+    if not ext_root.is_dir():
+        return callers
+    for manifest_path in sorted(ext_root.glob("*/manifest.yaml")):
+        ext = load_yaml(manifest_path).get("extension", {}) or {}
+        for perm in ext.get("permissions", []) or []:
+            if not isinstance(perm, dict):
+                continue
+            pid, allowed = perm.get("id"), perm.get("callers")
+            if isinstance(pid, str) and isinstance(allowed, list) and allowed:
+                callers[pid] = tuple(allowed)
+    return callers
+
+
 def load_authz_module():
     loader = SourceFileLoader("eis_authz_kernel", str(ROOT / "tools" / "authz-resolver"))
     module = module_from_spec(spec_from_loader("eis_authz_kernel", loader))
@@ -293,6 +314,8 @@ class Kernel:
             tuple(field_hash_keys) if field_hash_keys else field_hash_keys_from_env()
         )
         self.write_only_fields: dict[str, tuple[str, ...]] = {}
+        # 命令调用方约束：命令 → 允许的主体类型（ADR-0013，缺省不限制）
+        self.permission_callers: dict[str, tuple[str, ...]] = load_permission_callers()
         self.api = ExtensionAPI(self)
         self.command_handlers: dict[str, callable] = load_extension_handlers(self)
 
@@ -375,6 +398,19 @@ class Kernel:
                 decision = self.authz.check(principal, cmd_type, ts(self.now()))
                 if not decision["allowed"]:
                     raise Rejected(decision.get("reason_code", "EIS-403-001"), decision["reason"])
+            # 调用方主体类型约束（ADR-0013）：与判定结果无关，fail-closed
+            allowed_callers = self.permission_callers.get(cmd_type)
+            if allowed_callers is not None and self.authz is not None:
+                try:
+                    principal_type = self.authz.principal(principal).get("type")
+                except KeyError:
+                    principal_type = None
+                if principal_type not in allowed_callers:
+                    raise Rejected(
+                        "EIS-403-002",
+                        f"{cmd_type} 仅限调用方主体类型 {', '.join(allowed_callers)}，"
+                        f"实际 {principal_type}",
+                    )
             events, created = self._handle(cmd_type, payload, principal, command_id)
         except Rejected as exc:
             record["status"] = "rejected"

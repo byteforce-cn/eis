@@ -2,7 +2,7 @@
 extension:
   id: "hr"
   name: "人力资源域扩展"
-  version: "1.1.0"
+  version: "1.2.0"
   core_version: "1.0.0"
 
   dependencies: []
@@ -80,9 +80,11 @@ extension:
     - id: "hr.employee.activate"
       kind: "command"
       description: "员工转在职"
+      callers: ["system"]
     - id: "hr.employee.cancel"
       kind: "command"
       description: "取消入职"
+      callers: ["system"]
     - id: "hr.assignment.assign"
       kind: "command"
       description: "分配任职"

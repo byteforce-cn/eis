@@ -51,6 +51,15 @@ codes:
       - "主体在当前时点无所需权限"
       - "违反职责分离（SoD）规则"
 
+  - code: EIS-403-002
+    http_status: 403
+    name: caller_not_allowed
+    description: 命令的调用方主体类型不在契约声明的 callers 内（reason 必填，含命令与允许类型）
+    retryable: false
+    emitted_when:
+      - "主体类型不在 manifest.permissions[].callers 声明内（如用户主体调用仅限 system 的命令）"
+      - "主体不存在或类型无法解析（fail-closed）"
+
   - code: EIS-404-001
     http_status: 404
     name: object_not_found

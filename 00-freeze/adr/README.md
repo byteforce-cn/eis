@@ -41,3 +41,4 @@ EIS 的核心契约已冻结。任何修改（解冻请求）必须走以下流�
 | [0010](0010-approval-section-order.md) | 审批区块顺序语义（ApprovalSection.step_order） | Accepted |
 | [0011](0011-tr009-valid-overlap-constraint.md) | T-R009 有效区间不重叠落地为四维排他约束 | Accepted |
 | [0012](0012-scope-boundary.md) | 跨边界缺口的三层归属裁决（核心 / 扩展 / 实现与运维） | Accepted |
+| [0013](0013-command-caller-constraint.md) | 命令调用方约束（manifest callers + x-eis-callers） | Accepted |

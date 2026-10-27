@@ -2,11 +2,20 @@
 
 本项目版本语义遵循 [00-freeze/version-policy.md](00-freeze/version-policy.md)（SemVer）。
 
-## [Unreleased] — 2026-10-27（T-R009 排他约束）
+## [Unreleased] — 2026-10-27
+
+### 新增
+
+- 命令调用方约束（ADR-0013）：`manifest.permissions[].callers`（`person` / `system`）为唯一权威，扩展 operations 契约用 `x-eis-callers` 同值投影；`contract-checker` 双向校验（缺投影/缺声明/值不一致/非法枚举均失败），并新增自测断言；参考内核在 `/check` 放行后、处理器之前做主体类型预检，越权以新错误码 `EIS-403-002`（`caller_not_allowed`）拒绝，fail-closed（issue #30 步骤 1）；
+- `extensions/hr` 1.2.0：`hr.employee.activate` / `hr.employee.cancel` 声明 `callers: ["system"]`——仅审批服务身份可调，用户会话持有权限同样被拒（AUD-01 的契约化堵口）；既有用例的 activate/cancel 步骤改用审批服务主体，并新增反例场景；
 
 ### 修复
 
 - T-R009「有效区间不重叠」落地为 DDL 排他约束（ADR-0011）：`schema-compiler` 随每张对象表输出 `ex_<table>_valid_overlap`（`id` + 系统时间区间 + 业务时间区间四维 `EXCLUDE USING gist`），`business_object` 同步声明；`tools/ci/ddl-smoke.sql` §9 断言重叠拒绝（`exclusion_violation`）、封口链与相邻区间允许；`docs/KNOWN-LIMITATIONS.md` §1.1/§1.3 同步收窄（issue #40①）。
+
+### 变更
+
+- 用例 135/135（新增 hr 调用方约束场景），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
 
 ## [Unreleased] — 2026-10-17（开放 issue 修复）
 
