@@ -24,6 +24,7 @@ python3 tools/e2e-runner --all
 - 合规等级与自验命令：[docs/CONFORMANCE.md](docs/CONFORMANCE.md)
 - 已知限制与规范缺口：[docs/KNOWN-LIMITATIONS.md](docs/KNOWN-LIMITATIONS.md)
 - 实现落地（seedj / server 映射）：[docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md)
+- 边界说明（informative）：[编排](docs/ORCHESTRATION-BOUNDARY.md)、[集成](docs/INTEGRATION-BOUNDARY.md)、[运维与灾备](docs/OPERATIONS.md)
 - 版本与规划：[docs/ROADMAP.md](docs/ROADMAP.md)、[CHANGELOG.md](CHANGELOG.md)
 
 ---
