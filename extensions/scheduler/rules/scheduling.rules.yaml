@@ -1,0 +1,136 @@
+# scheduling.rules.yaml — 定时任务执行语义扩展规则（ADR-0021）
+# 归属：extensions/scheduler（跨域运行时扩展）；不改核心六类契约。
+# 判定：`tools/scheduler`（参考实现）与 `extensions/scheduler/scheduler.ddl` 必须遵守本表。
+version: "1.0.0"
+
+scheduling_rules:
+  - id: "SCH-001"
+    name: "计划时点幂等"
+    level: "MUST"
+    statement: >
+      run_key = job_id + scheduled_for；同一 (job_id, scheduled_for) 至多产生一个 run
+      （DB UNIQUE 兜底）。重复触发（调度器重试、多实例同 tick）只观察已有 run，不得插入第二份。
+    enforced_by: ["scheduler.ddl", "reference-scheduler"]
+    error_code: "SCH-RUN-DUPLICATE"
+
+  - id: "SCH-002"
+    name: "显式重跑"
+    level: "MUST"
+    statement: >
+      重跑必须显式改变计划时点，或由运维走独立的受审计命令；不得通过重复触发绕过
+      run_key 唯一约束。failed 且 attempt < max_attempts 的 run 可由下一次认领重试。
+    enforced_by: ["scheduler.ddl", "reference-scheduler"]
+    error_code: "SCH-RERUN-IMPLICIT"
+
+  - id: "SCH-003"
+    name: "互斥作用域"
+    level: "MUST"
+    statement: >
+      同一 scope（同 job 或同分区）同一时刻至多一个 running run；互斥作用域由调用方声明，
+      不得用进程内锁代替。
+    enforced_by: ["scheduler.ddl", "reference-scheduler"]
+    error_code: "SCH-SCOPE-CONFLICT"
+
+  - id: "SCH-004"
+    name: "租约持有"
+    level: "MUST"
+    statement: >
+      running 必须持有 lease_id + lease_owner + lease_expires_at；三者同时存在或同时为空。
+      租约到期时间必须显式设置，不得依赖进程存活探测。
+    enforced_by: ["scheduler.ddl", "reference-scheduler"]
+    error_code: "SCH-LEASE-MISSING"
+
+  - id: "SCH-005"
+    name: "过期租约可抢占"
+    level: "MUST"
+    statement: >
+      租约过期的 running run 可被抢占：复用同一 run 行（attempt+1，换新 lease_id）。
+      抢占不得创建第二个 run（run_key 唯一）。
+    enforced_by: ["reference-scheduler"]
+    error_code: "SCH-LEASE-NOT-RECLAIMABLE"
+
+  - id: "SCH-006"
+    name: "旧持有者写入拒绝"
+    level: "MUST"
+    statement: >
+      finish / heartbeat 必须携带认领时的 lease_id；lease_id 不匹配（租约已过期并被抢占）
+      时写入必须被拒绝，不得靠锁或进程内状态判定。
+    enforced_by: ["reference-scheduler"]
+    error_code: "SCH-STALE-LEASE"
+
+  - id: "SCH-007"
+    name: "终态不可再迁"
+    level: "MUST"
+    statement: >
+      succeeded / skipped 为终态，不得再次 finish 或重新认领；failed 在达到 max_attempts
+      后同样不再被认领。
+    enforced_by: ["scheduler.ddl", "reference-scheduler"]
+    error_code: "SCH-STATE-INVALID"
+
+  - id: "SCH-008"
+    name: "跳过语义"
+    level: "MUST"
+    statement: >
+      skipped 仅用于：作业停用、互斥域被未过期租约占用、或计划时点已显式跳过。
+      skipped 必须有 finished_at，且必须记录机器可读原因（last_error）。
+    enforced_by: ["scheduler.ddl", "reference-scheduler"]
+    error_code: "SCH-SKIP-UNREASONED"
+
+  - id: "SCH-009"
+    name: "陈旧租约回收"
+    level: "MUST"
+    statement: >
+      同一 scope 内租约已过期但状态仍为 running 的 run，必须先回收为 failed
+      （last_error = lease_expired、清空租约、写 finished_at），再允许新 run 认领该 scope。
+    enforced_by: ["reference-scheduler"]
+    error_code: "SCH-STALE-RUN-BLOCKS-SCOPE"
+
+  - id: "SCH-010"
+    name: "执行审计"
+    level: "MUST"
+    statement: >
+      running → succeeded / failed / skipped 的每次状态迁移必须写一条 EIS 审计条目
+      （05-audit-contract 哈希链；actor = 调度服务主体，valid_time = 迁移时刻）；
+      审计链维护由宿主负责，本扩展不另建审计链。
+    enforced_by: ["operations", "reference-scheduler"]
+    error_code: "SCH-AUDIT-MISSING"
+
+  - id: "SCH-011"
+    name: "计划时点与业务时间分离"
+    level: "MUST"
+    statement: >
+      scheduled_for 是计划时点（UTC），不得写入业务对象的 valid_from；运行记录不进入
+      01-data-contract 的对象多版本模型。
+    enforced_by: ["scheduler.ddl"]
+    error_code: "SCH-TIME-CONFLATED"
+
+  - id: "SCH-012"
+    name: "可观测性"
+    level: "MUST"
+    statement: >
+      必须暴露 running 数、租约过期 running 数、failed 数、skipped 数、最老未完成 run 年龄；
+      监控按 job_id 与 scope 分段，不得只报单一成功率。
+    enforced_by: ["reference-scheduler", "operations"]
+    error_code: "SCH-METRICS-MISSING"
+
+not_in_contract:
+  - "分布式锁算法、选主、共识协议"
+  - "cron / 日历表达式解析器实现与时区规则"
+  - "调度器部署形态（嵌入进程 / 独立服务 / K8s CronJob）"
+  - "具体 SQL 写法（FOR UPDATE SKIP LOCKED 仅作参考实现与模板）"
+  - "任务 DAG / 跨作业依赖编排（属 coord workflow）"
+  - "把运行记录当业务审计（业务审计仍由领域命令写入）"
+
+tests:
+  - name: "计划时点幂等"
+    expect: "同一 (job_id, scheduled_for) 第二次触发不产生第二个 run"
+  - name: "互斥作用域"
+    expect: "同 scope 未过期租约存在时，新 run 记为 skipped（scope_held）"
+  - name: "过期租约抢占"
+    expect: "同一 run 被新 owner 抢占（attempt+1），旧 lease_id 的 finish 被拒绝"
+  - name: "重试上限"
+    expect: "attempt 达到 max_attempts 后不再被认领"
+  - name: "终态"
+    expect: "succeeded / skipped 不可再 finish 或认领"
+  - name: "审计"
+    expect: "每次状态迁移对应一条 EIS 审计条目（由宿主链维护）"

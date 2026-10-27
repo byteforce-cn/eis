@@ -70,6 +70,7 @@ composition:
 | `approval` | 1.1.0 | 审批申请/决定/区块；提交与决定、区块流转（顺序语义）、打回重确认、撤回；禁止自审 | 完整（含可执行用例） |
 | `hr` | 1.3.0 | 组织/岗位/员工（含雇佣类型/工作地点）/任职/供给任务；双时间轴；证件散列防重；`activate`/`cancel` 仅限系统主体（ADR-0013）；`activate` 需已通过审批单（ADR-0019） | 完整（含可执行用例与 V201/V202 迁移） |
 | `outbox` | 1.0.0 | 跨域运行时：Outbox/Inbox 投递契约（`kind: runtime`，无业务对象）；`outbox.ddl` + OBX-001..012 + `tools/relay` | 完整（static/cli 用例 + CI PostgreSQL 冒烟；ADR-0018） |
+| `scheduler` | 1.0.0 | 跨域运行时：定时任务执行语义（`kind: runtime`，无业务对象）；`scheduler.ddl` + SCH-001..012 + `tools/scheduler` | 完整（static/cli 用例 + CI PostgreSQL 冒烟；ADR-0021） |
 
 ## 6. 命令处理器注册（可执行用例）
 

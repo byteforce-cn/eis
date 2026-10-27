@@ -23,6 +23,11 @@
   （`outbox.ddl`、OBX-001..012、`manifest.kind: runtime`）；`tools/relay` 提供状态机参考
   （分片内顺序屏障、确认后置、租约回收、指数退避/死信、Inbox 幂等）与 PostgreSQL 语句模板
   （`FOR UPDATE SKIP LOCKED`）；CI PostgreSQL 执行 `outbox.ddl` + `outbox-smoke.sql`；核心六类契约不变；
+- 定时任务执行语义扩展 `extensions/scheduler/`（ADR-0021 / issue #37）：`scheduled_job` +
+  `job_run`（`run_key` 与 `(job_id, scheduled_for)` 双重唯一、`scope` 互斥、租约三元组、
+  `running/succeeded/failed/skipped` 状态机）、SCH-001..012；`tools/scheduler` 提供
+  幂等/互斥/过期抢占/旧 `lease_id` 拒绝的参考实现与 PostgreSQL 语句模板；CI PostgreSQL
+  执行 `scheduler.ddl` + `scheduler-smoke.sql`；不写锁算法/选主/cron 实现；核心六类契约不变；
 - 读接口 `min_version`（ADR-0017 / issue #32②）：`GET /objects/{objectType}/{id}?min_version=N`
   表示「返回包含版本 N 的状态」；未追平统一 `409 + Retry-After`（新错误码 `EIS-409-003`
   `read_model_not_ready`），不得以 200 返回旧版本；`min_version` 是对象版本而非投影水位；
@@ -43,7 +48,7 @@
 
 ### 变更
 
-- 用例 155/155（新增授权条件声明、内核对象 Schema、读接口 min_version、Outbox/Inbox、迟到事实用例；移除调用方传条件的反模式用例），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
+- 用例 166/166（新增授权条件声明、内核对象 Schema、读接口 min_version、Outbox/Inbox、迟到事实用例；移除调用方传条件的反模式用例），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
 
 ## [Unreleased] — 2026-10-17（开放 issue 修复）
 

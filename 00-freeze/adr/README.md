@@ -49,3 +49,4 @@ EIS 的核心契约已冻结。任何修改（解冻请求）必须走以下流�
 | [0018](0018-outbox-delivery-extension.md) | 可靠投递扩展（Outbox + Inbox，extensions/outbox） | Accepted |
 | [0019](0019-cross-extension-preconditions.md) | 扩展跨引用与命令前置（dependencies + rules.requires_objects） | Accepted |
 | [0020](0020-late-fact-kernel-modeling.md) | 参考内核建模迟到事实（T-R011） | Accepted |
+| [0021](0021-scheduler-execution-semantics.md) | 定时任务 / 日终批处理执行语义（extensions/scheduler） | Accepted |
