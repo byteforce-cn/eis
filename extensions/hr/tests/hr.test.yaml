@@ -55,6 +55,10 @@ tests:
         - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: id_number_hash, expect: 3935748e52ed27e867bf65e8bb2a97ff58d59acf1d4b8adb920513b78fc492bf}
         - {kind: object-field, type: hr_assignment, id: "${steps.T4.created.id}", field: org_unit_id, expect: "${steps.T1.created.id}"}
         - {kind: object-field, type: hr_assignment, id: "${steps.T4.created.id}", field: is_primary, expect: true}
+        # 命令响应定位（ADR-0014）：locator 指向激活的员工，version 与随后读到的对象一致
+        - {kind: object-field, type: hr_employee, id: "${steps.T5.result.locator}", field: status, expect: active}
+        - {kind: object-field, type: hr_employee, id: "${steps.T5.result.locator}", field: version, expect: "${steps.T5.result.version}"}
+        - {kind: object-field, type: hr_employee, id: "${steps.T3.created.id}", field: version, expect: "${steps.T5.result.version}"}
         - {kind: audit-chain, expect: valid, min_entries: 5}
 
   - name: "调用方约束：仅审批服务身份可转在职（用户主体持有权限仍拒绝）"

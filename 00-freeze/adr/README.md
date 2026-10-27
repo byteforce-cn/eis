@@ -42,3 +42,4 @@ EIS 的核心契约已冻结。任何修改（解冻请求）必须走以下流�
 | [0011](0011-tr009-valid-overlap-constraint.md) | T-R009 有效区间不重叠落地为四维排他约束 | Accepted |
 | [0012](0012-scope-boundary.md) | 跨边界缺口的三层归属裁决（核心 / 扩展 / 实现与运维） | Accepted |
 | [0013](0013-command-caller-constraint.md) | 命令调用方约束（manifest callers + x-eis-callers） | Accepted |
+| [0014](0014-command-response-locator-version.md) | 命令响应携带 {locator, version}（命令与查询的桥） | Accepted |
