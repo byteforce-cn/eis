@@ -1,0 +1,18 @@
+# activation-requires-approval.yaml — 跨扩展命令前置（ADR-0019，issue #30 步骤 2）
+# 归属：extensions/hr；依赖：approval（manifest.dependencies）。
+# 语义：存在一条「已通过、目标为本员工、操作为转在职」的审批单，才允许 hr.employee.activate。
+# 这是存在性前置（不是通用规则引擎）：where 只做精确匹配，右值可为字面量或 $payload.<路径>。
+rule:
+  id: "activation-requires-approval"
+  description: "员工转在职必须存在已通过的入职审批单（hr → approval）"
+  applies_to: "hr.employee.activate"
+  requires_objects:
+    extension: "approval"
+    object: "ApprovalRequest"
+    where:
+      operation: "hr.employee.activate"
+      status: "approved"
+      "target.type": "hr_employee"
+      "target.id": "$payload.employee_id"
+  error_code: "HR-409-002"
+  reason: "员工转在职必须存在已通过的入职审批单（hr → approval）"

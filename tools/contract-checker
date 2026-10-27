@@ -339,6 +339,8 @@ def check_error_codes(report: Report) -> None:
         report.ok(f"{rel(path)}: 错误码检查（{len(seen)} 个）")
 
 
+RULE_ERROR_CODE_RE = re.compile(r"^[A-Z][A-Z0-9]{1,9}-\d{3}-\d{3}$")
+REQUIRE_WHERE_PATH_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
 PERMISSION_KINDS = {"command", "read", "service"}
 # 允许的主体类型（ADR-0013）：person = 用户会话；system = 服务身份
 CALLER_TYPES = {"person", "system"}
@@ -509,6 +511,116 @@ def check_manifests(report: Report, root: Path = ROOT) -> dict:
         if ext_id:
             manifests[ext_id] = ext
     return manifests
+
+
+def _command_permission_ids(ext: dict) -> set[str]:
+    return {p.get("id") for p in ext.get("permissions", [])
+            if isinstance(p, dict) and p.get("kind") == "command"}
+
+
+def _dependency_cycles(manifests: dict) -> list[str]:
+    cycles: set[str] = set()
+
+    def walk(node: str, path: list[str]) -> None:
+        for dep in manifests.get(node, {}).get("dependencies", []) or []:
+            target = dep.get("id") if isinstance(dep, dict) else None
+            if not target:
+                continue
+            if target in path:
+                cycles.add(" → ".join(path[path.index(target):] + [target]))
+            else:
+                walk(target, path + [target])
+
+    for ext_id in manifests:
+        walk(ext_id, [ext_id])
+    return sorted(cycles)
+
+
+def _check_rule_requires(problems: list[str], root: Path, ext_id: str, ext: dict,
+                         rule_path: Path, rule: dict, manifests: dict,
+                         dep_ids: set[str]) -> None:
+    requires = rule.get("requires_objects")
+    if not isinstance(requires, dict):
+        return
+    rule_id = rule.get("id") or rule_path.name
+    applies_to = rule.get("applies_to")
+    if applies_to not in _command_permission_ids(ext):
+        problems.append(
+            f"规则 {rule_id}: applies_to 必须是本扩展已声明的命令权限: {applies_to!r}")
+    target_id = requires.get("extension")
+    if target_id not in dep_ids:
+        problems.append(
+            f"规则 {rule_id}: 引用扩展 {target_id!r} 未在 manifest.dependencies 声明")
+    target = manifests.get(target_id) or {}
+    objects = {o.get("name") for o in target.get("objects", []) if isinstance(o, dict)}
+    if requires.get("object") not in objects:
+        problems.append(
+            f"规则 {rule_id}: 对象 {requires.get('object')!r} 未在依赖扩展 {target_id} 的 objects 声明")
+    where = requires.get("where")
+    if not isinstance(where, dict) or not where:
+        problems.append(f"规则 {rule_id}: requires_objects.where 必须为非空映射")
+    else:
+        for path, value in where.items():
+            if not isinstance(path, str) or not REQUIRE_WHERE_PATH_RE.match(path):
+                problems.append(f"规则 {rule_id}: where 路径不合规: {path!r}")
+            if isinstance(value, (dict, list)):
+                problems.append(f"规则 {rule_id}: where 值只允许标量或 $payload.<路径>: {path}")
+            elif isinstance(value, str) and value.startswith("$payload."):
+                if not REQUIRE_WHERE_PATH_RE.match(value[len("$payload."):]):
+                    problems.append(f"规则 {rule_id}: $payload 路径不合规: {value}")
+            elif isinstance(value, str) and not value:
+                problems.append(f"规则 {rule_id}: where 值不得为空字符串: {path}")
+    error_code = rule.get("error_code")
+    if not isinstance(error_code, str) or not RULE_ERROR_CODE_RE.match(error_code) \
+            or error_code.startswith("EIS-"):
+        problems.append(
+            f"规则 {rule_id}: error_code 必须是扩展命名空间（非 EIS-）: {error_code!r}")
+
+
+def check_extension_relations(report: Report, manifests: dict, root: Path = ROOT) -> None:
+    """跨扩展依赖与前置引用完整性（ADR-0019）。
+
+    校验：dependencies 目标/版本、依赖环、规则 applies_to、requires_objects 的
+    extension/object/where/error_code。运行时不解析规则文件（内核只读声明）。
+    """
+    for ext_id, ext in sorted(manifests.items()):
+        problems: list[str] = []
+        deps = ext.get("dependencies") or []
+        dep_ids: set[str] = set()
+        if not isinstance(deps, list):
+            problems.append("dependencies 必须为数组")
+        else:
+            for dep in deps:
+                if not isinstance(dep, dict) or not dep.get("id") or not dep.get("version"):
+                    problems.append(f"dependencies 条目必须含 id/version: {dep!r}")
+                    continue
+                target = manifests.get(dep["id"])
+                if target is None:
+                    problems.append(f"依赖扩展不存在: {dep['id']}")
+                    continue
+                if str(dep["version"]) != str(target.get("version")):
+                    problems.append(
+                        f"依赖版本不匹配: {dep['id']} 声明 {dep['version']}，"
+                        f"manifest 为 {target.get('version')}")
+                dep_ids.add(dep["id"])
+        for cycle in _dependency_cycles(manifests):
+            if ext_id in cycle.split(" → "):
+                problems.append(f"dependencies 存在环: {cycle}")
+                break
+        for entry in ext.get("rules", []) or []:
+            rel = entry.get("file") if isinstance(entry, dict) else None
+            if not rel:
+                continue
+            rule_path = (root / "extensions" / ext_id / rel)
+            if not rule_path.exists():
+                problems.append(f"规则文件不存在: {rel}")
+                continue
+            rule = (load_yaml(rule_path) or {}).get("rule") or {}
+            _check_rule_requires(problems, root, ext_id, ext, rule_path, rule, manifests, dep_ids)
+        if problems:
+            report.fail(f"extensions/{ext_id}: 跨扩展依赖检查", "\n".join(problems))
+        else:
+            report.ok(f"extensions/{ext_id}: 跨扩展依赖检查")
 
 
 def check_compositions(report: Report, manifests: dict) -> None:
@@ -825,6 +937,75 @@ def cmd_self_test(args) -> int:
                 report.fail(f"自测：非法授权条件未被检出（{label}）", detail)
             else:
                 report.ok(f"自测：非法授权条件被检出（{label}）")
+    # 跨扩展依赖与命令前置（ADR-0019）
+    import copy as _copy
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        dep_dir = root / "extensions" / "dependent"
+        (dep_dir / "rules").mkdir(parents=True)
+        base_ext = {
+            "id": "base", "version": "1.0.0", "core_version": "1.0.0",
+            "objects": [{"name": "Thing", "schema": "objects/thing.schema.json"}],
+            "permissions": [],
+        }
+        dep_ext = {
+            "id": "dependent", "version": "1.0.0", "core_version": "1.0.0",
+            "dependencies": [{"id": "base", "version": "1.0.0"}],
+            "permissions": [{"id": "dependent.run", "kind": "command", "description": "执行"}],
+            "rules": [{"name": "pre", "file": "rules/pre.yaml"}],
+        }
+        good_rule = {
+            "id": "pre", "applies_to": "dependent.run",
+            "requires_objects": {
+                "extension": "base", "object": "Thing",
+                "where": {"status": "approved", "target.id": "$payload.id"},
+            },
+            "error_code": "DEP-409-001", "reason": "前置不满足",
+        }
+        import yaml as _yaml2
+
+        def relation_report(rule, dep=None, base=None) -> Report:
+            manifests = {"base": _copy.deepcopy(base or base_ext),
+                         "dependent": _copy.deepcopy(dep or dep_ext)}
+            (dep_dir / "rules" / "pre.yaml").write_text(
+                _yaml2.safe_dump({"rule": rule}, allow_unicode=True), encoding="utf-8")
+            r = Report("tmp")
+            check_extension_relations(r, manifests, root=root)
+            return r
+
+        if relation_report(good_rule).success:
+            report.ok("自测：跨扩展依赖与命令前置声明通过")
+        else:
+            report.fail("自测：合法跨扩展前置被误拒")
+        bad_dep = _copy.deepcopy(dep_ext)
+        bad_dep["dependencies"] = []
+        cases = [
+            (good_rule, bad_dep, None, "未在 manifest.dependencies 声明", "未声明的依赖扩展"),
+            (dict(good_rule, requires_objects={"extension": "base", "object": "Missing",
+                                               "where": {"status": "approved"}}),
+             None, None, "未在依赖扩展", "未声明的对象"),
+            (dict(good_rule, applies_to="dependent.other"), None, None,
+             "applies_to", "未声明的命令权限"),
+            (good_rule,
+             dict(_copy.deepcopy(dep_ext), dependencies=[{"id": "base", "version": "2.0.0"}]),
+             None, "版本不匹配", "依赖版本漂移"),
+            (dict(good_rule, error_code="EIS-409-004"), None, None,
+             "error_code", "占用核心错误码"),
+            (dict(good_rule, requires_objects={"extension": "base", "object": "Thing",
+                                               "where": {"target": {"id": "x"}}}),
+             None, None, "只允许标量", "where 值非标量"),
+            (good_rule, None,
+             dict(_copy.deepcopy(base_ext),
+                  dependencies=[{"id": "dependent", "version": "1.0.0"}]), "存在环", "依赖环"),
+        ]
+        for rule, dep, base, marker, label in cases:
+            r = relation_report(rule, dep, base)
+            detail = "\n".join(str(d) for _, _, d in r.failures)
+            if r.success or marker not in detail:
+                report.fail(f"自测：跨扩展前置漂移未被检出（{label}）", detail)
+            else:
+                report.ok(f"自测：跨扩展前置漂移被检出（{label}）")
     report.print()
     return 0 if report.success else 1
 
@@ -868,6 +1049,7 @@ def main(argv=None) -> int:
     check_error_codes(report)
     manifests = check_manifests(report)
     check_operation_callers(report, manifests)
+    check_extension_relations(report, manifests)
     check_compositions(report, manifests)
     if args.json:
         print(json.dumps(report.to_json(), ensure_ascii=False, indent=2))

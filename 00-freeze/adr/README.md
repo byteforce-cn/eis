@@ -47,3 +47,4 @@ EIS 的核心契约已冻结。任何修改（解冻请求）必须走以下流�
 | [0016](0016-kernel-object-schema-validation.md) | 参考内核执行扩展对象 Schema（可选依赖 + fail-closed） | Accepted |
 | [0017](0017-query-min-version.md) | 读接口 min_version 等待语义（409 + Retry-After） | Accepted |
 | [0018](0018-outbox-delivery-extension.md) | 可靠投递扩展（Outbox + Inbox，extensions/outbox） | Accepted |
+| [0019](0019-cross-extension-preconditions.md) | 扩展跨引用与命令前置（dependencies + rules.requires_objects） | Accepted |

@@ -6,6 +6,11 @@
 
 ### 新增
 
+- 扩展跨引用与命令前置（ADR-0019 / issue #30 步骤 2）：`manifest.dependencies`（精确版本、无环）+
+  `rules.requires_objects`（存在性精确匹配，`$payload.<路径>` 右值）；`contract-checker` 校验依赖/
+  `applies_to`/引用对象/`where`/错误码命名空间；参考内核在权限与 `callers` 预检后、处理器前
+  fail-closed；`extensions/hr` 1.3.0 声明 `approval 1.1.0` 依赖，`hr.employee.activate` 要求
+  已通过审批单（`HR-409-002`），用例覆盖无审批单拒绝 / 有审批单允许；
 - 边界说明（informative，ADR-0012 §4.2）：`docs/ORCHESTRATION-BOUNDARY.md`（#35：步骤走命令、补偿=反向命令、部分完成可读）、`docs/INTEGRATION-BOUNDARY.md`（#38：集成方式由部署方选型、`external_refs` 约定、属主域命令裁决冲突）、`docs/OPERATIONS.md`（#39：备份分层、恢复后校验、RPO/RTO 模板；不新增 L5）；
 - 可靠投递扩展 `extensions/outbox/`（ADR-0018 / issue #31、#34）：Outbox + Inbox 契约
   （`outbox.ddl`、OBX-001..012、`manifest.kind: runtime`）；`tools/relay` 提供状态机参考

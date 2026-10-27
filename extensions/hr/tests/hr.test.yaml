@@ -44,6 +44,22 @@ tests:
           command: hr.assignment.assign
           payload: {employee_id: "${steps.T3.created.id}", position_id: "${steps.T2.created.id}", is_primary: true, start_date: "2026-10-01"}
           events: [hr.assignment.assigned]
+        # 跨扩展前置（ADR-0019）：没有已通过的审批单 → 拒绝
+        - id: T4b
+          actor: hr_approval_service
+          command: hr.employee.activate
+          payload: {employee_id: "${steps.T3.created.id}"}
+          expect_status: rejected
+          expect_code: HR-409-002
+        - id: S1
+          seed:
+            - type: approval_request
+              id: "01900000-0000-7000-8000-00000000ea01"
+              data:
+                operation: "hr.employee.activate"
+                target: {type: "hr_employee", id: "${steps.T3.created.id}"}
+                requester: "01900000-0000-7000-8000-000000000b01"
+                status: "approved"
         - id: T5
           actor: hr_approval_service
           command: hr.employee.activate
@@ -94,6 +110,15 @@ tests:
           payload: {employee_id: "${steps.T3.created.id}"}
           expect_status: rejected
           expect_code: EIS-403-002
+        - id: S1
+          seed:
+            - type: approval_request
+              id: "01900000-0000-7000-8000-00000000ea02"
+              data:
+                operation: "hr.employee.activate"
+                target: {type: "hr_employee", id: "${steps.T3.created.id}"}
+                requester: "01900000-0000-7000-8000-000000000b01"
+                status: "approved"
         - id: T6
           actor: hr_approval_service
           command: hr.employee.activate
@@ -347,6 +372,15 @@ tests:
           actor: hr_admin
           command: hr.employee.create
           payload: {name: 孙七, hire_date: "2026-10-04"}
+        - id: S1
+          seed:
+            - type: approval_request
+              id: "01900000-0000-7000-8000-00000000ea03"
+              data:
+                operation: "hr.employee.activate"
+                target: {type: "hr_employee", id: "${steps.T1.created.id}"}
+                requester: "01900000-0000-7000-8000-000000000b01"
+                status: "approved"
         - id: T2
           actor: hr_approval_service
           command: hr.employee.activate
@@ -433,6 +467,15 @@ tests:
           actor: hr_admin
           command: hr.assignment.assign
           payload: {employee_id: "${steps.T3.created.id}", position_id: "${steps.T2.created.id}", is_primary: true}
+        - id: S1
+          seed:
+            - type: approval_request
+              id: "01900000-0000-7000-8000-00000000ea04"
+              data:
+                operation: "hr.employee.activate"
+                target: {type: "hr_employee", id: "${steps.T3.created.id}"}
+                requester: "01900000-0000-7000-8000-000000000b01"
+                status: "approved"
         - id: T5
           actor: hr_approval_service
           command: hr.employee.activate
@@ -498,6 +541,15 @@ tests:
           actor: hr_admin
           command: hr.assignment.assign
           payload: {employee_id: "${steps.T4.created.id}", position_id: "${steps.T3.created.id}", is_primary: true}
+        - id: S1
+          seed:
+            - type: approval_request
+              id: "01900000-0000-7000-8000-00000000ea05"
+              data:
+                operation: "hr.employee.activate"
+                target: {type: "hr_employee", id: "${steps.T4.created.id}"}
+                requester: "01900000-0000-7000-8000-000000000b01"
+                status: "approved"
         - id: T6
           actor: hr_approval_service
           command: hr.employee.activate
