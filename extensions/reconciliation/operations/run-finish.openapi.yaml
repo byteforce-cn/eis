@@ -1,0 +1,82 @@
+# operations/run-finish.openapi.yaml — 结束对账运行（reconciliation v1.0.0，ADR-0022）
+# 命令 reconciliation.run.finish：running → succeeded|failed；终态不可再迁。
+openapi: 3.1.0
+info:
+  title: 对账域 — 结束运行
+  version: 1.0.0
+  description: |
+    命令 reconciliation.run.finish。
+    - 只有 running 可结束；已终态 → 409（REC-409-002）
+    - failed 必须给出 failure_reason（机器可读摘要）
+    - 状态迁移写审计事件 reconciliation.run.finished
+
+paths:
+  /commands/reconciliation.run.finish:
+    post:
+      operationId: finishReconciliationRun
+      summary: 结束对账运行
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinishRunCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法 / REC-400-002 failed 缺少原因
+        '404':
+          description: EIS-404-001 运行不存在
+        '409':
+          description: REC-409-002 运行已终态 / EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    FinishRunCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: reconciliation.run.finish
+        payload:
+          type: object
+          required: [run_id, status]
+          properties:
+            run_id:
+              type: string
+              format: uuid
+            status:
+              type: string
+              enum: [succeeded, failed]
+            failure_reason:
+              type: string
+              nullable: true
+        idempotency_key:
+          type: string
+
+    Accepted:
+      type: object
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: accepted
+        event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        locator:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1

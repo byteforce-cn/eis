@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/reconciliation/object/difference/v1",
+  "title": "DifferenceRecord",
+  "description": "对账差异记录。分类受控枚举，禁止自由文本；差异处理只能通过 reconciliation.difference.resolve 命令（写审计），不得直接改记录。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["run_id", "category", "source_ref"],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "所属对账运行 ID"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "matched",
+            "amount_mismatch",
+            "missing_source",
+            "missing_target",
+            "resolved",
+            "written_off"
+          ],
+          "description": "受控分类：匹配 / 金额不符 / 来源缺失 / 目标缺失 / 已处理 / 已核销"
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "来源侧业务引用（单号 / 流水号），由对账域解释"
+        },
+        "target_ref": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "目标侧业务引用；缺失侧为 null"
+        },
+        "amount_delta": {
+          "type": ["string", "null"],
+          "pattern": "^-?\\d+(\\.\\d{1,2})?$",
+          "description": "金额差异（来源 - 目标，受控十进制字符串）"
+        },
+        "quantity_delta": {
+          "type": ["string", "null"],
+          "pattern": "^-?\\d+(\\.\\d+)?$",
+          "description": "数量差异（来源 - 目标，受控十进制字符串）"
+        },
+        "resolution_code": {
+          "type": ["string", "null"],
+          "enum": ["adjust", "write_off", "manual_match", "accept", null],
+          "description": "差异处理方式：调整 / 核销 / 人工匹配 / 接受；未处理为 null"
+        },
+        "resolved_by": {
+          "type": ["string", "null"],
+          "format": "uuid",
+          "description": "处理人主体 ID"
+        },
+        "resolved_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "处理时间（UTC）"
+        },
+        "note": {
+          "type": ["string", "null"],
+          "description": "人工说明（不参与分类判定）"
+        }
+      }
+    }
+  ]
+}

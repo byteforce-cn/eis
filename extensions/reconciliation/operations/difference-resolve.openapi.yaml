@@ -1,0 +1,83 @@
+# operations/difference-resolve.openapi.yaml — 处理对账差异（reconciliation v1.0.0，ADR-0022）
+# 命令 reconciliation.difference.resolve：调整/核销/人工匹配/接受；写审计，禁止直接改记录。
+openapi: 3.1.0
+info:
+  title: 对账域 — 处理差异
+  version: 1.0.0
+  description: |
+    命令 reconciliation.difference.resolve。
+    - 仅未处理分类（amount_mismatch / missing_source / missing_target）可处理；
+      matched / resolved / written_off → 409（REC-409-003）
+    - resolution_code = write_off → 终态 written_off；其余 → resolved
+    - 处理必须走命令并写审计事件 reconciliation.difference.resolved
+
+paths:
+  /commands/reconciliation.difference.resolve:
+    post:
+      operationId: resolveDifference
+      summary: 处理对账差异
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveDifferenceCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法 / REC-400-001 处理方式非法
+        '404':
+          description: EIS-404-001 差异记录不存在
+        '409':
+          description: REC-409-003 差异不可处理 / EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    ResolveDifferenceCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: reconciliation.difference.resolve
+        payload:
+          type: object
+          required: [difference_id, resolution_code]
+          properties:
+            difference_id:
+              type: string
+              format: uuid
+            resolution_code:
+              type: string
+              enum: [adjust, write_off, manual_match, accept]
+            note:
+              type: string
+              nullable: true
+        idempotency_key:
+          type: string
+
+    Accepted:
+      type: object
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: accepted
+        event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        locator:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1

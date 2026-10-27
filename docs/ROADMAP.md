@@ -11,6 +11,7 @@
 - [x] **边界说明（informative）**：编排边界（#35）、集成边界（#38）、运维与灾备（#39）——不新增合规等级；
 - [x] **可靠投递扩展**（issue #31/#34）：`extensions/outbox/`（Outbox + Inbox、`outbox.ddl`、OBX-001..012）+ `tools/relay`（状态机参考 + PG 语句模板）+ CI PostgreSQL 冒烟（ADR-0018）；
 - [x] **定时任务执行语义扩展**（issue #37）：`extensions/scheduler/`（`scheduler.ddl`、SCH-001..012、`kind: runtime`）+ `tools/scheduler`（幂等/互斥/租约抢占参考）+ CI PostgreSQL 冒烟（ADR-0021）；
+- [x] **业务对账扩展**（issue #36）：独立 `extensions/reconciliation/`（Run/Difference、`run_key` 幂等、受控分类 + 容忍度、差异处理走命令、只读报告）+ CI PostgreSQL 冒烟（ADR-0022）；
 - [ ] **多语言绑定生成**：`schema-compiler` 输出 Java / TypeScript 类型（seedj 与
       前端直接消费），生成物纳入 CI 一致性校验；
 - [ ] **工具增强**：`migration-generator` 支持索引/约束 diff；`contract-checker`

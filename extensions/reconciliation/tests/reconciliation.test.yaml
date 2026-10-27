@@ -1,0 +1,319 @@
+# 业务对账域验证用例（reconciliation v1.0.0，ADR-0022）
+# 运行：tools/e2e-runner extensions/reconciliation/tests/reconciliation.test.yaml
+suite: reconciliation
+x-common:
+  authz: &authz
+    principals:
+      - {id: "01900000-0000-7000-8000-000000000301", type: person, key: reconciler, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-000000000302", type: person, key: viewer, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    roles:
+      - {id: "01900000-0000-7000-8000-0000000003a1", key: reconciler, permissions: [reconciliation.run.start, reconciliation.run.finish, reconciliation.difference.resolve], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000003a2", key: viewer, permissions: [reconciliation.report.read], valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+    bindings:
+      - {id: "01900000-0000-7000-8000-0000000003b1", principal: "01900000-0000-7000-8000-000000000301", role: "01900000-0000-7000-8000-0000000003a1", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+      - {id: "01900000-0000-7000-8000-0000000003b2", principal: "01900000-0000-7000-8000-000000000302", role: "01900000-0000-7000-8000-0000000003a2", scope: {}, valid_from: "2026-01-01T00:00:00Z", recorded_at: "2026-01-01T00:00:00Z"}
+
+tests:
+  - name: "发起对账 → 落差异 → 结束运行（审计 + 版本历史）"
+    kind: scenario
+    scenario:
+      id: reconciliation.happy-path
+      authz: *authz
+      steps:
+        - id: T1
+          actor: reconciler
+          command: reconciliation.run.start
+          payload:
+            domain: order
+            period: "2026-10"
+            sequence: 1
+            tolerance_amount: "0.01"
+            tolerance_quantity: "0.0001"
+            source_count: 3
+            target_count: 2
+            differences:
+              - {category: amount_mismatch, source_ref: "ORD-1", target_ref: "PAY-1", amount_delta: "1.00"}
+              - {category: missing_target, source_ref: "ORD-2", amount_delta: "5.00", note: "支付侧无流水"}
+          events: [reconciliation.run.started]
+        - id: T2
+          actor: reconciler
+          command: reconciliation.run.finish
+          payload: {run_id: "${steps.T1.created.id}", status: succeeded}
+          events: [reconciliation.run.finished]
+      assert:
+        - {kind: object-field, type: reconciliation_run, id: "${steps.T1.created.id}", field: status, expect: succeeded}
+        - {kind: object-field, type: reconciliation_run, id: "${steps.T1.created.id}", field: run_key, expect: "order:2026-10:1"}
+        - {kind: object-field, type: reconciliation_run, id: "${steps.T1.created.id}", field: difference_count, expect: 2}
+        - {kind: object-field, type: reconciliation_run, id: "${steps.T1.created.id}", field: version, expect: "${steps.T2.result.version}"}
+        - {kind: object-count, type: reconciliation_run, where: {run_key: "order:2026-10:1"}, expect: 1}
+        - {kind: temporal-history, type: reconciliation_run, id: "${steps.T1.created.id}", expect_versions: 2}
+        - {kind: audit-chain, expect: valid, min_entries: 2}
+
+  - name: "run_key 幂等：同一 domain/period/sequence 重复发起 → REC-409-001"
+    kind: scenario
+    scenario:
+      id: reconciliation.duplicate-run-key
+      authz: *authz
+      steps:
+        - id: T1
+          actor: reconciler
+          command: reconciliation.run.start
+          payload:
+            domain: payment
+            period: "2026-10"
+            sequence: 1
+            tolerance_amount: "0"
+            tolerance_quantity: "0"
+            source_count: 1
+            target_count: 1
+          events: [reconciliation.run.started]
+        - id: T2
+          actor: reconciler
+          command: reconciliation.run.start
+          payload:
+            domain: payment
+            period: "2026-10"
+            sequence: 1
+            tolerance_amount: "0"
+            tolerance_quantity: "0"
+            source_count: 1
+            target_count: 1
+          expect_status: rejected
+          expect_code: REC-409-001
+      assert:
+        - {kind: object-count, type: reconciliation_run, where: {run_key: "payment:2026-10:1"}, expect: 1}
+        - {kind: events, types: [reconciliation.run.started], absent: [reconciliation.run.finished]}
+        - {kind: audit-chain, expect: valid, min_entries: 1}
+
+  - name: "显式重跑：同 (domain, period) 换 sequence 允许"
+    kind: scenario
+    scenario:
+      id: reconciliation.explicit-rerun
+      authz: *authz
+      steps:
+        - id: T1
+          actor: reconciler
+          command: reconciliation.run.start
+          payload: {domain: inventory, period: "2026-10", sequence: 1, tolerance_amount: "0", tolerance_quantity: "0.5", source_count: 2, target_count: 2}
+          events: [reconciliation.run.started]
+        - id: T2
+          actor: reconciler
+          command: reconciliation.run.start
+          payload: {domain: inventory, period: "2026-10", sequence: 2, tolerance_amount: "0", tolerance_quantity: "0.5", source_count: 2, target_count: 2}
+          events: [reconciliation.run.started]
+      assert:
+        - {kind: object-count, type: reconciliation_run, expect: 2}
+        - {kind: object-field, type: reconciliation_run, id: "${steps.T2.created.id}", field: run_key, expect: "inventory:2026-10:2"}
+
+  - name: "差异分类受控：非枚举分类 → REC-400-001"
+    kind: scenario
+    scenario:
+      id: reconciliation.invalid-category
+      authz: *authz
+      steps:
+        - id: T1
+          actor: reconciler
+          command: reconciliation.run.start
+          payload:
+            domain: order
+            period: "2026-10"
+            sequence: 9
+            tolerance_amount: "0.01"
+            tolerance_quantity: "0"
+            source_count: 1
+            target_count: 1
+            differences:
+              - {category: "free_text_guess", source_ref: "ORD-9"}
+          expect_status: rejected
+          expect_code: REC-400-001
+      assert:
+        - {kind: object-count, type: reconciliation_run, expect: 0}
+        - {kind: audit-chain, expect: valid}
+
+  - name: "差异处理：adjust → resolved；二次处理 → REC-409-003；matched 不可处理"
+    kind: scenario
+    scenario:
+      id: reconciliation.resolve-difference
+      authz: *authz
+      setup:
+        ids:
+          run: "01900000-0000-7000-8000-0000000f3101"
+          diff_open: "01900000-0000-7000-8000-0000000f3102"
+          diff_matched: "01900000-0000-7000-8000-0000000f3103"
+        objects:
+          - type: reconciliation_run
+            id: "${ids.run}"
+            data:
+              domain: order
+              period: "2026-10"
+              sequence: 3
+              run_key: "order:2026-10:3"
+              status: running
+              tolerance_amount: "0.01"
+              tolerance_quantity: "0"
+              source_count: 2
+              target_count: 2
+              difference_count: 2
+              started_at: "2026-10-01T00:00:00Z"
+              finished_at: null
+              failure_reason: null
+          - type: reconciliation_difference
+            id: "${ids.diff_open}"
+            data:
+              run_id: "${ids.run}"
+              category: amount_mismatch
+              source_ref: "ORD-31"
+              target_ref: "PAY-31"
+              amount_delta: "1.00"
+              quantity_delta: null
+              resolution_code: null
+              resolved_by: null
+              resolved_at: null
+              note: null
+          - type: reconciliation_difference
+            id: "${ids.diff_matched}"
+            data:
+              run_id: "${ids.run}"
+              category: matched
+              source_ref: "ORD-32"
+              target_ref: "PAY-32"
+              amount_delta: "0.00"
+              quantity_delta: null
+              resolution_code: null
+              resolved_by: null
+              resolved_at: null
+              note: null
+      steps:
+        - id: T1
+          actor: reconciler
+          command: reconciliation.difference.resolve
+          payload: {difference_id: "${ids.diff_open}", resolution_code: adjust, note: "补记差额"}
+          events: [reconciliation.difference.resolved]
+        - id: T2
+          actor: reconciler
+          command: reconciliation.difference.resolve
+          payload: {difference_id: "${ids.diff_open}", resolution_code: adjust}
+          expect_status: rejected
+          expect_code: REC-409-003
+        - id: T3
+          actor: reconciler
+          command: reconciliation.difference.resolve
+          payload: {difference_id: "${ids.diff_matched}", resolution_code: accept}
+          expect_status: rejected
+          expect_code: REC-409-003
+      assert:
+        - {kind: object-field, type: reconciliation_difference, id: "${ids.diff_open}", field: category, expect: resolved}
+        - {kind: object-field, type: reconciliation_difference, id: "${ids.diff_open}", field: resolution_code, expect: adjust}
+        - {kind: object-field, type: reconciliation_difference, id: "${ids.diff_open}", field: resolved_by, expect: "01900000-0000-7000-8000-000000000301"}
+        - {kind: object-field, type: reconciliation_difference, id: "${ids.diff_matched}", field: category, expect: matched}
+        - {kind: audit-chain, expect: valid, min_entries: 1}
+
+  - name: "write_off → written_off；差异版本追加"
+    kind: scenario
+    scenario:
+      id: reconciliation.write-off
+      authz: *authz
+      setup:
+        ids: {run: "01900000-0000-7000-8000-0000000f3201", diff: "01900000-0000-7000-8000-0000000f3202"}
+        objects:
+          - type: reconciliation_run
+            id: "${ids.run}"
+            data:
+              domain: inventory
+              period: "2026-10"
+              sequence: 1
+              run_key: "inventory:2026-10:1"
+              status: running
+              tolerance_amount: "0"
+              tolerance_quantity: "0.5"
+              source_count: 1
+              target_count: 1
+              difference_count: 1
+              started_at: "2026-10-01T00:00:00Z"
+              finished_at: null
+              failure_reason: null
+          - type: reconciliation_difference
+            id: "${ids.diff}"
+            data:
+              run_id: "${ids.run}"
+              category: missing_source
+              source_ref: "ITEM-1"
+              target_ref: null
+              amount_delta: null
+              quantity_delta: "-2.0000"
+              resolution_code: null
+              resolved_by: null
+              resolved_at: null
+              note: null
+      steps:
+        - id: T1
+          actor: reconciler
+          command: reconciliation.difference.resolve
+          payload: {difference_id: "${ids.diff}", resolution_code: write_off}
+          events: [reconciliation.difference.resolved]
+      assert:
+        - {kind: object-field, type: reconciliation_difference, id: "${ids.diff}", field: category, expect: written_off}
+        - {kind: temporal-history, type: reconciliation_difference, id: "${ids.diff}", expect_versions: 2}
+
+  - name: "运行终态：终态再次 finish → REC-409-002；failed 必须给原因"
+    kind: scenario
+    scenario:
+      id: reconciliation.finish-state
+      authz: *authz
+      setup:
+        ids: {run: "01900000-0000-7000-8000-0000000f3301"}
+        objects:
+          - type: reconciliation_run
+            id: "${ids.run}"
+            data:
+              domain: ledger
+              period: "2026-10"
+              sequence: 1
+              run_key: "ledger:2026-10:1"
+              status: running
+              tolerance_amount: "0.01"
+              tolerance_quantity: "0"
+              source_count: 1
+              target_count: 1
+              difference_count: 0
+              started_at: "2026-10-01T00:00:00Z"
+              finished_at: null
+              failure_reason: null
+      steps:
+        - id: T1
+          actor: reconciler
+          command: reconciliation.run.finish
+          payload: {run_id: "${ids.run}", status: failed}
+          expect_status: rejected
+          expect_code: REC-400-002
+        - id: T2
+          actor: reconciler
+          command: reconciliation.run.finish
+          payload: {run_id: "${ids.run}", status: failed, failure_reason: "source_timeout"}
+          events: [reconciliation.run.finished]
+        - id: T3
+          actor: reconciler
+          command: reconciliation.run.finish
+          payload: {run_id: "${ids.run}", status: succeeded}
+          expect_status: rejected
+          expect_code: REC-409-002
+      assert:
+        - {kind: object-field, type: reconciliation_run, id: "${ids.run}", field: status, expect: failed}
+        - {kind: object-field, type: reconciliation_run, id: "${ids.run}", field: failure_reason, expect: source_timeout}
+        - {kind: audit-chain, expect: valid, min_entries: 1}
+
+  - name: "授权：只读主体发起对账 → NO_PERMISSION"
+    kind: scenario
+    scenario:
+      id: reconciliation.authz-denied
+      authz: *authz
+      steps:
+        - id: T1
+          actor: viewer
+          command: reconciliation.run.start
+          payload: {domain: order, period: "2026-10", sequence: 1, tolerance_amount: "0", tolerance_quantity: "0", source_count: 1, target_count: 1}
+          expect_status: rejected
+          expect_code: NO_PERMISSION
+      assert:
+        - {kind: object-count, type: reconciliation_run, expect: 0}
+        - {kind: audit-chain, expect: valid}
