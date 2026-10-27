@@ -20,7 +20,9 @@ python3 tools/e2e-runner --all
 | `audit-verifier` | 审计验证（封装 `verify.tool`，含冻结向量） | 审计链文件/夹具目录 | 通过/失败 + 错误明细 | ✅ |
 | `e2e-runner` | 端到端执行器（流水线 + 用例 + 场景） | `*.test.yaml`、`cases/*/scenarios` | 报告 | ✅ |
 | `lib/kernel.py` | 参考内核（可执行规格） | 场景（YAML） | 命令流执行 + 断言 | ✅ |
+| `relay` | Outbox/Inbox 投递状态机参考 + PG 语句模板 | 确定性自测 / `--print-sql` | 断言、SQL 模板 | ✅ |
 | `ci/ddl-smoke.sql` | PostgreSQL 冒烟断言 | 已建库（core+扩展 DDL） | 断言通过/失败 | ✅ |
+| `ci/outbox-smoke.sql` | Outbox/Inbox DDL 冒烟（唯一约束/状态机/租约/Inbox） | 已建 outbox 表 | 断言通过/失败 | ✅ |
 
 ## 常用命令
 
@@ -35,6 +37,8 @@ python3 tools/audit-verifier --vector               # 冻结测试向量
 python3 tools/audit-verifier chain.json --json      # 链验证
 python3 tools/e2e-runner --all                      # 全量（推荐入口）
 python3 tools/lib/kernel.py                         # 内核自测
+python3 tools/relay --self-test                     # Outbox/Inbox 状态机自测
+python3 tools/relay --print-sql                     # PostgreSQL 投递语句模板
 ```
 
 ## 约定

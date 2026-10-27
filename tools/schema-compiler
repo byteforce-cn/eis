@@ -196,6 +196,12 @@ def object_fields(schema_path: Path):
     return title, meta, domain, required
 
 
+def extension_kind(ext_root) -> str:
+    """扩展类别：domain（默认，有业务对象）/ runtime（跨域运行时，无业务对象）。"""
+    manifest = load_yaml(Path(ext_root) / "manifest.yaml").get("extension", {}) or {}
+    return manifest.get("kind", "domain")
+
+
 def compile_extension(ext_id: str) -> tuple[str, list[str]]:
     """编译单个扩展，返回 (DDL 文本, 表名列表)。"""
     ext_root = EXT_DIR / ext_id
@@ -322,6 +328,9 @@ def check_core(report: Report) -> None:
 
 def check_extensions(report: Report) -> None:
     for ext_root in sorted(p for p in EXT_DIR.iterdir() if p.is_dir()):
+        if (ext_root / "manifest.yaml").exists() and extension_kind(ext_root) == "runtime":
+            report.ok(f"extensions/{ext_root.name} 运行时扩展（无业务对象；DDL 由扩展自带）")
+            continue
         try:
             ddl, tables = compile_extension(ext_root.name)
         except Exception as exc:  # noqa: BLE001 — 汇总所有失败
@@ -344,7 +353,9 @@ def cmd_compile(args) -> int:
     out_dir = Path(args.out) if args.out else BUILD_DIR / "ddl"
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.all:
-        ext_ids = [p.name for p in sorted(EXT_DIR.iterdir()) if p.is_dir()]
+        ext_ids = [p.name for p in sorted(EXT_DIR.iterdir()) if p.is_dir()
+                   and (p / "manifest.yaml").exists()
+                   and extension_kind(p) != "runtime"]
     elif args.extension:
         ext_ids = [args.extension]
     else:
@@ -355,6 +366,9 @@ def cmd_compile(args) -> int:
         if not (EXT_DIR / ext_id / "manifest.yaml").exists():
             print(f"未知扩展: {ext_id}", file=sys.stderr)
             rc = 2
+            continue
+        if extension_kind(EXT_DIR / ext_id) == "runtime":
+            print(f"[ok  ] {ext_id}: 运行时扩展（无业务对象，跳过 DDL 编译）")
             continue
         ddl, tables = compile_extension(ext_id)
         target = out_dir / f"{ext_id}.ddl"

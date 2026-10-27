@@ -1,0 +1,135 @@
+# delivery.rules.yaml — 可靠投递扩展（Outbox/Inbox）契约规则（ADR-0018）
+# 归属：extensions/outbox（跨域运行时扩展）；不改核心六类契约。
+# 判定：`tools/relay`（参考实现）与 `extensions/outbox/outbox.ddl` 必须遵守本表。
+version: "1.0.0"
+
+delivery_rules:
+  - id: "OBX-001"
+    name: "原子捕获"
+    level: "MUST"
+    statement: >
+      Outbox 记录与业务数据写入必须在同一本地事务内提交；跨库事务禁止使用 Outbox 承载
+      （应使用事务日志捕获 CDC 或流程编排），禁止双写。
+    enforced_by: ["outbox.ddl", "reference-relay"]
+    error_code: "OBX-CAPTURE-NOT-ATOMIC"
+
+  - id: "OBX-002"
+    name: "至少一次投递"
+    level: "MUST"
+    statement: >
+      Relay 只承诺 at-least-once 到达消息中间件，不得承诺 exactly-once；重复由消费方按
+      Inbox 语义（OBX-012）或自身幂等消除。
+    enforced_by: ["reference-relay"]
+    error_code: "OBX-EXACTLY-ONCE-CLAIMED"
+
+  - id: "OBX-003"
+    name: "分片键为聚合根 ID"
+    level: "MUST"
+    statement: >
+      顺序分片键必须是 aggregate_id（聚合根 ID），不得使用 outbox 行 ID、event_id 或
+      created_at 作为分片键；分片内串行，分片间并行。
+    enforced_by: ["outbox.ddl", "reference-relay"]
+    error_code: "OBX-SHARD-KEY-INVALID"
+
+  - id: "OBX-004"
+    name: "聚合内顺序"
+    level: "MUST"
+    statement: >
+      同一 aggregate_id 的事件按 seq 单调递增投递；seq 在聚合内唯一且从 1 开始连续。
+      前一 seq 未 sent 时，后续 seq 不得被认领或投递（顺序屏障）；跨聚合不承诺顺序。
+    enforced_by: ["outbox.ddl", "reference-relay"]
+    error_code: "OBX-ORDER-VIOLATION"
+
+  - id: "OBX-005"
+    name: "确认后置"
+    level: "MUST"
+    statement: >
+      必须在消息中间件确认（publisher confirm / acks=all 等）成功后才可标记 sent；
+      禁止先标记 sent 再投递，禁止在未确认时删除记录。
+    enforced_by: ["reference-relay"]
+    error_code: "OBX-ACK-BEFORE-PUBLISH"
+
+  - id: "OBX-006"
+    name: "状态机与租约回收"
+    level: "MUST"
+    statement: >
+      状态机为 pending → processing → sent；失败可回 pending，不可重试或超限进 dead。
+      processing 必须持有租约（lease_owner + lease_expires_at）；租约过期的行可被其它
+      relay 回收，旧持有者的确认/失败以租约归属校验拒绝。
+    enforced_by: ["outbox.ddl", "reference-relay"]
+    error_code: "OBX-LEASE-VIOLATION"
+
+  - id: "OBX-007"
+    name: "失败退避与死信"
+    level: "MUST"
+    statement: >
+      可重试失败按指数退避（有上限）重试；不可重试失败（schema 错误、payload 不可序列化、
+      broker 明确拒绝）直接进 dead；禁止无限重试；dead 必须可观测、可重放。
+    enforced_by: ["reference-relay"]
+    error_code: "OBX-RETRY-UNBOUNDED"
+
+  - id: "OBX-008"
+    name: "死信可重放"
+    level: "MUST"
+    statement: >
+      dead 记录的重放必须显式触发（恢复后重新入 pending/processing），不得由 relay 自动
+      无限重放；重放保留原 event_id 与 (aggregate_id, seq)。
+    enforced_by: ["reference-relay"]
+    error_code: "OBX-DEAD-UNRECOVERABLE"
+
+  - id: "OBX-009"
+    name: "清理与回放边界"
+    level: "SHOULD"
+    statement: >
+      sent 行必须定期清理或按分区 drop；outbox 是投递真相源，不是事件历史。历史回放必须
+      使用事件存储或消息中间件 retention，不得从 outbox 表回放。
+    enforced_by: ["operations"]
+    error_code: "OBX-REPLAY-FROM-OUTBOX"
+
+  - id: "OBX-010"
+    name: "分片内串行"
+    level: "MUST"
+    statement: >
+      同一分片（aggregate_id）同一时刻只能由一个 relay 实例处理；实现可用分片范围配置或
+      按聚合行锁（FOR UPDATE SKIP LOCKED + 顺序屏障），但不得无分片并行读同一批行。
+    enforced_by: ["reference-relay"]
+    error_code: "OBX-SHARD-CONCURRENCY"
+
+  - id: "OBX-011"
+    name: "指标分段"
+    level: "MUST"
+    statement: >
+      必须暴露 pending 数、最老 pending 年龄、失败率、死信数；生产段（outbox lag）与消费段
+      （consumer group lag）必须分段监控，不得合并为单一滞后指标。
+    enforced_by: ["reference-relay", "operations"]
+    error_code: "OBX-METRICS-MISSING"
+
+  - id: "OBX-012"
+    name: "Inbox 幂等与死信"
+    level: "MUST"
+    statement: >
+      消费方以 (consumer_group, event_id) 唯一约束保证幂等；处理状态为
+      processing / done / dead；processing 持有租约，done 的重复投递直接忽略，dead 需显式
+      重放。不同 consumer_group 独立处理同一事件。
+    enforced_by: ["outbox.ddl", "reference-relay"]
+    error_code: "OBX-INBOX-DUPLICATE"
+
+not_in_contract:
+  - "分片数、线程模型与 relay 部署形态（嵌入进程 / sidecar / 共享服务）"
+  - "消息中间件选型（Kafka / RabbitMQ / 其他）与客户端配置"
+  - "具体 SQL 写法（FOR UPDATE SKIP LOCKED 等仅作为参考实现与 docs）"
+  - "exactly-once 投递（本契约明确不承诺）"
+  - "outbox 作为事件历史/回放源（明确禁止）"
+  - "跨库双写（明确禁止；使用 CDC 或流程编排）"
+
+tests:
+  - name: "状态机与唯一约束"
+    expect: "outbox.ddl 含 (aggregate_id, seq) 唯一、event_id 唯一、状态枚举与租约约束"
+  - name: "顺序屏障"
+    expect: "seq=2 不得在 seq=1 sent 前被认领"
+  - name: "确认后置与租约回收"
+    expect: "未确认不标记 sent；租约过期可被其它 relay 回收"
+  - name: "失败退避与死信"
+    expect: "可重试失败退避；不可重试或超限 → dead；dead 可显式重放"
+  - name: "Inbox 幂等"
+    expect: "同 (consumer_group, event_id) 只处理一次；done 重复忽略；dead 需重放"

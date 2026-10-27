@@ -21,6 +21,7 @@ extensions/{domain}/
 |------|------|
 | `extension.id` | 全局唯一标识 |
 | `extension.version` | 扩展版本（独立于核心） |
+| `extension.kind` | 可选：`domain`（默认，业务扩展）/ `runtime`（跨域运行时扩展，无业务对象；DDL 由扩展自带，`schema-compiler` 跳过编译） |
 | `extension.core_version` | 依赖的核心版本 |
 | `dependencies` / `conflicts` | 依赖与冲突（组合校验用） |
 | `objects` | 业务对象清单（name → schema 路径） |
@@ -68,6 +69,7 @@ composition:
 | `inventory` | 1.0.0 | 物品/出入库/库存余额；收货；库存非负 | 完整（含可执行用例） |
 | `approval` | 1.1.0 | 审批申请/决定/区块；提交与决定、区块流转（顺序语义）、打回重确认、撤回；禁止自审 | 完整（含可执行用例） |
 | `hr` | 1.2.0 | 组织/岗位/员工（含雇佣类型/工作地点）/任职/供给任务；双时间轴；证件散列防重；`activate`/`cancel` 仅限系统主体（ADR-0013） | 完整（含可执行用例与 V201/V202 迁移） |
+| `outbox` | 1.0.0 | 跨域运行时：Outbox/Inbox 投递契约（`kind: runtime`，无业务对象）；`outbox.ddl` + OBX-001..012 + `tools/relay` | 完整（static/cli 用例 + CI PostgreSQL 冒烟；ADR-0018） |
 
 ## 6. 命令处理器注册（可执行用例）
 

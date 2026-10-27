@@ -1,0 +1,444 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""relay — EIS Outbox/Inbox 投递参考实现（ADR-0018，语义参考，非生产 relay）
+
+契约：extensions/outbox/（outbox.ddl + rules/delivery.rules.yaml）
+本实现只依赖 Python 3.10+ 标准库，提供：
+  1. 投递状态机参考：原子捕获、聚合计顺序屏障、租约回收、确认后置、退避/死信；
+  2. Inbox 状态机参考：(consumer_group, event_id) 幂等 + processing/done/dead + 死信重放；
+  3. PostgreSQL 语句模板（--print-sql）：claim 使用 FOR UPDATE SKIP LOCKED，按聚合分片。
+生产 relay 应使用真实 broker 客户端与 PostgreSQL 驱动；本工具不绑定中间件与部署形态。
+
+用法:
+  relay --self-test
+  relay --print-sql
+"""
+from __future__ import annotations
+
+import argparse
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+
+UTC = timezone.utc
+
+OUTBOX_STATUSES = ("pending", "processing", "sent", "dead")
+INBOX_STATUSES = ("processing", "done", "dead")
+MAX_ATTEMPTS_DEFAULT = 5
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _backoff(attempts: int, base_seconds: int = 1, cap_seconds: int = 60) -> timedelta:
+    """指数退避（确定性）：1s, 2s, 4s, ... 上限 cap。"""
+    return timedelta(seconds=min(base_seconds * (2 ** max(attempts - 1, 0)), cap_seconds))
+
+
+@dataclass
+class OutboxMessage:
+    aggregate_type: str
+    aggregate_id: str
+    seq: int
+    event_id: str
+    event_type: str
+    payload: dict
+    created_at: datetime
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    status: str = "pending"
+    attempts: int = 0
+    next_attempt_at: datetime | None = None
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    last_error: str | None = None
+    sent_at: datetime | None = None
+    dead_at: datetime | None = None
+
+    def __post_init__(self):
+        if self.next_attempt_at is None:
+            self.next_attempt_at = self.created_at
+
+
+@dataclass
+class InboxMessage:
+    consumer_group: str
+    event_id: str
+    received_at: datetime
+    status: str = "processing"
+    attempts: int = 0
+    next_attempt_at: datetime | None = None
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    last_error: str | None = None
+    done_at: datetime | None = None
+    dead_at: datetime | None = None
+
+    def __post_init__(self):
+        if self.next_attempt_at is None:
+            self.next_attempt_at = self.received_at
+
+
+class OutboxStore:
+    """Outbox 状态机（内存参考实现；生产用 outbox.ddl + SQL 模板）。"""
+
+    def __init__(self, lease_seconds: int = 30):
+        self.lease_seconds = lease_seconds
+        self.messages: list[OutboxMessage] = []
+
+    # -- 捕获（与业务写入同事务；此处以「唯一约束 + 单次调用」表达） -------
+    def enqueue(self, aggregate_type: str, aggregate_id: str, seq: int, event_id: str,
+                event_type: str, payload: dict, now: datetime | None = None) -> OutboxMessage:
+        if seq < 1:
+            raise ValueError("seq 必须 >= 1（聚合内单调递增）")
+        if any(m.event_id == event_id for m in self.messages):
+            raise ValueError(f"event_id 重复（原子捕获要求事件只入 Outbox 一次）: {event_id}")
+        if any(m.aggregate_id == aggregate_id and m.seq == seq for m in self.messages):
+            raise ValueError(f"(aggregate_id, seq) 重复: {aggregate_id}/{seq}")
+        message = OutboxMessage(aggregate_type, aggregate_id, seq, event_id, event_type,
+                                payload, now or _now())
+        self.messages.append(message)
+        return message
+
+    def _reclaim_expired(self, now: datetime) -> None:
+        for m in self.messages:
+            if m.status == "processing" and m.lease_expires_at and m.lease_expires_at <= now:
+                m.status = "pending"
+                m.lease_owner = None
+                m.lease_expires_at = None
+
+    def claim(self, owner: str, now: datetime | None = None, limit: int = 10) -> list[OutboxMessage]:
+        """按聚合分片认领：聚合内只有最小 seq 的未 sent 事件可被认领（顺序屏障）。"""
+        now = now or _now()
+        self._reclaim_expired(now)
+        # 每个聚合的最小未发送 seq（顺序屏障）
+        barrier: dict[str, int] = {}
+        for m in self.messages:
+            if m.status == "sent":
+                continue
+            current = barrier.get(m.aggregate_id)
+            if current is None or m.seq < current:
+                barrier[m.aggregate_id] = m.seq
+        candidates = [
+            m for m in self.messages
+            if m.status == "pending" and m.next_attempt_at <= now
+            and barrier.get(m.aggregate_id) == m.seq
+        ]
+        candidates.sort(key=lambda m: (m.next_attempt_at, m.created_at, m.aggregate_id, m.seq))
+        claimed = candidates[:limit]
+        for m in claimed:
+            m.status = "processing"
+            m.lease_owner = owner
+            m.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
+        return claimed
+
+    def mark_sent(self, message: OutboxMessage, owner: str, now: datetime | None = None) -> None:
+        """确认后置：只有 broker 确认后才可标记 sent。"""
+        if message.status != "processing" or message.lease_owner != owner:
+            raise ValueError("只能由租约持有者在 processing 状态标记 sent")
+        message.status = "sent"
+        message.sent_at = now or _now()
+        message.lease_owner = None
+        message.lease_expires_at = None
+        message.last_error = None
+
+    def mark_failure(self, message: OutboxMessage, owner: str, error: str,
+                     retryable: bool = True, now: datetime | None = None,
+                     max_attempts: int = MAX_ATTEMPTS_DEFAULT) -> str:
+        """投递失败：可重试 → pending + 指数退避；不可重试或超限 → dead。"""
+        if message.status != "processing" or message.lease_owner != owner:
+            raise ValueError("只能由租约持有者记录失败")
+        now = now or _now()
+        message.attempts += 1
+        message.last_error = error
+        message.lease_owner = None
+        message.lease_expires_at = None
+        if not retryable or message.attempts >= max_attempts:
+            message.status = "dead"
+            message.dead_at = now
+            return "dead"
+        message.status = "pending"
+        message.next_attempt_at = now + _backoff(message.attempts)
+        return "pending"
+
+    def replay_dead(self, message: OutboxMessage, now: datetime | None = None) -> None:
+        if message.status != "dead":
+            raise ValueError("只有 dead 消息可重放")
+        message.status = "pending"
+        message.attempts = 0
+        message.next_attempt_at = now or _now()
+        message.dead_at = None
+        message.last_error = None
+
+    def metrics(self, now: datetime | None = None) -> dict:
+        now = now or _now()
+        pending = [m for m in self.messages if m.status == "pending"]
+        oldest = min((m.created_at for m in pending), default=None)
+        return {
+            "pending": len(pending),
+            "processing": sum(1 for m in self.messages if m.status == "processing"),
+            "dead": sum(1 for m in self.messages if m.status == "dead"),
+            "oldest_pending_age_seconds": int((now - oldest).total_seconds()) if oldest else 0,
+            "attempts": sum(m.attempts for m in self.messages),
+        }
+
+
+class InboxStore:
+    """Inbox 状态机（消费段幂等；生产用 outbox.ddl 的 inbox_message）。"""
+
+    def __init__(self, lease_seconds: int = 30):
+        self.lease_seconds = lease_seconds
+        self.messages: dict[tuple[str, str], InboxMessage] = {}
+
+    def begin(self, consumer_group: str, event_id: str, owner: str,
+              now: datetime | None = None) -> tuple[str, InboxMessage | None]:
+        """开始处理：new / retry / duplicate / dead；duplicate 表示已处理或租约仍有效。"""
+        now = now or _now()
+        key = (consumer_group, event_id)
+        current = self.messages.get(key)
+        if current is None:
+            message = InboxMessage(consumer_group, event_id, now)
+            self.messages[key] = message
+            message.lease_owner = owner
+            message.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
+            return "new", message
+        if current.status == "done":
+            return "duplicate", current
+        if current.status == "dead":
+            return "dead", current
+        if current.lease_owner and current.lease_expires_at and current.lease_expires_at > now:
+            return "duplicate", current
+        if current.next_attempt_at and current.next_attempt_at > now:
+            return "duplicate", current
+        current.lease_owner = owner
+        current.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
+        return "retry", current
+
+    def complete(self, consumer_group: str, event_id: str, owner: str,
+                 now: datetime | None = None) -> None:
+        message = self.messages[(consumer_group, event_id)]
+        if message.lease_owner != owner:
+            raise ValueError("只能由租约持有者完成")
+        message.status = "done"
+        message.done_at = now or _now()
+        message.lease_owner = None
+        message.lease_expires_at = None
+
+    def fail(self, consumer_group: str, event_id: str, owner: str, error: str,
+             retryable: bool = True, now: datetime | None = None,
+             max_attempts: int = MAX_ATTEMPTS_DEFAULT) -> str:
+        message = self.messages[(consumer_group, event_id)]
+        if message.lease_owner != owner:
+            raise ValueError("只能由租约持有者记录失败")
+        now = now or _now()
+        message.attempts += 1
+        message.last_error = error
+        message.lease_owner = None
+        message.lease_expires_at = None
+        if not retryable or message.attempts >= max_attempts:
+            message.status = "dead"
+            message.dead_at = now
+            return "dead"
+        message.next_attempt_at = now + _backoff(message.attempts)
+        return "retry"
+
+    def replay_dead(self, consumer_group: str, event_id: str,
+                    now: datetime | None = None) -> None:
+        message = self.messages[(consumer_group, event_id)]
+        if message.status != "dead":
+            raise ValueError("只有 dead 消息可重放")
+        message.status = "processing"
+        message.attempts = 0
+        message.next_attempt_at = now or _now()
+        message.dead_at = None
+        message.last_error = None
+
+    def metrics(self) -> dict:
+        return {
+            "processing": sum(1 for m in self.messages.values() if m.status == "processing"),
+            "done": sum(1 for m in self.messages.values() if m.status == "done"),
+            "dead": sum(1 for m in self.messages.values() if m.status == "dead"),
+            "attempts": sum(m.attempts for m in self.messages.values()),
+        }
+
+
+SQL_STATEMENTS = {
+    "claim": """-- 认领到期消息：按聚合分片，聚合内顺序屏障；分片间可并行（FOR UPDATE SKIP LOCKED）
+BEGIN;
+SELECT o.id
+  FROM outbox_message o
+ WHERE o.status IN ('pending', 'processing')
+   AND o.next_attempt_at <= now()
+   AND (o.status = 'pending' OR o.lease_expires_at < now())
+   AND NOT EXISTS (
+         SELECT 1 FROM outbox_message earlier
+          WHERE earlier.aggregate_id = o.aggregate_id
+            AND earlier.seq < o.seq
+            AND earlier.status <> 'sent')
+ ORDER BY o.next_attempt_at, o.created_at
+   FOR UPDATE SKIP LOCKED
+ LIMIT $1;
+UPDATE outbox_message
+   SET status = 'processing', lease_owner = $2,
+       lease_expires_at = now() + make_interval(secs => $3)
+ WHERE id = ANY($4);
+COMMIT;""",
+    "mark_sent": """-- 确认后置：broker 确认后才标记 sent
+UPDATE outbox_message
+   SET status = 'sent', sent_at = now(), lease_owner = NULL,
+       lease_expires_at = NULL, last_error = NULL
+ WHERE id = $1 AND status = 'processing' AND lease_owner = $2;""",
+    "mark_failure": """-- 失败：可重试 → pending + 指数退避；不可重试或超限 → dead
+UPDATE outbox_message
+   SET status = CASE WHEN $3 THEN 'dead' ELSE 'pending' END,
+       attempts = attempts + 1,
+       next_attempt_at = now() + make_interval(secs => $4),
+       dead_at = CASE WHEN $3 THEN now() ELSE NULL END,
+       lease_owner = NULL, lease_expires_at = NULL, last_error = $5
+ WHERE id = $1 AND status = 'processing' AND lease_owner = $2;""",
+    "reclaim_expired": """-- 租约回收：processing 超时回到 pending（由下一轮 relay 重新认领）
+UPDATE outbox_message
+   SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL
+ WHERE status = 'processing' AND lease_expires_at < now();""",
+    "inbox_begin": """-- Inbox：同 (consumer_group, event_id) 只处理一次；done/有效租约 → 不返回行
+INSERT INTO inbox_message
+       (consumer_group, event_id, status, lease_owner, lease_expires_at)
+VALUES ($1, $2, 'processing', $3, now() + make_interval(secs => $4))
+ON CONFLICT (consumer_group, event_id) DO UPDATE
+   SET status = 'processing', lease_owner = EXCLUDED.lease_owner,
+       lease_expires_at = EXCLUDED.lease_expires_at, next_attempt_at = now()
+ WHERE inbox_message.status = 'dead'
+    OR (inbox_message.status = 'processing'
+        AND inbox_message.next_attempt_at <= now()
+        AND (inbox_message.lease_expires_at IS NULL
+             OR inbox_message.lease_expires_at < now()))
+RETURNING consumer_group, event_id, status, attempts;""",
+    "inbox_complete": """UPDATE inbox_message
+   SET status = 'done', done_at = now(), lease_owner = NULL,
+       lease_expires_at = NULL, last_error = NULL
+ WHERE consumer_group = $1 AND event_id = $2 AND lease_owner = $3;""",
+    "inbox_fail": """UPDATE inbox_message
+   SET status = CASE WHEN $4 THEN 'dead' ELSE 'processing' END,
+       attempts = attempts + 1,
+       next_attempt_at = now() + make_interval(secs => $5),
+       dead_at = CASE WHEN $4 THEN now() ELSE NULL END,
+       lease_owner = NULL, lease_expires_at = NULL, last_error = $6
+ WHERE consumer_group = $1 AND event_id = $2 AND lease_owner = $3;""",
+    "inbox_replay_dead": """UPDATE inbox_message
+   SET status = 'processing', attempts = 0, next_attempt_at = now(),
+       dead_at = NULL, last_error = NULL
+ WHERE consumer_group = $1 AND event_id = $2 AND status = 'dead';""",
+}
+
+
+def cmd_self_test(args) -> int:
+    report = []
+    base = datetime(2026, 10, 27, 9, 0, tzinfo=UTC)
+
+    def expect(name, cond):
+        report.append((name, cond))
+
+    store = OutboxStore(lease_seconds=30)
+    store.enqueue("demo", "agg-1", 1, "evt-1", "demo.created", {"n": 1}, now=base)
+    store.enqueue("demo", "agg-1", 2, "evt-2", "demo.updated", {"n": 2}, now=base)
+    store.enqueue("demo", "agg-2", 1, "evt-3", "demo.created", {"n": 3}, now=base)
+    try:
+        store.enqueue("demo", "agg-1", 2, "evt-4", "demo.updated", {"n": 4}, now=base)
+        expect("(aggregate_id, seq) 唯一", False)
+    except ValueError:
+        expect("(aggregate_id, seq) 唯一", True)
+
+    first = store.claim("relay-a", now=base + timedelta(seconds=1))
+    expect("分片间并行：两个聚合各认领 seq=1",
+           len(first) == 2 and {m.aggregate_id for m in first} == {"agg-1", "agg-2"})
+    expect("聚合内顺序屏障：seq=2 不得先于 seq=1",
+           all(m.seq == 1 for m in first))
+    second = store.claim("relay-b", now=base + timedelta(seconds=1))
+    expect("已认领的聚合不得被其它 relay 重复认领", second == [])
+
+    store.mark_sent(first[0], "relay-a", now=base + timedelta(seconds=2))
+    after_ack = store.claim("relay-a", now=base + timedelta(seconds=3))
+    expect("确认后同聚合 seq=2 可投递", [m.seq for m in after_ack] == [2])
+
+    store.mark_sent(after_ack[0], "relay-a", now=base + timedelta(seconds=4))
+
+    # 失败 → 退避 → 重试 → 死信
+    store.enqueue("demo", "agg-3", 1, "evt-5", "demo.created", {}, now=base)
+    claimed = store.claim("relay-a", now=base + timedelta(seconds=5))
+    target = next(m for m in claimed if m.aggregate_id == "agg-3")
+    state = store.mark_failure(target, "relay-a", "timeout", retryable=True,
+                               now=base + timedelta(seconds=6))
+    expect("可重试失败回到 pending 并退避", state == "pending"
+           and target.next_attempt_at > base + timedelta(seconds=6))
+    expect("退避期内不重复认领",
+           all(m.id != target.id for m in store.claim("relay-a", now=base + timedelta(seconds=6))))
+    reclaimed = store.claim("relay-a", now=base + timedelta(seconds=20))
+    target = next(m for m in reclaimed if m.id == target.id)
+    expect("退避到期后可重新认领", target.status == "processing")
+    state = store.mark_failure(target, "relay-a", "schema 错误", retryable=False,
+                               now=base + timedelta(seconds=21))
+    expect("不可重试失败直接 dead", state == "dead" and target.status == "dead")
+    store.replay_dead(target, now=base + timedelta(seconds=22))
+    expect("死信可重放", target.status == "pending" and target.attempts == 0)
+
+    # 租约回收
+    store.enqueue("demo", "agg-4", 1, "evt-6", "demo.created", {}, now=base)
+    leased = store.claim("relay-a", now=base + timedelta(seconds=30))
+    expect("租约内归属 relay-a", all(m.lease_owner == "relay-a" for m in leased))
+    reclaimed = store.claim("relay-b", now=base + timedelta(seconds=61))
+    expect("租约过期可被其它 relay 回收",
+           any(m.aggregate_id == "agg-4" and m.lease_owner == "relay-b" for m in reclaimed))
+
+    metrics = store.metrics(now=base + timedelta(seconds=62))
+    expect("指标含 pending/processing/dead/oldest_pending_age",
+           {"pending", "processing", "dead", "oldest_pending_age_seconds"} <= set(metrics))
+
+    # Inbox：幂等 / 死信 / 重放
+    inbox = InboxStore()
+    status, message = inbox.begin("group-a", "evt-1", "consumer-1", now=base)
+    expect("Inbox 首次处理", status == "new")
+    expect("Inbox 处理中重复投递被忽略",
+           inbox.begin("group-a", "evt-1", "consumer-2", now=base)[0] == "duplicate")
+    inbox.complete("group-a", "evt-1", "consumer-1", now=base + timedelta(seconds=1))
+    expect("Inbox 已完成重复投递被忽略",
+           inbox.begin("group-a", "evt-1", "consumer-2", now=base + timedelta(seconds=2))[0] == "duplicate")
+    expect("不同 consumer_group 独立处理",
+           inbox.begin("group-b", "evt-1", "consumer-3", now=base)[0] == "new")
+    status, message = inbox.begin("group-b", "evt-2", "consumer-1", now=base)
+    inbox.fail("group-b", "evt-2", "consumer-1", "不可序列化", retryable=False,
+               now=base + timedelta(seconds=1))
+    expect("Inbox 不可重试失败 → dead",
+           inbox.messages[("group-b", "evt-2")].status == "dead")
+    expect("Inbox dead 需显式重放",
+           inbox.begin("group-b", "evt-2", "consumer-2", now=base + timedelta(seconds=2))[0] == "dead")
+    inbox.replay_dead("group-b", "evt-2", now=base + timedelta(seconds=3))
+    expect("Inbox 死信重放后可重新处理",
+           inbox.begin("group-b", "evt-2", "consumer-2", now=base + timedelta(seconds=4))[0] == "retry")
+
+    failed = [name for name, cond in report if not cond]
+    for name, cond in report:
+        print(f"[{'ok  ' if cond else 'FAIL'}] {name}")
+    print(f"-- {len(report) - len(failed)} 通过, {len(failed)} 失败")
+    print("relay 自测通过" if not failed else "relay 自测失败")
+    return 0 if not failed else 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="relay", description="EIS Outbox/Inbox 投递参考实现")
+    parser.add_argument("--self-test", action="store_true", help="状态机自测（确定性）")
+    parser.add_argument("--print-sql", action="store_true", help="输出 PostgreSQL 语句模板")
+    args = parser.parse_args(argv)
+    if args.self_test:
+        return cmd_self_test(args)
+    if args.print_sql:
+        for name, statement in SQL_STATEMENTS.items():
+            print(f"-- == {name} ==")
+            print(statement)
+            print()
+        return 0
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -7,6 +7,7 @@
 > 调度（#37）、对账（#36）、授权条件声明面（#28/#29）、调用方约束（#30）、命令响应
 > `locator/version`（#32①）；informative 项：编排边界（#35）、集成边界（#38）、运维（#39）。
 
+- [x] **可靠投递扩展**（issue #31/#34）：`extensions/outbox/`（Outbox + Inbox、`outbox.ddl`、OBX-001..012）+ `tools/relay`（状态机参考 + PG 语句模板）+ CI PostgreSQL 冒烟（ADR-0018）；
 - [ ] **多语言绑定生成**：`schema-compiler` 输出 Java / TypeScript 类型（seedj 与
       前端直接消费），生成物纳入 CI 一致性校验；
 - [ ] **工具增强**：`migration-generator` 支持索引/约束 diff；`contract-checker`

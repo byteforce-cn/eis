@@ -46,3 +46,4 @@ EIS 的核心契约已冻结。任何修改（解冻请求）必须走以下流�
 | [0015](0015-authz-condition-declaration.md) | 授权条件声明面（manifest.permissions[].condition 受限 DSL） | Accepted |
 | [0016](0016-kernel-object-schema-validation.md) | 参考内核执行扩展对象 Schema（可选依赖 + fail-closed） | Accepted |
 | [0017](0017-query-min-version.md) | 读接口 min_version 等待语义（409 + Retry-After） | Accepted |
+| [0018](0018-outbox-delivery-extension.md) | 可靠投递扩展（Outbox + Inbox，extensions/outbox） | Accepted |
