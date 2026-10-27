@@ -1,9 +1,9 @@
-# operations/employee-activate.openapi.yaml — 员工 — 转在职（hr v1.2.0）
+# operations/employee-activate.openapi.yaml — 员工 — 转在职（hr v1.3.0）
 # 遵循核心命令 API 元结构：02-operation-contract/command.openapi.yaml
 openapi: 3.1.0
 info:
   title: 人力资源域 — 员工 — 转在职
-  version: 1.2.0
+  version: 1.3.0
   description: 命令 hr.employee.activate：见 rules/ 与 handlers.py 的可执行语义。
 paths:
   /commands/hr.employee.activate:
@@ -12,6 +12,9 @@ paths:
       summary: 员工 — 转在职
       # 调用方约束（ADR-0013）：仅系统主体（审批服务身份）可调，用户主体 → EIS-403-002
       x-eis-callers: [system]
+      # 跨扩展前置（ADR-0019）：必须存在已通过的入职审批单；
+      # 权威声明在 rules/activation-requires-approval.yaml（本契约只做说明）
+
       requestBody:
         required: true
         content:
@@ -24,7 +27,9 @@ paths:
         '400':
           description: HR-400-001 参数非法 / HR-404-001 员工不存在
         '409':
-          description: HR-409-004 缺少有效主岗 / HR-403-001 状态不允许转在职
+          description: >-
+            HR-409-002 缺少已通过的入职审批单（跨扩展前置，ADR-0019）/
+            HR-409-004 缺少有效主岗 / HR-403-001 状态不允许转在职
 components:
   schemas:
     employeeActivateCommand:

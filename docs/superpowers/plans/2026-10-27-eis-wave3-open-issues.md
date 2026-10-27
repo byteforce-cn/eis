@@ -51,9 +51,9 @@
 
 ## Task 5：#30 步骤 2 跨扩展前置（P2）
 
-- [ ] ADR：扩展 `dependencies` 生效 + 声明式前置（引用其它扩展对象/状态）+ `contract-checker` 引用完整性
-- [ ] 运行时可加载组合并求值前置；hr `activate` 要求「已通过审批单」
-- [ ] 用例：无审批单拒绝 / 有审批单允许；组合缺失 fail-closed
+- [x] ADR：扩展 `dependencies` 生效 + 声明式前置（引用其它扩展对象/状态）+ `contract-checker` 引用完整性
+- [x] 运行时可加载组合并求值前置；hr `activate` 要求「已通过审批单」
+- [x] 用例：无审批单拒绝 / 有审批单允许；组合缺失 fail-closed
 
 ## Task 6：informative 文档（P2）
 

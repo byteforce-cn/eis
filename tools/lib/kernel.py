@@ -24,6 +24,8 @@
     （HMAC-SHA256 密钥环：首密钥为主，余为轮换接受集；见 01 数据契约 DRV-*）；
   - 可选 `DEFERRED_AUTHZ = {command_type, ...}` 声明处理器内部做细粒度权限判定
     （如区块属主权限 `approval.section.confirm.<owner>`），内核跳过命令级预检；
+  - 跨扩展命令前置：`manifest.rules[].file` 的 `rule.requires_objects`（存在性判断，
+    ADR-0019；权限/调用方预检后、处理器前执行，fail-closed）；
   - 处理器只通过 `ExtensionAPI`（见下）访问内核能力。
 
 明确不做（参考实现的边界，生产实现需补齐）：
@@ -158,6 +160,50 @@ def _expand_external_refs(node, base_dir: Path, seen: frozenset[str], depth: int
 def _load_schema_file(path: Path, seen: frozenset[str] = frozenset(), depth: int = 0):
     doc = json.loads(Path(path).read_text(encoding="utf-8"))
     return _expand_external_refs(doc, Path(path).resolve().parent, seen, depth)
+
+
+_UNSET = object()
+
+
+def _where_value(row, path: str):
+    node = row
+    for part in path.split("."):
+        if isinstance(node, dict) and part in node:
+            node = node[part]
+        else:
+            return _UNSET
+    return node
+
+
+def _payload_ref(value, payload: dict):
+    """条件右值：字面量，或 `$payload.<点分路径>`（只读当前命令载荷）。"""
+    if isinstance(value, str) and value.startswith("$payload."):
+        return _where_value(payload, value[len("$payload."):])
+    return value
+
+
+def load_command_preconditions(root=None) -> dict[str, list[dict]]:
+    """载入扩展声明的跨扩展命令前置（ADR-0019）：{command: [rule, ...]}。
+
+    规则文件格式见 extensions/README.md §8：rule.requires_objects 只做
+    「存在匹配对象」的存在性判断，不允许任意表达式。
+    """
+    base = Path(root) if root else ROOT
+    preconditions: dict[str, list[dict]] = {}
+    for manifest_path in sorted((base / "extensions").glob("*/manifest.yaml")):
+        ext = (load_yaml(manifest_path) or {}).get("extension", {}) or {}
+        for entry in ext.get("rules", []) or []:
+            rel = entry.get("file") if isinstance(entry, dict) else None
+            if not rel:
+                continue
+            rule_path = manifest_path.parent / rel
+            if not rule_path.exists():
+                raise RuntimeError(f"{manifest_path}: 规则文件不存在: {rel}")
+            rule = (load_yaml(rule_path) or {}).get("rule") or {}
+            applies_to, requires = rule.get("applies_to"), rule.get("requires_objects")
+            if applies_to and isinstance(requires, dict):
+                preconditions.setdefault(applies_to, []).append(rule)
+    return preconditions
 
 
 def load_extension_object_schemas(root=None) -> dict[str, "Draft202012Validator"]:
@@ -393,6 +439,8 @@ class Kernel:
             dict(permission_conditions) if permission_conditions is not None
             else load_declared_conditions(ROOT)
         )
+        # 跨扩展命令前置（ADR-0019）：权威在扩展 rules/*.yaml
+        self.preconditions: dict[str, list[dict]] = load_command_preconditions(ROOT)
         if authz_fixtures:
             authz_mod = load_authz_module()
             self.authz = authz_mod.Authz({"fixtures": authz_fixtures},
@@ -504,6 +552,8 @@ class Kernel:
                         f"{cmd_type} 仅限调用方主体类型 {', '.join(allowed_callers)}，"
                         f"实际 {principal_type}",
                     )
+            # 跨扩展前置（ADR-0019）：权限/调用方放行后、处理器之前
+            self._check_preconditions(cmd_type, payload)
             events, created = self._handle(cmd_type, payload, principal, command_id)
         except Rejected as exc:
             record["status"] = "rejected"
@@ -536,6 +586,26 @@ class Kernel:
     # ------------------------------------------------------------------
     # 命令分发（处理器由 extensions/*/handlers.py 注册）
     # ------------------------------------------------------------------
+    def _check_preconditions(self, cmd_type: str, payload: dict) -> None:
+        """跨扩展前置（ADR-0019）：存在匹配的当前对象才放行；否则 fail-closed。"""
+        for rule in self.preconditions.get(cmd_type, ()):
+            requires = rule.get("requires_objects") or {}
+            obj_type = snake(str(requires.get("object", "")))
+            where = requires.get("where") or {}
+            matched = False
+            for row in self.current_objects(obj_type):
+                if all(
+                        _where_value(row, path) is not _UNSET
+                        and _where_value(row, path) == _payload_ref(expected, payload)
+                        for path, expected in where.items()
+                ):
+                    matched = True
+                    break
+            if not matched:
+                raise Rejected(
+                    rule.get("error_code") or "EIS-409-004",
+                    rule.get("reason") or f"命令前置不满足: {rule.get('id', cmd_type)}")
+
     def _handle(self, cmd_type: str, payload: dict, actor: str, command_id: str):
         handler = self.command_handlers.get(cmd_type)
         if handler is None:
@@ -601,6 +671,9 @@ class Kernel:
         current["valid_to"] = ts(now_dt)
         rows.append(new_row)
         return new_row
+
+    def current_objects(self, obj_type: str) -> list[dict]:
+        return [r for r in self.objects.get(obj_type, []) if r["superseded_at"] is None]
 
     def _find_current(self, obj_type: str, pred):
         for row in self.objects.get(obj_type, []):
@@ -805,6 +878,15 @@ def run_scenario(scenario, report_lines: list[str] | None = None) -> dict:
     # steps
     for step in spec.get("steps", []):
         sid = step.get("id", f"step{len(step_results) + 1}")
+        if step.get("seed"):
+            # 场景中置入夹具（非命令路径；用于依赖前置数据的步骤，如跨扩展审批单）
+            for obj in step["seed"]:
+                obj_id = resolve_tokens(obj["id"], context)
+                kernel.seed(obj["type"], obj_id, resolve_tokens(obj.get("data", {}), context),
+                            obj.get("actor") or seed_actor or obj_id)
+            step_results.append({"id": sid, "seed": len(step["seed"])})
+            kernel.advance(1)
+            continue
         at_start = ts(kernel.now())
         kernel.advance(1)  # 命令记录时刻晚于步骤起点（时点查询可区分）
         command = {

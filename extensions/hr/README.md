@@ -1,7 +1,8 @@
-# extensions/hr — 人力资源域扩展（v1.2.0）
+# extensions/hr — 人力资源域扩展（v1.3.0）
 
 人事事实的唯一来源：向身份域供给登录用户（建号/启用/禁用），向授权判定与审批提供
-组织/岗位/职级/汇报链上下文。双时间轴对象，独立版本化，只依赖核心 `core_version: 1.0.0`。
+组织/岗位/职级/汇报链上下文。双时间轴对象，独立版本化；核心依赖 `core_version: 1.0.0`，
+v1.3.0 起另依赖 `approval 1.1.0`（激活前置，ADR-0019）。
 
 ## 1. 对象
 
@@ -39,6 +40,23 @@ pending_onboarding ────────────────► cancelled
 - 投影：`operations/employee-{activate,cancel}.openapi.yaml` 的 `x-eis-callers: [system]`，由
   `contract-checker` 与 manifest 双向校验；
 - **未覆盖**："必须存在已通过的入职审批单"属跨扩展前置（hr → approval），需扩展跨引用机制，另立 ADR（#30 步骤 2）。
+
+### 2.2 激活前置：已通过的审批单（v1.3.0，ADR-0019）
+
+`hr.employee.activate` 在服务端要求**存在一条已通过的入职审批单**（跨扩展前置，hr → approval）：
+
+```yaml
+# rules/activation-requires-approval.yaml（摘要）
+requires_objects:
+  extension: approval
+  object: ApprovalRequest
+  where: {operation: hr.employee.activate, status: approved,
+          "target.type": hr_employee, "target.id": $payload.employee_id}
+```
+
+- 参考内核在权限/调用方预检之后、处理器之前判断；无匹配对象 → `HR-409-002`（fail-closed）；
+- `manifest.dependencies` 声明 `approval 1.1.0`；`contract-checker` 校验依赖/对象引用完整性；
+- 部署侧：审批服务必须持有已通过的入职审批单后才能调用激活；审批单缺失/未通过一律拒绝。
 
 ## 3. 命令
 

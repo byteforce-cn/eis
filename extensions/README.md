@@ -68,7 +68,7 @@ composition:
 | `iam` | 1.0.0 | 身份与访问管理：账户/凭证/角色/绑定/会话；SoD 预检、root 保护 | 完整（含可执行用例） |
 | `inventory` | 1.0.0 | 物品/出入库/库存余额；收货；库存非负 | 完整（含可执行用例） |
 | `approval` | 1.1.0 | 审批申请/决定/区块；提交与决定、区块流转（顺序语义）、打回重确认、撤回；禁止自审 | 完整（含可执行用例） |
-| `hr` | 1.2.0 | 组织/岗位/员工（含雇佣类型/工作地点）/任职/供给任务；双时间轴；证件散列防重；`activate`/`cancel` 仅限系统主体（ADR-0013） | 完整（含可执行用例与 V201/V202 迁移） |
+| `hr` | 1.3.0 | 组织/岗位/员工（含雇佣类型/工作地点）/任职/供给任务；双时间轴；证件散列防重；`activate`/`cancel` 仅限系统主体（ADR-0013）；`activate` 需已通过审批单（ADR-0019） | 完整（含可执行用例与 V201/V202 迁移） |
 | `outbox` | 1.0.0 | 跨域运行时：Outbox/Inbox 投递契约（`kind: runtime`，无业务对象）；`outbox.ddl` + OBX-001..012 + `tools/relay` | 完整（static/cli 用例 + CI PostgreSQL 冒烟；ADR-0018） |
 
 ## 6. 命令处理器注册（可执行用例）
@@ -147,3 +147,39 @@ Schema 违约以 `EIS-400-001` 拒绝，未声明 Schema 的对象类型 fail-cl
 - `condition` 的路径必须落在 `04-authz-contract/attributes.api.yaml` 的 `AttributeSet` 内（段可带 `[*]`，终值必须为标量）；`op` 只允许 `eq` / `neq` / `in` / `not_in` / `exists`，逻辑只允许单层 `all` / `any`（`contract-checker` 校验）；
 - **权限条件只能由声明侧提供**：`/check` 只接收 `permission`，调用方不得传入条件；条件只收窄、不授予，拒绝原因只含属性路径与状态（ATR-009）；
 - 需要「业务阈值/参数可调」时，建成**领域对象 + 受审计命令**（如 `approval.threshold.set`），不引入运行期策略表达式编辑面（ADR-0015）。
+
+## 8. 跨扩展依赖与命令前置（ADR-0019）
+
+扩展可以声明对另一扩展的依赖，并声明「执行命令前必须存在满足条件的对象」：
+
+```yaml
+# manifest.yaml
+extension:
+  dependencies:
+    - {id: "approval", version: "1.1.0"}   # 精确版本
+  rules:
+    - {name: "activation_requires_approval", file: "rules/activation-requires-approval.yaml"}
+```
+
+```yaml
+# rules/activation-requires-approval.yaml
+rule:
+  id: "activation-requires-approval"
+  applies_to: "hr.employee.activate"          # 必须是本扩展 kind: command 权限
+  requires_objects:
+    extension: "approval"                     # 必须出现在 dependencies
+    object: "ApprovalRequest"                 # 依赖扩展 manifest.objects 的 name
+    where:                                    # 精确匹配（AND）；键为对象字段路径
+      status: "approved"
+      "target.id": "$payload.employee_id"     # 右值：字面量或 $payload.<路径>
+  error_code: "HR-409-002"                    # 扩展命名空间，不得占用 EIS-
+  reason: "员工转在职必须存在已通过的入职审批单"
+```
+
+纪律：
+
+- **只做存在性判断**：`where` 精确匹配，不支持比较运算符/正则/嵌套/OR/否定/脚本；
+- 执行时机：权限与 `callers` 预检之后、处理器之前（不向未授权调用方泄漏对象存在性）；
+- fail-closed：依赖扩展未加载、无匹配对象、规则文件缺失 → 命令拒绝；
+- `contract-checker` 校验依赖（存在/版本/环）、`applies_to`、引用对象、`where` 与 `error_code`；不执行规则；
+- 前置只读：不得通过前置写他域对象；跨域写仍走属主域命令。

@@ -2,10 +2,12 @@
 extension:
   id: "hr"
   name: "人力资源域扩展"
-  version: "1.2.0"
+  version: "1.3.0"
   core_version: "1.0.0"
 
-  dependencies: []
+  # 跨扩展依赖（ADR-0019）：激活前置引用 approval 的审批单
+  dependencies:
+    - {id: "approval", version: "1.1.0"}
   conflicts: []
 
   objects:
@@ -45,6 +47,8 @@ extension:
       contract: "operations/provisioning-run.openapi.yaml"
 
   rules:
+    - name: "activation_requires_approval"
+      file: "rules/activation-requires-approval.yaml"
     - name: "employee_no_unique"
       file: "rules/employee-no-unique.yaml"
     - name: "id_document_dedup"
