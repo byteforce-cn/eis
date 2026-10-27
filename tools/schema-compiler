@@ -18,6 +18,7 @@
   - 扩展表 = 核心元字段（object.schema.json）+ 领域字段（allOf 第二部分）
   - 时间字段一律 eis_timestamp（TIMESTAMPTZ(6)）；金额 NUMERIC(20,2)；数量 NUMERIC(20,4)
   - 输出为参考 DDL；数据库专有优化（分区等）不属于契约
+  - T-R009 排他约束随每张表输出（ADR-0011：id + 系统时间区间 + 业务时间区间 四维）
 
 退出码: 0 通过 / 1 失败 / 2 用法或环境错误
 """
@@ -245,6 +246,14 @@ def compile_extension(ext_id: str) -> tuple[str, list[str]]:
             out.write(",\n    " + ",\n    ".join(table_checks))
         out.write("\n);\n\n")
         out.write(f"CREATE UNIQUE INDEX uq_{table}_current ON {table} (id) WHERE superseded_at IS NULL;\n")
+        # T-R009（ADR-0011）：同一系统时间视图下有效区间不重叠。
+        # 两个 range 维度都必须出现——只约束「当前记录」的写法在 T-R005 下恒不触发。
+        out.write(f"ALTER TABLE {table} ADD CONSTRAINT ex_{table}_valid_overlap\n")
+        out.write("    EXCLUDE USING gist (\n")
+        out.write("        id WITH =,\n")
+        out.write("        tstzrange(recorded_at, superseded_at, '[)') WITH &&,\n")
+        out.write("        tstzrange(valid_from, valid_to, '[)') WITH &&\n")
+        out.write("    );\n")
         out.write(f"CREATE INDEX idx_{table}_valid_time    ON {table} (valid_from, valid_to);\n")
         out.write(f"CREATE INDEX idx_{table}_recorded_time ON {table} (recorded_at, superseded_at);\n")
         out.write(f"CREATE INDEX idx_{table}_bitemporal    ON {table} (valid_from, valid_to, recorded_at, superseded_at);\n\n")
@@ -313,12 +322,16 @@ def check_core(report: Report) -> None:
 def check_extensions(report: Report) -> None:
     for ext_root in sorted(p for p in EXT_DIR.iterdir() if p.is_dir()):
         try:
-            _, tables = compile_extension(ext_root.name)
+            ddl, tables = compile_extension(ext_root.name)
         except Exception as exc:  # noqa: BLE001 — 汇总所有失败
             report.fail(f"extensions/{ext_root.name} 编译失败: {exc}")
             continue
         if not tables:
             report.fail(f"extensions/{ext_root.name} 未声明任何对象")
+            continue
+        missing = [t for t in tables if f"ex_{t}_valid_overlap" not in ddl]
+        if missing:
+            report.fail(f"extensions/{ext_root.name} 缺 T-R009 排他约束", ", ".join(missing))
             continue
         report.ok(f"extensions/{ext_root.name} 编译通过（{len(tables)} 表: {', '.join(tables)}）")
 
@@ -369,6 +382,8 @@ def cmd_self_test(args) -> int:
             "accounting_voucher 表": "CREATE TABLE accounting_voucher" in ddl,
             "双时间轴列": "valid_from" in ddl and "eis_timestamp" in ddl,
             "区间约束": "CONSTRAINT valid_range" in ddl,
+            "T-R009 排他约束": ("ex_accounting_balance_valid_overlap" in ddl
+                                and "tstzrange(recorded_at, superseded_at, '[)') WITH &&" in ddl),
             "金额映射 NUMERIC(20,2)": "NUMERIC(20,2)" in ddl,
         }
     for name, cond in asserts.items():

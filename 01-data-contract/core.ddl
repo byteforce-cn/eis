@@ -53,6 +53,15 @@ CREATE TABLE business_object (
 CREATE UNIQUE INDEX uq_business_object_current
     ON business_object (id) WHERE superseded_at IS NULL;
 
+-- 有效区间不重叠（T-R009 / ADR-0011）：同一系统时间视图下的同一实体，业务区间不得相交。
+-- 两个 range 维度缺一不可：只限定“当前记录”的写法在 T-R005 下恒不触发。
+ALTER TABLE business_object ADD CONSTRAINT ex_business_object_valid_overlap
+    EXCLUDE USING gist (
+        id WITH =,
+        tstzrange(recorded_at, superseded_at, '[)') WITH &&,
+        tstzrange(valid_from, valid_to, '[)') WITH &&
+    );
+
 -- 时点查询索引（见 03-time-contract/temporal.ddl 说明）
 CREATE INDEX idx_business_object_valid_time    ON business_object (valid_from, valid_to);
 CREATE INDEX idx_business_object_recorded_time ON business_object (recorded_at, superseded_at);

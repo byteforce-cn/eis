@@ -8,14 +8,16 @@
 
 ## 1. 时间契约
 
-### 1.1 T-R009「有效区间不重叠」未在 DDL 落地
+### 1.1 T-R009「有效区间不重叠」（已修复：ADR-0011 四维排他约束）
 
-- 【已核实】`03-time-contract/temporal.ddl:33-40`：排他约束（`EXCLUDE USING gist`）与
-  `uq_<table>_current` 唯一索引均标注为「可选（推荐）」且为注释，未成为可执行 DDL。
-  规则定义见 `03-time-contract/temporal.rules.yaml:74`（T-R009，`enforced_by: ddl-exclusion-constraint`）。
-- 现状：规范要求区间不重叠，参考 DDL 不强制。
-- 影响：数据库层可写入互相重叠的有效区间。
-- 使用者应对：生产建表时启用模板中的排他约束，并补充重叠拒绝的回归测试。
+- 【已修复】`tools/schema-compiler` 现随每张对象表输出 `ex_<table>_valid_overlap`：
+  `EXCLUDE USING gist (id WITH =, tstzrange(recorded_at, superseded_at, '[)') WITH &&, tstzrange(valid_from, valid_to, '[)') WITH &&)`；
+  `01-data-contract/core.ddl` 的 `business_object` 同步声明；`tools/ci/ddl-smoke.sql` §9 断言
+  「同一系统时间视图内业务区间相交 → `exclusion_violation`」「封口链（`superseded_at == 新记录 recorded_at`）与
+  相邻区间允许写入」，CI 的 PostgreSQL 16 任务全绿。
+- 【为何不是 `WHERE superseded_at IS NULL`】T-R005 的 `uq_<table>_current` 已保证每个 id 至多一条当前记录，
+  仅限定当前记录的排他约束恒不触发；T-R009 的「同一系统时间视图」需用系统时间区间维度表达（ADR-0011）。
+- 残余：参考内核（`tools/lib/kernel.py`）是内存模型，不执行 DDL 约束；以 PostgreSQL 落地为准。
 
 ### 1.2 T-R011「迟到事件追加写入」与内核封口语义存在差异
 
@@ -28,11 +30,13 @@
 
 ### 1.3 `as_of` 多版本重叠时静默择一
 
-- 【已核实】`tools/lib/kernel.py` 的 `Kernel.as_of`：当多个版本同时匹配时返回
-  `max(candidates, key=lambda r: r["version"])`，不报错。T-R008（`temporal.rules.yaml:67`）
-  要求「至多返回一个版本」，其唯一性依赖 T-R009；而 T-R009 未强制（见 1.1）。
-- 现状：重叠数据下查询结果取决于版本号大小，而非确定语义。
-- 使用者应对：启用 1.1 的约束，使重叠在写入时即被拒绝。
+- 【已收窄】重叠写入已由 DDL 排他约束在数据库层拒绝（§1.1 / ADR-0011），T-R008 的唯一性不再依赖调用方自律。
+- 残余 1：参考内核是内存模型，不执行 DDL 约束；直接构造重叠行时 `Kernel.as_of` 仍 `max(version)` 静默择一，
+  因此内核不能作为重叠场景的合规基准。
+- 残余 2：`03-time-contract/query-templates.sql` 的通用 `as_of_valid` 只含业务时间谓词，不叠加系统时间轴；
+  对有修正历史的表，单轴业务时间查询仍可能命中多条记录。展开函数（如 `accounting_balance_as_of_valid`）
+  已显式带 `superseded_at IS NULL`；通用模板的演进另行立项。
+- 使用者应对：业务时间查询要么带系统时间（`as_of_bitemporal`），要么叠加 `superseded_at IS NULL`。
 
 ## 2. 内核与 Schema
 
