@@ -100,7 +100,7 @@ def handle_action(api, payload, actor, command_id):
 |------|------|
 | 时钟/标识/值转换 | `now` `advance` `new_id` `ts` `parse_ts` `dec` `dec_eq` |
 | 拒绝命令 | `reject(code, reason, reason_code=None)`（抛出内核统一捕获的异常） |
-| 双时间轴对象 | `create_object` `update_object` `find_current` `objects` `current_objects` `as_of` `history` |
+| 双时间轴对象 | `create_object` `update_object` `apply_late_fact`（迟到事实，T-R011）`find_current` `objects` `current_objects` `as_of` `history` |
 | 事件 | `event(event_type, actor, subjects, payload)` |
 | 读模型/状态 | `stock(item_id, warehouse)` `locked_periods` |
 | 授权 | `authz` `principal_of(actor)` `check_permission(actor, permission)` |

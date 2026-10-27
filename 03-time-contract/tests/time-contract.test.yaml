@@ -83,3 +83,40 @@ tests:
       assert:
         - {kind: temporal-history, type: voucher, id: "${ids.voucher}", expect_versions: 2, expect_adjacent: true}
         - {kind: audit-chain, expect: valid, min_entries: 1}
+
+  - name: "迟到事实：新 recorded_at + 历史有效区间，superseded 留痕（T-R011）"
+    kind: scenario
+    scenario:
+      id: time-contract.late-fact
+      setup:
+        ids: {voucher: "01900000-0000-7000-8000-00000000f201"}
+        objects:
+          - type: voucher
+            id: "${ids.voucher}"
+            at: "2026-10-01T00:00:00Z"
+            actor: "01900000-0000-7000-8000-000000000201"
+            data:
+              number: "记-迟到-0001"
+              voucher_date: "2026-10-01"
+              status: draft
+              summary: "原始记录"
+              lines:
+                - {account_code: "1405", debit: "10.00", currency: CNY}
+                - {account_code: "2202", credit: "10.00", currency: CNY}
+      steps:
+        - id: L1
+          late_fact:
+            type: voucher
+            id: "${ids.voucher}"
+            actor: "01900000-0000-7000-8000-000000000201"
+            valid_from: "2026-10-02T00:00:00Z"
+            data: {summary: "迟到的更正事实"}
+      assert:
+        # 当前系统视图：最新 recorded 的版本（v2）覆盖历史有效区间
+        - {kind: time-travel, type: voucher, id: "${ids.voucher}", valid_at: "2026-10-03T00:00:00Z", expect_version: 2}
+        # 迟到事实记录之前：历史时点仍读到 v1
+        - {kind: time-travel, type: voucher, id: "${ids.voucher}", valid_at: "2026-10-03T00:00:00Z", recorded_at: "2026-10-01T12:00:00Z", expect_version: 1}
+        # 系统时间轴仍相接，业务区间允许覆盖（T-R011）
+        - {kind: temporal-history, type: voucher, id: "${ids.voucher}", expect_versions: 2, expect_valid_adjacent: false}
+        - {kind: object-field, type: voucher, id: "${ids.voucher}", field: summary, expect: "迟到的更正事实"}
+        - {kind: object-field, type: voucher, id: "${ids.voucher}", field: version, expect: 2}

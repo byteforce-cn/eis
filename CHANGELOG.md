@@ -4,6 +4,13 @@
 
 ## [Unreleased] — 2026-10-27
 
+### 修复
+
+- 参考内核建模迟到事实（ADR-0020 / issue #45）：`apply_late_fact` 以新 `recorded_at` 追加历史
+  有效区间，旧版本只以 `superseded_at` 封口、不回改业务区间；`as_of` 当前视图取最新记录、
+  `recorded_as_of` 重建历史视图；`temporal-history` 支持 `expect_valid_adjacent: false`；
+  用例覆盖迟到事实（v2 当前视图 / v1 历史 recorded 视图），`KNOWN-LIMITATIONS` §1.2 更新为已修复；
+
 ### 新增
 
 - 扩展跨引用与命令前置（ADR-0019 / issue #30 步骤 2）：`manifest.dependencies`（精确版本、无环）+
@@ -36,7 +43,7 @@
 
 ### 变更
 
-- 用例 154/154（新增授权条件声明、内核对象 Schema、读接口 min_version、Outbox/Inbox 用例；移除调用方传条件的反模式用例），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
+- 用例 155/155（新增授权条件声明、内核对象 Schema、读接口 min_version、Outbox/Inbox、迟到事实用例；移除调用方传条件的反模式用例），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
 
 ## [Unreleased] — 2026-10-17（开放 issue 修复）
 

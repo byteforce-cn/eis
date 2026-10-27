@@ -65,3 +65,10 @@
 
 - [ ] 回帖评审结论（收窄为「持久化业务状态的协作触达层」；Transient 机制不入契约）；
       接受则按扩展 PR 交付，不接受则记录理由并关闭
+
+## Task 8：#45 T-R011 迟到事实（P2）
+
+- [x] ADR-0020：`apply_late_fact`（新 recorded_at + 历史有效区间；旧版本只 superseded 封口）
+- [x] `as_of` 当前视图取最新记录、`recorded_as_of` 重建历史视图
+- [x] 用例：迟到事实 v2 当前视图 / v1 历史视图；内核自测 5 条断言
+- [x] `KNOWN-LIMITATIONS` §1.2 标记已修复（残余：无自动检测、内存不执行 DDL）
