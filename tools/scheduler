@@ -1,0 +1,463 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""scheduler — EIS 定时任务执行语义参考实现（ADR-0021，语义参考，非生产调度器）
+
+契约：extensions/scheduler/（scheduler.ddl + rules/scheduling.rules.yaml）
+本实现只依赖 Python 3.10+ 标准库，提供：
+  1. 计划时点幂等：run_key = job_id + scheduled_for，同一时点只产生一个 run；
+  2. 互斥作用域：同 scope 未过期租约存在时，新 run 记为 skipped（scope_held）；
+  3. 租约抢占：过期租约复用同一 run 行（attempt+1、换新 lease_id），旧 lease_id 写入被拒；
+  4. 终态与重试上限：succeeded/skipped 终态，failed 在 attempt < max_attempts 时可重试；
+  5. PostgreSQL 语句模板（--print-sql）：claim 使用 FOR UPDATE SKIP LOCKED。
+生产调度器应使用真实时钟、PostgreSQL 驱动与部署方的选主/调度机制；本工具不绑定部署形态。
+
+用法:
+  scheduler --self-test
+  scheduler --print-sql
+"""
+from __future__ import annotations
+
+import argparse
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+
+UTC = timezone.utc
+
+RUN_STATUSES = ("running", "succeeded", "failed", "skipped")
+TERMINAL_STATUSES = ("succeeded", "skipped")
+
+
+class StaleLease(Exception):
+    """写入携带的 lease_id 已不是当前租约（被抢占或已过期）。"""
+
+
+class InvalidState(Exception):
+    """终态 / 非 running 的非法迁移。"""
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _dt(value) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def run_key_of(job_id: str, scheduled_for) -> str:
+    """run_key = job_id + scheduled_for（UTC 秒精度，SCH-001）。"""
+    return f"{job_id}@{_iso(_dt(scheduled_for))}"
+
+
+@dataclass
+class Job:
+    job_id: str
+    schedule: str
+    schedule_format: str = "cron"
+    version: int = 1
+    enabled: bool = True
+    max_attempts: int = 3
+    description: str | None = None
+
+    def __post_init__(self):
+        if self.schedule_format not in ("cron", "calendar"):
+            raise ValueError(f"schedule_format 非法: {self.schedule_format}")
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts 必须 >= 1")
+
+
+@dataclass
+class Run:
+    run_id: str
+    job_id: str
+    run_key: str
+    scheduled_for: datetime
+    scope: str
+    status: str = "running"
+    attempt: int = 1
+    max_attempts: int = 3
+    lease_id: str | None = None
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    started_at: datetime = field(default_factory=_now)
+    finished_at: datetime | None = None
+    last_error: str | None = None
+
+    def is_lease_expired(self, now: datetime) -> bool:
+        return self.lease_expires_at is None or self.lease_expires_at <= now
+
+
+@dataclass
+class Claim:
+    run: Run
+    claimed: bool
+    reason: str  # created | taken_over | retry | lease_held | scope_held | job_disabled | exhausted | finished
+
+
+class Scheduler:
+    """确定性内存实现：语义参考，不承担生产并发与持久化。"""
+
+    def __init__(self, lease_seconds: int = 30):
+        self.lease_seconds = lease_seconds
+        self.jobs: dict[str, Job] = {}
+        self.runs: dict[str, Run] = {}  # run_key → Run
+
+    # -- 作业定义 ------------------------------------------------------
+    def define_job(self, job_id: str, schedule: str, schedule_format: str = "cron",
+                   enabled: bool = True, max_attempts: int = 3,
+                   description: str | None = None) -> Job:
+        if job_id in self.jobs:
+            job = self.jobs[job_id]
+            job.schedule = schedule
+            job.schedule_format = schedule_format
+            job.enabled = enabled
+            job.max_attempts = max_attempts
+            job.version += 1
+            return job
+        job = Job(job_id, schedule, schedule_format, 1, enabled, max_attempts, description)
+        self.jobs[job_id] = job
+        return job
+
+    # -- 认领 ----------------------------------------------------------
+    def claim(self, job_id: str, scheduled_for, owner: str, scope: str | None = None,
+              now: datetime | None = None) -> Claim:
+        moment = _dt(now or _now())
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise KeyError(f"作业未定义: {job_id}")
+        scheduled = _dt(scheduled_for)
+        key = run_key_of(job_id, scheduled)
+        scope = scope or f"job:{job_id}"
+
+        # 先回收同 scope 内租约过期的陈旧 running（SCH-009），当前 run 单独处理
+        self._reclaim_stale(scope, moment, exclude_run_key=key)
+
+        existing = self.runs.get(key)
+        if existing is not None:
+            return self._claim_existing(existing, owner, moment)
+
+        if not job.enabled:
+            run = self._new_run(job, scheduled, scope, moment)
+            run.status = "skipped"
+            run.finished_at = moment
+            run.last_error = "job_disabled"
+            self.runs[key] = run
+            return Claim(run, False, "job_disabled")
+
+        blocker = self._scope_blocker(scope, moment)
+        if blocker is not None:
+            run = self._new_run(job, scheduled, scope, moment)
+            run.status = "skipped"
+            run.finished_at = moment
+            run.last_error = "scope_held"
+            self.runs[key] = run
+            return Claim(run, False, "scope_held")
+
+        run = self._new_run(job, scheduled, scope, moment)
+        run.lease_id = str(uuid.uuid4())
+        run.lease_owner = owner
+        run.lease_expires_at = moment + timedelta(seconds=self.lease_seconds)
+        self.runs[key] = run
+        return Claim(run, True, "created")
+
+    def _claim_existing(self, run: Run, owner: str, moment: datetime) -> Claim:
+        if run.status in TERMINAL_STATUSES:
+            return Claim(run, False, "finished")
+        if run.status == "failed" and run.attempt >= run.max_attempts:
+            return Claim(run, False, "exhausted")
+        if run.status == "running" and not run.is_lease_expired(moment):
+            return Claim(run, False, "lease_held")
+        if run.attempt >= run.max_attempts:
+            run.status = "failed"
+            run.finished_at = moment
+            run.last_error = run.last_error or "lease_expired"
+            run.lease_id = run.lease_owner = run.lease_expires_at = None
+            return Claim(run, False, "exhausted")
+
+        takeover = run.status == "running"
+        run.status = "running"
+        run.attempt += 1
+        run.finished_at = None
+        run.last_error = None
+        run.lease_id = str(uuid.uuid4())
+        run.lease_owner = owner
+        run.lease_expires_at = moment + timedelta(seconds=self.lease_seconds)
+        return Claim(run, True, "taken_over" if takeover else "retry")
+
+    def _new_run(self, job: Job, scheduled: datetime, scope: str,
+                 moment: datetime) -> Run:
+        return Run(
+            run_id=str(uuid.uuid4()), job_id=job.job_id,
+            run_key=run_key_of(job.job_id, scheduled), scheduled_for=scheduled,
+            scope=scope, attempt=1, max_attempts=job.max_attempts,
+            started_at=moment,
+        )
+
+    def _scope_blocker(self, scope: str, moment: datetime) -> Run | None:
+        for run in self.runs.values():
+            if run.scope == scope and run.status == "running" \
+                    and not run.is_lease_expired(moment):
+                return run
+        return None
+
+    def _reclaim_stale(self, scope: str, moment: datetime,
+                       exclude_run_key: str | None = None) -> list[Run]:
+        reclaimed = []
+        for run in self.runs.values():
+            if run.run_key == exclude_run_key:
+                continue
+            if run.scope != scope or run.status != "running":
+                continue
+            if not run.is_lease_expired(moment):
+                continue
+            run.status = "failed"
+            run.finished_at = moment
+            run.last_error = "lease_expired"
+            run.lease_id = run.lease_owner = run.lease_expires_at = None
+            reclaimed.append(run)
+        return reclaimed
+
+    # -- 完成 / 心跳 ---------------------------------------------------
+    def finish(self, run: Run, lease_id: str, status: str,
+               error: str | None = None, now: datetime | None = None) -> Run:
+        moment = _dt(now or _now())
+        if status not in ("succeeded", "failed"):
+            raise ValueError(f"finish 只接受 succeeded/failed: {status}")
+        if run.status != "running":
+            raise InvalidState(f"run 非 running，当前 {run.status}")
+        if run.lease_id != lease_id:
+            raise StaleLease(f"lease_id 不匹配（当前 {run.lease_id}，提交 {lease_id}）")
+        run.status = status
+        run.finished_at = moment
+        run.last_error = error
+        run.lease_id = run.lease_owner = run.lease_expires_at = None
+        return run
+
+    def heartbeat(self, run: Run, lease_id: str, extend_seconds: int | None = None,
+                  now: datetime | None = None) -> Run:
+        moment = _dt(now or _now())
+        if run.status != "running":
+            raise InvalidState(f"run 非 running，当前 {run.status}")
+        if run.lease_id != lease_id:
+            raise StaleLease(f"lease_id 不匹配（当前 {run.lease_id}，提交 {lease_id}）")
+        seconds = self.lease_seconds if extend_seconds is None else extend_seconds
+        run.lease_expires_at = moment + timedelta(seconds=seconds)
+        return run
+
+    # -- 观测 ----------------------------------------------------------
+    def metrics(self, now: datetime | None = None) -> dict:
+        moment = _dt(now or _now())
+        by_status = {status: 0 for status in RUN_STATUSES}
+        overdue = 0
+        oldest: datetime | None = None
+        for run in self.runs.values():
+            by_status[run.status] += 1
+            if run.status == "running":
+                if run.is_lease_expired(moment):
+                    overdue += 1
+                if oldest is None or run.started_at < oldest:
+                    oldest = run.started_at
+        return {
+            "running": by_status["running"],
+            "succeeded": by_status["succeeded"],
+            "failed": by_status["failed"],
+            "skipped": by_status["skipped"],
+            "overdue_leases": overdue,
+            "oldest_running_age_seconds": (
+                int((moment - oldest).total_seconds()) if oldest else 0),
+        }
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL 语句模板（仅参考；不绑定驱动与部署形态）
+# ---------------------------------------------------------------------------
+PRINT_SQL = """\
+-- scheduler: PostgreSQL 语句模板（ADR-0021；生产使用需自行加事务与重试）
+-- 1) 回收同 scope 内租约过期的陈旧 running（SCH-009）
+UPDATE job_run
+   SET status = 'failed', finished_at = now(),
+       last_error = 'lease_expired',
+       lease_id = NULL, lease_owner = NULL, lease_expires_at = NULL
+ WHERE scope = $1 AND status = 'running' AND lease_expires_at <= now();
+
+-- 2) 认领（run_key 幂等；SKIP LOCKED 供多实例扫描到期行）
+SELECT run_id, attempt, max_attempts, lease_id
+  FROM job_run
+ WHERE run_key = $2
+   AND (status = 'failed' OR (status = 'running' AND lease_expires_at <= now()))
+   AND attempt < max_attempts
+ FOR UPDATE SKIP LOCKED;
+
+-- 3) 抢占 / 重试：复用同一 run 行，换新 lease_id（SCH-005）
+UPDATE job_run
+   SET status = 'running', attempt = attempt + 1,
+       lease_id = $3, lease_owner = $4, lease_expires_at = now() + $5::interval,
+       finished_at = NULL, last_error = NULL
+ WHERE run_key = $2 AND attempt < max_attempts
+   AND (status = 'failed' OR (status = 'running' AND lease_expires_at <= now()));
+
+-- 4) 完成：必须携带认领时的 lease_id（SCH-006）
+UPDATE job_run
+   SET status = $6, finished_at = now(), last_error = $7,
+       lease_id = NULL, lease_owner = NULL, lease_expires_at = NULL
+ WHERE run_key = $2 AND status = 'running' AND lease_id = $3;
+
+-- 5) 互斥作用域：同 scope 至多一个 running（DB 兜底，uq_job_run_scope_running）
+--    新 run 若 scope 被占，插入另一行并直接置 skipped（last_error = 'scope_held'）。
+"""
+
+
+# ---------------------------------------------------------------------------
+# 自测（确定性时钟）
+# ---------------------------------------------------------------------------
+def cmd_self_test(args) -> int:
+    ok = True
+    base = datetime(2026, 10, 27, 0, 0, tzinfo=UTC)
+
+    def report(name: str, cond: bool) -> None:
+        nonlocal ok
+        print(f"[{'ok  ' if cond else 'FAIL'}] {name}")
+        ok = ok and cond
+
+    sched = Scheduler(lease_seconds=30)
+    sched.define_job("finance.daily-close", "0 1 * * *", "cron", max_attempts=2)
+
+    c1 = sched.claim("finance.daily-close", base, "worker-a", now=base)
+    lease_a = c1.run.lease_id
+    report("首次认领创建 running run", c1.claimed and c1.reason == "created"
+           and c1.run.status == "running")
+    report("run_key = job_id + scheduled_for",
+           c1.run.run_key == "finance.daily-close@2026-10-27T00:00:00Z")
+    report("首次认领 attempt=1 且持有租约三元组",
+           c1.run.attempt == 1 and c1.run.lease_id
+           and c1.run.lease_owner == "worker-a" and c1.run.lease_expires_at is not None)
+
+    c2 = sched.claim("finance.daily-close", base, "worker-b", now=base + timedelta(seconds=5))
+    report("同一计划时点重复触发不产生第二个 run",
+           not c2.claimed and c2.reason == "lease_held" and len(sched.runs) == 1)
+
+    c3 = sched.claim("finance.daily-close", base, "worker-b",
+                     now=base + timedelta(seconds=31))
+    report("租约过期可被抢占（复用同一 run 行，attempt+1）",
+           c3.claimed and c3.reason == "taken_over" and c3.run.attempt == 2
+           and len(sched.runs) == 1)
+    old_lease = lease_a
+    new_lease = c3.run.lease_id
+    report("抢占后 lease_id 已更换", old_lease != new_lease)
+
+    stale_rejected = False
+    try:
+        sched.finish(c3.run, old_lease, "succeeded", now=base + timedelta(seconds=32))
+    except StaleLease:
+        stale_rejected = True
+    report("旧持有者以过期 lease_id 写入被拒绝", stale_rejected)
+
+    sched.finish(c3.run, new_lease, "succeeded", now=base + timedelta(seconds=33))
+    report("当前持有者完成 → succeeded", c3.run.status == "succeeded"
+           and c3.run.finished_at is not None and c3.run.lease_id is None)
+
+    again = sched.claim("finance.daily-close", base, "worker-c",
+                        now=base + timedelta(seconds=34))
+    report("终态 run 不再被认领", not again.claimed and again.reason == "finished")
+
+    state_rejected = False
+    try:
+        sched.finish(c3.run, new_lease, "failed", now=base + timedelta(seconds=35))
+    except InvalidState:
+        state_rejected = True
+    report("终态不可再 finish", state_rejected)
+
+    # 重试上限
+    retry_sched = Scheduler(lease_seconds=30)
+    retry_sched.define_job("ops.retry", "* * * * *", max_attempts=2)
+    r1 = retry_sched.claim("ops.retry", base, "w1", now=base)
+    retry_sched.finish(r1.run, r1.run.lease_id, "failed", "boom", now=base + timedelta(seconds=1))
+    r2 = retry_sched.claim("ops.retry", base, "w2", now=base + timedelta(seconds=2))
+    report("failed 且 attempt < max_attempts 可重试", r2.claimed and r2.reason == "retry"
+           and r2.run.attempt == 2)
+    retry_sched.finish(r2.run, r2.run.lease_id, "failed", "boom", now=base + timedelta(seconds=3))
+    r3 = retry_sched.claim("ops.retry", base, "w3", now=base + timedelta(seconds=4))
+    report("attempt 达到 max_attempts 后不再认领",
+           not r3.claimed and r3.reason == "exhausted")
+
+    # 停用 / 互斥作用域
+    skip_sched = Scheduler(lease_seconds=30)
+    skip_sched.define_job("ops.disabled", "* * * * *", enabled=False)
+    d1 = skip_sched.claim("ops.disabled", base, "w1", now=base)
+    report("停用作业到点记为 skipped（job_disabled）",
+           not d1.claimed and d1.run.status == "skipped"
+           and d1.run.last_error == "job_disabled" and d1.run.finished_at is not None)
+
+    scope_sched = Scheduler(lease_seconds=30)
+    scope_sched.define_job("ops.job-a", "* * * * *")
+    scope_sched.define_job("ops.job-b", "* * * * *")
+    a = scope_sched.claim("ops.job-a", base, "w1", scope="partition:2026-10-27", now=base)
+    b = scope_sched.claim("ops.job-b", base, "w2", scope="partition:2026-10-27", now=base)
+    report("同 scope 未过期租约存在时新 run 记为 skipped（scope_held）",
+           a.claimed and not b.claimed and b.run.status == "skipped"
+           and b.run.last_error == "scope_held")
+    b2 = scope_sched.claim("ops.job-b", base + timedelta(minutes=1), "w2",
+                           scope="partition:2026-10-27", now=base + timedelta(minutes=1))
+    report("scope 释放后可认领新计划时点", b2.claimed and b2.reason == "created")
+
+    # 陈旧 running 回收：不同 run_key 占着同 scope
+    stale_sched = Scheduler(lease_seconds=10)
+    stale_sched.define_job("ops.stale-a", "* * * * *")
+    stale_sched.define_job("ops.stale-b", "* * * * *")
+    sa = stale_sched.claim("ops.stale-a", base, "w1", scope="partition:x", now=base)
+    sb = stale_sched.claim("ops.stale-b", base, "w2", scope="partition:x",
+                           now=base + timedelta(seconds=11))
+    report("同 scope 陈旧 running 先回收为 failed（lease_expired）",
+           sa.run.status == "failed" and sa.run.last_error == "lease_expired"
+           and sb.claimed and sb.reason == "created")
+
+    # 心跳
+    hb_sched = Scheduler(lease_seconds=30)
+    hb_sched.define_job("ops.hb", "* * * * *")
+    h = hb_sched.claim("ops.hb", base, "w1", now=base)
+    hb_sched.heartbeat(h.run, h.run.lease_id, now=base + timedelta(seconds=10))
+    report("心跳延长当前租约",
+           h.run.lease_expires_at == base + timedelta(seconds=40))
+    stale_hb = False
+    try:
+        hb_sched.heartbeat(h.run, "00000000-0000-7000-8000-000000000000", now=base)
+    except StaleLease:
+        stale_hb = True
+    report("心跳携带错误 lease_id 被拒绝", stale_hb)
+
+    metrics = hb_sched.metrics(now=base + timedelta(seconds=10))
+    report("指标暴露 running/overdue/age",
+           metrics["running"] == 1 and metrics["overdue_leases"] == 0
+           and metrics["oldest_running_age_seconds"] == 10)
+
+    print("scheduler 自测通过" if ok else "scheduler 自测失败")
+    return 0 if ok else 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="scheduler",
+                                     description="EIS 定时任务执行语义参考实现（ADR-0021）")
+    parser.add_argument("--self-test", action="store_true", help="运行确定性自测")
+    parser.add_argument("--print-sql", action="store_true", help="输出 PostgreSQL 语句模板")
+    args = parser.parse_args(argv)
+    if args.self_test:
+        return cmd_self_test(args)
+    if args.print_sql:
+        print(PRINT_SQL)
+        return 0
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

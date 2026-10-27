@@ -1,0 +1,71 @@
+# 定时任务 / 日终批处理执行语义验证用例（ADR-0021）
+# 运行：tools/e2e-runner extensions/scheduler/tests/scheduler.test.yaml
+suite: scheduler
+tests:
+  - name: "Scheduler DDL：同一计划时点至多一个 run（(job_id, scheduled_for) 唯一）"
+    kind: static
+    target: extensions/scheduler/scheduler.ddl
+    check: present
+    pattern: "UNIQUE \\(job_id, scheduled_for\\)"
+
+  - name: "Scheduler DDL：外部幂等键 run_key 唯一"
+    kind: static
+    target: extensions/scheduler/scheduler.ddl
+    check: present
+    pattern: "uq_job_run_run_key"
+
+  - name: "Scheduler DDL：状态机 running/succeeded/failed/skipped"
+    kind: static
+    target: extensions/scheduler/scheduler.ddl
+    check: present
+    pattern: "'running', 'succeeded', 'failed', 'skipped'"
+
+  - name: "Scheduler DDL：同 scope 至多一个 running（部分唯一索引）"
+    kind: static
+    target: extensions/scheduler/scheduler.ddl
+    check: present
+    pattern: "uq_job_run_scope_running ON job_run \\(scope\\)"
+
+  - name: "Scheduler DDL：running 必须持有租约三元组"
+    kind: static
+    target: extensions/scheduler/scheduler.ddl
+    check: present
+    pattern: "ck_job_run_running_lease"
+
+  - name: "Scheduler DDL：终态必须有 finished_at 且不得残留租约"
+    kind: static
+    target: extensions/scheduler/scheduler.ddl
+    check: present
+    pattern: "ck_job_run_finished_at|ck_job_run_terminal_lease"
+    min_matches: 2
+
+  - name: "Scheduler 规则覆盖 SCH-001..012"
+    kind: static
+    target: extensions/scheduler/rules/scheduling.rules.yaml
+    check: present
+    pattern: 'id: "SCH-0(0[1-9]|1[0-2])"'
+    min_matches: 12
+
+  - name: "Scheduler 规则明确不写锁算法/选主/cron 实现"
+    kind: static
+    target: extensions/scheduler/rules/scheduling.rules.yaml
+    check: present
+    pattern: "分布式锁算法|选主|cron 解析"
+
+  - name: "参考实现自测（幂等/互斥/抢占/旧租约拒绝/重试上限/终态）"
+    kind: cli
+    args: [tools/scheduler, --self-test]
+    expect_exit: 0
+    stdout_contains: ["scheduler 自测通过"]
+
+  - name: "PostgreSQL 模板使用 FOR UPDATE SKIP LOCKED 且以 lease_id 校验写入"
+    kind: cli
+    args: [tools/scheduler, --print-sql]
+    expect_exit: 0
+    stdout_contains: ["FOR UPDATE SKIP LOCKED", "AND lease_id = $3", "job_run"]
+
+  - name: "README 说明正确性不外包给锁"
+    kind: static
+    target: extensions/scheduler/README.md
+    check: present
+    pattern: "正确性.*不外包|锁只做内务"
