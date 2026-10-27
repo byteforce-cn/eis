@@ -44,3 +44,4 @@ EIS 的核心契约已冻结。任何修改（解冻请求）必须走以下流�
 | [0013](0013-command-caller-constraint.md) | 命令调用方约束（manifest callers + x-eis-callers） | Accepted |
 | [0014](0014-command-response-locator-version.md) | 命令响应携带 {locator, version}（命令与查询的桥） | Accepted |
 | [0015](0015-authz-condition-declaration.md) | 授权条件声明面（manifest.permissions[].condition 受限 DSL） | Accepted |
+| [0016](0016-kernel-object-schema-validation.md) | 参考内核执行扩展对象 Schema（可选依赖 + fail-closed） | Accepted |

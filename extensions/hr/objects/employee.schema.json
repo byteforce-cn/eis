@@ -32,7 +32,7 @@
         },
         "employment_type": {
           "type": ["string", "null"],
-          "enum": ["full_time", "part_time", "intern", "contract"],
+          "enum": ["full_time", "part_time", "intern", "contract", null],
           "description": "雇佣类型：全职 full_time / 兼职 part_time / 实习 intern / 劳务 contract（可选，历史数据可空）"
         },
         "work_location": {
@@ -50,7 +50,7 @@
         },
         "id_type": {
           "type": ["string", "null"],
-          "enum": ["national_id", "passport"],
+          "enum": ["national_id", "passport", null],
           "description": "证件类型"
         },
         "id_number_hash": {

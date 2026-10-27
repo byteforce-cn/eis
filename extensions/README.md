@@ -114,6 +114,9 @@ def handle_action(api, payload, actor, command_id):
 
 加载按扩展目录名排序；命令处理器重复注册会立即报错（快速失败）。
 
+参考内核同时按 `manifest.objects` 载入对象 Schema，在创建/更新写入前校验完整行（ADR-0016）；
+Schema 违约以 `EIS-400-001` 拒绝，未声明 Schema 的对象类型 fail-closed。
+
 ## 7. 权限目录（manifest.permissions，ADR-0006）
 
 扩展（含读取面）的权限标识应在 manifest 声明；一旦声明 `permissions`（推荐全部扩展），消费方与参考实现只使用已声明的标识：
