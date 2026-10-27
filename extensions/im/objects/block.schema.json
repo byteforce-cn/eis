@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/im/object/block/v1",
+  "title": "ImBlock",
+  "description": "黑名单关系。取消拉黑是写（revoked_at 非空即失效），保留历史。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["user_id", "blocked_user_id", "blocked_at"],
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "拉黑发起方"
+        },
+        "blocked_user_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "被拉黑方"
+        },
+        "blocked_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "拉黑时间（UTC）"
+        },
+        "revoked_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "取消拉黑时间；非空即失效"
+        },
+        "revoked_by": {
+          "type": ["string", "null"],
+          "format": "uuid",
+          "description": "取消拉黑操作者"
+        }
+      }
+    }
+  ]
+}

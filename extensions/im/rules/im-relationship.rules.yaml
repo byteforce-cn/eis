@@ -1,0 +1,73 @@
+# im-relationship.rules.yaml — IM 关系与已读位点规则（ADR-0023）
+version: "1.0.0"
+
+relationship_rules:
+  - id: "IM-REL-001"
+    name: "好友对唯一"
+    level: "MUST"
+    statement: >
+      同一对用户至多一个当前好友关系（与方向无关，迁移用 least/greatest 双向唯一索引兜底）；
+      pending/accepted 重复申请 → IM-409-008。
+    enforced_by: ["im.friend.request", "V401__im_initial.sql"]
+    error_code: "IM-409-008"
+
+  - id: "IM-REL-002"
+    name: "申请只能由被申请人处理"
+    level: "MUST"
+    statement: >
+      接受/拒绝必须由 to_user_id 执行（IM-403-002）；已处理申请再次处理 → IM-409-009。
+      接受/拒绝写审计事件 im.friend.accepted / im.friend.rejected。
+    enforced_by: ["im.friend.request.decide", "05-audit-contract"]
+    error_code: "IM-403-002"
+
+  - id: "IM-REL-003"
+    name: "黑名单阻止好友申请"
+    level: "MUST"
+    statement: >
+      任一方向存在 active 黑名单关系时，好友申请 → IM-409-007；
+      拉黑同时把已接受的好友关系置为 removed（保留历史）。
+    enforced_by: ["im.friend.request", "im.user.block"]
+    error_code: "IM-409-007"
+
+  - id: "IM-REL-004"
+    name: "不能对自己操作"
+    level: "MUST"
+    statement: >
+      好友申请与拉黑不得以自己为目标 → IM-400-002。
+    enforced_by: ["im.friend.request", "im.user.block"]
+    error_code: "IM-400-002"
+
+  - id: "IM-REL-005"
+    name: "黑名单幂等"
+    level: "MUST"
+    statement: >
+      同一 (user_id, blocked_user_id) 当前至多一个 active 黑名单；
+      重复拉黑或取消未拉黑关系 → IM-409-010。取消拉黑是写（revoked_at/revoked_by）。
+    enforced_by: ["im.user.block", "im.user.unblock", "V401__im_initial.sql"]
+    error_code: "IM-409-010"
+
+  - id: "IM-REL-006"
+    name: "已读位点单调"
+    level: "MUST"
+    statement: >
+      已读位点按 (chat_id, user_id, endpoint_id) 唯一；last_seq 只增不减，
+      回退 → IM-409-004；相同位点重复上报是幂等 no-op（仍写审计，advanced=false）。
+    enforced_by: ["im.read.position.report", "05-audit-contract"]
+    error_code: "IM-409-004"
+
+  - id: "IM-REL-007"
+    name: "会话设置快照"
+    level: "MUST"
+    statement: >
+      会话设置按 (chat_id, user_id) 唯一；pinned/muted/hidden 为布尔快照；
+      变更支持 expected_version 乐观锁（IM-409-002）并写审计事件。
+    enforced_by: ["im.conversation.settings.update", "V401__im_initial.sql"]
+    error_code: "IM-409-002"
+
+tests:
+  - name: "好友全流程"
+    expect: "申请 → 接受 → 删除；重复申请 IM-409-008；非被申请人处理 IM-403-002"
+  - name: "黑名单"
+    expect: "拉黑后申请 IM-409-007；重复拉黑/取消未拉黑 IM-409-010；好友关系置 removed"
+  - name: "已读位点"
+    expect: "回退 IM-409-004；相同位点幂等；位点只增不减"

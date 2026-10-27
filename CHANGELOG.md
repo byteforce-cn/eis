@@ -34,6 +34,13 @@
   `difference.resolve`（差异处理写审计，禁止直接改记录）；报告为只读投影（`as_of` /
   `recorded_as_of`）；V301 迁移提供 `run_key` 唯一索引；CI PostgreSQL 执行
   `reconciliation-smoke.sql`；核心六类契约不变；
+- IM 协作触达层扩展 `extensions/im/`（ADR-0023 / issue #41）：按评审结论重写为 EIS 元结构——
+  7 个对象（Message/Conversation/ReadPosition/Group/GroupMember/Friendship/Block）全部
+  `id` + `version` + 双时间轴；`server_seq` 为扩展领域序列（不与 `version` 混用）；撤回/移出群/解散
+  一律追加版本 + 审计；读取面支持 `as_of` / `recorded_as_of` / `min_version`（`since_seq` 分页标注为
+  扩展读模型）；大内容用 `content_sha256` + `content_ref`；业务引用用 `external_refs`；
+  16 命令 + 19 权限；V401 迁移提供自然键当前行唯一索引；CI PostgreSQL 执行 `im-smoke.sql`；
+  网关/长连接/推送/typing/无状态类别查询不进契约；核心六类契约不变；
 - 读接口 `min_version`（ADR-0017 / issue #32②）：`GET /objects/{objectType}/{id}?min_version=N`
   表示「返回包含版本 N 的状态」；未追平统一 `409 + Retry-After`（新错误码 `EIS-409-003`
   `read_model_not_ready`），不得以 200 返回旧版本；`min_version` 是对象版本而非投影水位；
@@ -54,7 +61,7 @@
 
 ### 变更
 
-- 用例 174/174（新增授权条件声明、内核对象 Schema、读接口 min_version、Outbox/Inbox、Scheduler、对账、迟到事实用例；移除调用方传条件的反模式用例），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
+- 用例 186/186（新增授权条件声明、内核对象 Schema、读接口 min_version、Outbox/Inbox、Scheduler、对账、IM、迟到事实用例；移除调用方传条件的反模式用例），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
 
 ## [Unreleased] — 2026-10-17（开放 issue 修复）
 

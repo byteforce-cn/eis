@@ -1,0 +1,113 @@
+# im-message.rules.yaml — IM 消息规则（ADR-0023）
+# 归属：extensions/im（领域扩展）；不改核心六类契约。
+version: "1.0.0"
+
+message_rules:
+  - id: "IM-MSG-001"
+    name: "客户端发送幂等"
+    level: "MUST"
+    statement: >
+      发送幂等键 = (chat_id, client_msg_id)；同一键在当前消息对象中唯一，
+      重复提交 → IM-409-001。不得用 server_seq 或对象 version 充当客户端幂等键。
+    enforced_by: ["im.message.send", "V401__im_initial.sql"]
+    error_code: "IM-409-001"
+
+  - id: "IM-MSG-002"
+    name: "会话内序列 server_seq"
+    level: "MUST"
+    statement: >
+      server_seq 由服务端按会话分配（当前最大 + 1），用于分页 / 已读 / 缺口恢复；
+      当前对象内 (chat_id, server_seq) 唯一。server_seq 是扩展领域规则，不与对象
+      version 混用，也不要求核心命令模型支持流式序列。
+    enforced_by: ["im.message.send", "V401__im_initial.sql"]
+    error_code: "IM-SEQ-DUPLICATE"
+
+  - id: "IM-MSG-003"
+    name: "编辑乐观锁"
+    level: "MUST"
+    statement: >
+      编辑必须携带 base_version；与当前对象 version 不一致 → IM-409-002。
+      编辑追加新版本（version+1），历史版本由双时间轴保留。
+    enforced_by: ["im.message.edit"]
+    error_code: "IM-409-002"
+
+  - id: "IM-MSG-004"
+    name: "撤回是一次写"
+    level: "MUST"
+    statement: >
+      撤回不是状态翻转：必须追加新版本（version+1，status=recalled，
+      recalled_at/recalled_by），并写审计事件 im.message.recalled；
+      历史版本与原始内容保留（合规留痕）。
+    enforced_by: ["im.message.recall", "05-audit-contract"]
+    error_code: "IM-409-003"
+
+  - id: "IM-MSG-005"
+    name: "撤回后不可编辑"
+    level: "MUST"
+    statement: >
+      已撤回消息不可编辑，也不可再次撤回（IM-409-003）；撤回对全版本生效，
+      读投影显示撤回态。
+    enforced_by: ["im.message.edit", "im.message.recall"]
+    error_code: "IM-409-003"
+
+  - id: "IM-MSG-006"
+    name: "大对象外置"
+    level: "MUST"
+    statement: >
+      二进制 / 大内容不得塞进业务行：使用 content_sha256（64 位小写十六进制）+
+      content_ref 指向外部存储；content 只放 JSON 文本/结构化内容。
+    enforced_by: ["objects/message.schema.json"]
+    error_code: "IM-CONTENT-INLINE"
+
+  - id: "IM-MSG-007"
+    name: "业务引用松耦合"
+    level: "MUST"
+    statement: >
+      与业务域的关联只用 external_refs: [{system, id}]（docs/INTEGRATION-BOUNDARY.md），
+      IM 扩展不反向依赖 HR / 财务 / 审批等具体业务扩展，不持有业务对象字段。
+    enforced_by: ["objects/message.schema.json"]
+    error_code: "IM-BIZ-COUPLING"
+
+  - id: "IM-MSG-008"
+    name: "群聊发送权限"
+    level: "MUST"
+    statement: >
+      群聊（chat_id 命中 im_group.id）发送要求发送者为 active 群成员（left_at 为空）；
+      非成员 → IM-403-001；群已解散 → IM-409-003。直聊由业务侧会话可见性约束。
+    enforced_by: ["im.message.send"]
+    error_code: "IM-403-001"
+
+  - id: "IM-MSG-009"
+    name: "读取面时点语义"
+    level: "MUST"
+    statement: >
+      消息读取面遵循 02 查询契约：as_of / recorded_as_of / min_version；
+      since_seq / before_seq / limit 是扩展读模型，必须标注为非核心查询语义。
+    enforced_by: ["operations/reads.openapi.yaml", "im.message.read"]
+    error_code: "IM-QUERY-CONTRACT"
+
+  - id: "IM-MSG-010"
+    name: "编辑/撤回归属"
+    level: "MUST"
+    statement: >
+      仅发送者可编辑消息；撤回可由发送者或该群 owner/admin 执行（直聊仅发送者）。
+      越权 → IM-403-003；权限目录只做命令级收窄，对象级归属由处理器判定。
+    enforced_by: ["im.message.edit", "im.message.recall"]
+    error_code: "IM-403-003"
+
+not_in_contract:
+  - "网关、长连接、路由、离线推送与 typing 等 Transient 机制"
+  - "无状态类别增量查询（/sync/categories/*）与消息位点推进（/sync/progress/*）"
+  - "at-most-once 拉取语义、0-RTT 重试、大群扇出策略"
+  - "实时帧通道（WS/QUIC）的端点与协议"
+  - "推送 token 注册与设备管理"
+
+tests:
+  - name: "发送幂等"
+    expect: "同一 (chat_id, client_msg_id) 第二次发送 → IM-409-001；server_seq 按会话递增"
+  - name: "编辑/撤回"
+    expect: "编辑 base_version 冲突 → IM-409-002；撤回追加版本 + 审计；撤回后编辑 → IM-409-003"
+  - name: "大对象与业务引用"
+    expect: "二进制用 content_sha256 + content_ref；业务引用只用 external_refs"
+  - name: "群聊权限"
+    expect: "非成员发送 → IM-403-001；解散后发送 → IM-409-003"

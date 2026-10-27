@@ -1,0 +1,86 @@
+# im-group.rules.yaml — IM 群组规则（ADR-0023）
+version: "1.0.0"
+
+group_rules:
+  - id: "IM-GRP-001"
+    name: "群 id 即 chat_id"
+    level: "MUST"
+    statement: >
+      im_group.id 同时是该群的 chat_id；消息的 chat_id 命中群 id 时按群聊校验成员关系。
+      群组不另建会话对象。
+    enforced_by: ["objects/group.schema.json", "im.message.send"]
+    error_code: "IM-GROUP-CHAT-ID"
+
+  - id: "IM-GRP-002"
+    name: "群主唯一且不可移出"
+    level: "MUST"
+    statement: >
+      同一群 active 成员中至多一个 owner；群主不可被移出（IM-409-006），
+      需先转让或解散。角色只能为 owner/admin/member。
+    enforced_by: ["im.group.member.remove", "im.group.member.role.update"]
+    error_code: "IM-409-006"
+
+  - id: "IM-GRP-003"
+    name: "成员关系墓碑"
+    level: "MUST"
+    statement: >
+      移出群/退群是写：left_at 非空、追加版本、写审计事件 im.group.member.removed；
+      不得物理删除成员行。重新入群复用同一对象并清空 left_at。
+    enforced_by: ["im.group.member.remove", "im.group.member.add"]
+    error_code: "IM-MEMBER-TOMBSTONE"
+
+  - id: "IM-GRP-004"
+    name: "解散是写且可审计"
+    level: "MUST"
+    statement: >
+      解散群必须追加版本（status=dissolved，dissolved_at/dissolved_by）并写审计事件
+      im.group.dissolved；仅群主可执行；解散后群内写命令一律 IM-409-003。
+    enforced_by: ["im.group.dissolve", "05-audit-contract"]
+    error_code: "IM-409-003"
+
+  - id: "IM-GRP-005"
+    name: "管理权限"
+    level: "MUST"
+    statement: >
+      加成员/移出成员要求操作者为 owner 或 admin；改角色/禁言仅 owner；
+      管理员不可移出其他管理员（IM-403-001）。
+    enforced_by: ["im.group.member.add", "im.group.member.remove",
+                  "im.group.member.role.update"]
+    error_code: "IM-403-001"
+
+  - id: "IM-GRP-006"
+    name: "乐观锁"
+    level: "MUST"
+    statement: >
+      群更新支持 expected_version；与当前 version 不一致 → IM-409-002。
+      成员/群对象的 row 级并发以 EIS version 为准，不引入独立 row_version。
+    enforced_by: ["im.group.update"]
+    error_code: "IM-409-002"
+
+  - id: "IM-GRP-007"
+    name: "禁言"
+    level: "MUST"
+    statement: >
+      禁言以 mute_until（UTC）表达，null = 未禁言；禁言不阻断读取与已读上报，
+      只约束发送（由实现按 mute_until 判定）。禁言变更写审计事件。
+    enforced_by: ["im.group.member.role.update"]
+    error_code: "IM-MUTE-INVALID"
+
+  - id: "IM-GRP-008"
+    name: "建群事务性"
+    level: "MUST"
+    statement: >
+      建群必须在同一命令内创建群对象与群主成员关系；成员列表先去重再写入，
+      校验失败时不得留下半建群状态。
+    enforced_by: ["im.group.create"]
+    error_code: "IM-GROUP-PARTIAL"
+
+tests:
+  - name: "建群"
+    expect: "群对象 + 群主成员关系同时创建；成员列表去重"
+  - name: "移出/重新入群"
+    expect: "left_at 墓碑 + 审计；重新入群清空 left_at"
+  - name: "解散"
+    expect: "仅群主；解散后写命令 IM-409-003"
+  - name: "角色权限"
+    expect: "admin 不可移出 admin；改角色仅 owner；群主不可移出"

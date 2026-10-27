@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/im/object/read-position/v1",
+  "title": "ImReadPosition",
+  "description": "端维度的已读位点快照。last_seq 单调推进，回退丢弃；位点更新不承载消息状态。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["chat_id", "user_id", "endpoint_id", "last_seq", "reported_at"],
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "user_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "endpoint_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "端 ID（设备/会话实例）；同一用户可有多端位点"
+        },
+        "last_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "已读到的会话内 server_seq；只增不减"
+        },
+        "reported_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "位点上报时间（UTC）"
+        }
+      }
+    }
+  ]
+}

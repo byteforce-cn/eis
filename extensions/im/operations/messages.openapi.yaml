@@ -1,0 +1,203 @@
+# operations/messages.openapi.yaml — 消息命令（im v1.0.0，ADR-0023）
+openapi: 3.1.0
+info:
+  title: IM 协作触达层 — 消息
+  version: 1.0.0
+  description: |
+    命令：im.message.send / im.message.edit / im.message.recall。
+    - 发送幂等键 (chat_id, client_msg_id)；重复 → IM-409-001；server_seq 由服务端按会话分配
+    - 编辑使用 base_version 乐观锁；冲突 → IM-409-002（409 返回最新版本）
+    - 撤回是写：追加新版本（status=recalled），写审计事件；对已撤回消息再次撤回 → IM-409-003
+    - 群聊发送要求发送者为 active 群成员（IM-403-001）
+
+paths:
+  /commands/im.message.send:
+    post:
+      operationId: imMessageSend
+      summary: 发送消息
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法 / IM-400-001 content 与 content_ref 均为空
+        '403':
+          description: IM-403-001 非群成员
+        '409':
+          description: IM-409-001 客户端消息 ID 重复 / IM-409-003 群已解散 / EIS-409-001 幂等冲突
+
+  /commands/im.message.edit:
+    post:
+      operationId: imMessageEdit
+      summary: 编辑消息
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '404':
+          description: IM-404-001 消息不存在
+        '409':
+          description: IM-409-002 版本冲突 / IM-409-003 消息已撤回 / EIS-409-001 幂等冲突
+
+  /commands/im.message.recall:
+    post:
+      operationId: imMessageRecall
+      summary: 撤回消息
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecallCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '404':
+          description: IM-404-001 消息不存在
+        '409':
+          description: IM-409-003 消息已撤回 / EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    ExternalRef:
+      type: object
+      required: [system, id]
+      properties:
+        system:
+          type: string
+          minLength: 1
+        id:
+          type: string
+          minLength: 1
+
+    SendCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.message.send
+        payload:
+          type: object
+          required: [chat_id, client_msg_id, payload_type, content]
+          properties:
+            chat_id:
+              type: string
+              minLength: 1
+            client_msg_id:
+              type: string
+              minLength: 1
+            payload_type:
+              type: integer
+              minimum: 0
+            content:
+              type: object
+            content_sha256:
+              type: string
+              nullable: true
+              pattern: '^[0-9a-f]{64}$'
+            content_ref:
+              type: string
+              nullable: true
+            external_refs:
+              type: array
+              items:
+                $ref: '#/components/schemas/ExternalRef'
+        idempotency_key:
+          type: string
+
+    EditCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.message.edit
+        payload:
+          type: object
+          required: [message_id, base_version, content]
+          properties:
+            message_id:
+              type: string
+              format: uuid
+            base_version:
+              type: integer
+              minimum: 1
+            payload_type:
+              type: integer
+              minimum: 0
+            content:
+              type: object
+            content_sha256:
+              type: string
+              nullable: true
+              pattern: '^[0-9a-f]{64}$'
+            content_ref:
+              type: string
+              nullable: true
+        idempotency_key:
+          type: string
+
+    RecallCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.message.recall
+        payload:
+          type: object
+          required: [message_id]
+          properties:
+            message_id:
+              type: string
+              format: uuid
+        idempotency_key:
+          type: string
+
+    Accepted:
+      type: object
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: accepted
+        event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        locator:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1

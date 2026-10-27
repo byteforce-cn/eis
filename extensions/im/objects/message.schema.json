@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/im/object/message/v1",
+  "title": "ImMessage",
+  "description": "IM 消息实体（协作触达层）。version 是 EIS 对象版本（每次写 +1，含编辑与撤回）；server_seq 是会话内扩展序列，只用于分页/已读/缺口恢复，不与 version 混用。大内容用 content_sha256 + content_ref 外置。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": [
+        "chat_id",
+        "sender_user_id",
+        "client_msg_id",
+        "server_seq",
+        "status",
+        "payload_type",
+        "content"
+      ],
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话 ID；群聊时为 im_group.id，直聊由业务分配"
+        },
+        "sender_user_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "发送者主体 ID"
+        },
+        "client_msg_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "客户端消息 ID；与 chat_id 构成发送幂等键（当前对象唯一）"
+        },
+        "server_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "会话内单调递增序列（扩展领域规则）；当前对象内 (chat_id, server_seq) 唯一"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["normal", "recalled"],
+          "description": "normal = 正常；recalled = 已撤回（撤回落为新版本，不删除历史）"
+        },
+        "payload_type": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "多态消息类型注册码（扩展路由；新增类型不修改既有实体）"
+        },
+        "content": {
+          "type": "object",
+          "description": "消息内容 JSON（文本/结构化卡片等）；大对象/二进制放 content_ref"
+        },
+        "content_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "外置内容摘要（小写十六进制 64 字符）；未外置为 null"
+        },
+        "content_ref": {
+          "type": ["string", "null"],
+          "description": "外置内容存储引用（对象存储 key / URL），不存大对象本体"
+        },
+        "external_refs": {
+          "type": "array",
+          "description": "松耦合业务引用（审批单/工单等）；IM 扩展不反向依赖业务扩展",
+          "items": {
+            "type": "object",
+            "required": ["system", "id"],
+            "properties": {
+              "system": {"type": "string", "minLength": 1},
+              "id": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "recalled_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "撤回业务时间（UTC）；撤回是写，产生新版本"
+        },
+        "recalled_by": {
+          "type": ["string", "null"],
+          "format": "uuid",
+          "description": "撤回操作者主体 ID"
+        }
+      }
+    }
+  ]
+}

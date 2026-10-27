@@ -1,0 +1,178 @@
+# operations/reads.openapi.yaml — 消息读取面（im v1.0.0，ADR-0023）
+# 读取面是只读投影：支持 as_of / recorded_as_of / min_version（02 查询契约）。
+# serverSeq 分页（since_seq / before_seq）是扩展读模型，非核心查询语义。
+openapi: 3.1.0
+info:
+  title: IM 协作触达层 — 消息读取
+  version: 1.0.0
+  description: |
+    读取面 im.message.read（fail-closed）。
+    - as_of：业务时点；recorded_as_of：记录时点（重建历史视图）
+    - min_version：对象版本等待语义（未追平 → 409 + Retry-After，由读接口实现）
+    - since_seq / before_seq / limit：会话内 server_seq 分页（扩展读模型，标注为非核心语义）
+    - 撤回态在消息投影中可见（status=recalled + recalled_at/by）
+
+paths:
+  /im/chats/{chatId}/messages:
+    get:
+      operationId: imListMessages
+      summary: 按 serverSeq 分页读取消息历史
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: since_seq
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: 返回 server_seq > since_seq 的消息（扩展读模型）
+        - name: before_seq
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: 返回 server_seq < before_seq 的消息（扩展读模型）
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: recorded_as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: min_version
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: 消息列表（按 server_seq 升序）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagePage'
+        '409':
+          description: EIS-409-003 读模型未追平 min_version（409 + Retry-After）
+
+  /im/chats/{chatId}/messages/{messageId}:
+    get:
+      operationId: imGetMessage
+      summary: 读取单条消息（含撤回态）
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: recorded_as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: min_version
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: 消息投影
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '404':
+          description: IM-404-001 消息不存在
+        '409':
+          description: EIS-409-003 读模型未追平 min_version
+
+components:
+  schemas:
+    Message:
+      type: object
+      required: [id, version, chat_id, sender_user_id, server_seq, status, payload_type, content]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        chat_id:
+          type: string
+        sender_user_id:
+          type: string
+          format: uuid
+        client_msg_id:
+          type: string
+        server_seq:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [normal, recalled]
+        payload_type:
+          type: integer
+        content:
+          type: object
+        external_refs:
+          type: array
+          items:
+            type: object
+            properties:
+              system:
+                type: string
+              id:
+                type: string
+        recalled_at:
+          type: string
+          format: date-time
+          nullable: true
+        recalled_by:
+          type: string
+          format: uuid
+          nullable: true
+
+    MessagePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        next_since_seq:
+          type: integer
+          nullable: true

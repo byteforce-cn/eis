@@ -72,6 +72,7 @@ composition:
 | `outbox` | 1.0.0 | 跨域运行时：Outbox/Inbox 投递契约（`kind: runtime`，无业务对象）；`outbox.ddl` + OBX-001..012 + `tools/relay` | 完整（static/cli 用例 + CI PostgreSQL 冒烟；ADR-0018） |
 | `scheduler` | 1.0.0 | 跨域运行时：定时任务执行语义（`kind: runtime`，无业务对象）；`scheduler.ddl` + SCH-001..012 + `tools/scheduler` | 完整（static/cli 用例 + CI PostgreSQL 冒烟；ADR-0021） |
 | `reconciliation` | 1.0.0 | 业务对账：运行/差异/只读报告；`run_key` 幂等、受控分类 + 容忍度、差异处理走命令 | 完整（scenario 用例 + CI PostgreSQL 冒烟；ADR-0022） |
+| `im` | 1.0.0 | IM 协作触达层：消息/会话/已读位点/群组/成员/好友/黑名单；`serverSeq` 扩展序列、撤回追加版本、读取面 `as_of`/`min_version` | 完整（8 scenario + 4 static + CI PostgreSQL 冒烟；ADR-0023） |
 
 ## 6. 命令处理器注册（可执行用例）
 

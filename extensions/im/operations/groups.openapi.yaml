@@ -1,0 +1,176 @@
+# operations/groups.openapi.yaml — 群组命令（im v1.0.0，ADR-0023）
+openapi: 3.1.0
+info:
+  title: IM 协作触达层 — 群组
+  version: 1.0.0
+  description: |
+    命令：im.group.create / im.group.update / im.group.dissolve。
+    - 建群时创建群主成员关系；群 id 即 chat_id
+    - 解散是一次写（status=dissolved + dissolved_at/by + 审计），仅群主可执行
+    - 更新支持 expected_version 乐观锁（IM-409-002）
+
+paths:
+  /commands/im.group.create:
+    post:
+      operationId: imGroupCreate
+      summary: 建群
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGroupCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '409':
+          description: EIS-409-001 幂等冲突
+
+  /commands/im.group.update:
+    post:
+      operationId: imGroupUpdate
+      summary: 更新群
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGroupCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '403':
+          description: IM-403-001 非群主/管理员
+        '404':
+          description: IM-404-001 群不存在
+        '409':
+          description: IM-409-002 版本冲突 / IM-409-003 群已解散 / EIS-409-001 幂等冲突
+
+  /commands/im.group.dissolve:
+    post:
+      operationId: imGroupDissolve
+      summary: 解散群
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DissolveGroupCommand'
+      responses:
+        '202':
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法
+        '403':
+          description: IM-403-001 非群主
+        '404':
+          description: IM-404-001 群不存在
+        '409':
+          description: IM-409-003 群已解散 / EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    CreateGroupCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.group.create
+        payload:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+              minLength: 1
+            avatar:
+              type: string
+              nullable: true
+            member_ids:
+              type: array
+              items:
+                type: string
+                format: uuid
+        idempotency_key:
+          type: string
+
+    UpdateGroupCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.group.update
+        payload:
+          type: object
+          required: [group_id]
+          properties:
+            group_id:
+              type: string
+              format: uuid
+            name:
+              type: string
+              minLength: 1
+            avatar:
+              type: string
+              nullable: true
+            expected_version:
+              type: integer
+              minimum: 1
+        idempotency_key:
+          type: string
+
+    DissolveGroupCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: im.group.dissolve
+        payload:
+          type: object
+          required: [group_id]
+          properties:
+            group_id:
+              type: string
+              format: uuid
+        idempotency_key:
+          type: string
+
+    Accepted:
+      type: object
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: accepted
+        event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        locator:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1

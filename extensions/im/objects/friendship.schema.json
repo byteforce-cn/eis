@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/im/object/friendship/v1",
+  "title": "ImFriendship",
+  "description": "好友关系（有向请求 + 状态）。同一对用户至多一个当前关系（迁移用 least/greatest 双向唯一索引兜底）。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": ["from_user_id", "to_user_id", "status", "requested_at"],
+      "properties": {
+        "from_user_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "申请发起方"
+        },
+        "to_user_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "申请接收方"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "rejected", "removed"],
+          "description": "待处理 / 已接受 / 已拒绝 / 已删除"
+        },
+        "requested_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "最近一次申请时间（UTC）"
+        },
+        "responded_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "接受/拒绝/删除时间"
+        },
+        "responded_by": {
+          "type": ["string", "null"],
+          "format": "uuid",
+          "description": "接受/拒绝/删除操作者"
+        }
+      }
+    }
+  ]
+}
