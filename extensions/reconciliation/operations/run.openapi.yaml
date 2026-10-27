@@ -1,0 +1,130 @@
+# operations/run.openapi.yaml — 发起对账（reconciliation v1.0.0，ADR-0022）
+# 命令 reconciliation.run.start：以 run_key = domain:period:sequence 幂等发起。
+openapi: 3.1.0
+info:
+  title: 对账域 — 发起运行
+  version: 1.0.0
+  description: |
+    命令 reconciliation.run.start。
+    - run_key = {domain}:{period}:{sequence}；同一 run_key 已存在当前运行 → 409（REC-409-001）
+    - 差异分类必须为受控枚举；金额/数量差异用受控十进制字符串（REC-400-001）
+    - 差异记录随运行一并落库；对账报告是只读投影（不参与写路径）
+    - 幂等：同幂等键重复提交返回原结果；内容不一致 → 409（核心 EIS-409-001）
+
+paths:
+  /commands/reconciliation.run.start:
+    post:
+      operationId: startReconciliationRun
+      summary: 发起对账运行
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartRunCommand'
+      responses:
+        '202':
+          description: 已接受（返回命令 ID、定位符与对象版本）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '400':
+          description: EIS-400-001 载荷非法 / REC-400-001 差异分类或数值非法
+        '409':
+          description: REC-409-001 同一 run_key 已存在 / EIS-409-001 幂等冲突
+
+components:
+  schemas:
+    DifferenceInput:
+      type: object
+      required: [category, source_ref]
+      properties:
+        category:
+          type: string
+          enum: [matched, amount_mismatch, missing_source, missing_target]
+          description: 新差异只能是未处理分类；resolved/written_off 仅由处理命令产生
+        source_ref:
+          type: string
+          minLength: 1
+        target_ref:
+          type: string
+          nullable: true
+        amount_delta:
+          type: string
+          nullable: true
+          pattern: '^-?\d+(\.\d{1,2})?$'
+        quantity_delta:
+          type: string
+          nullable: true
+          pattern: '^-?\d+(\.\d+)?$'
+        note:
+          type: string
+          nullable: true
+
+    StartRunCommand:
+      type: object
+      required: [type, payload, idempotency_key]
+      properties:
+        type:
+          type: string
+          const: reconciliation.run.start
+        payload:
+          type: object
+          required:
+            - domain
+            - period
+            - sequence
+            - tolerance_amount
+            - tolerance_quantity
+            - source_count
+            - target_count
+          properties:
+            domain:
+              type: string
+              minLength: 1
+            period:
+              type: string
+              pattern: '^\d{4}-\d{2}$'
+            sequence:
+              type: integer
+              minimum: 1
+            tolerance_amount:
+              type: string
+              pattern: '^\d+(\.\d{1,2})?$'
+            tolerance_quantity:
+              type: string
+              pattern: '^\d+(\.\d+)?$'
+            source_count:
+              type: integer
+              minimum: 0
+            target_count:
+              type: integer
+              minimum: 0
+            differences:
+              type: array
+              items:
+                $ref: '#/components/schemas/DifferenceInput'
+        idempotency_key:
+          type: string
+
+    Accepted:
+      type: object
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: accepted
+        event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        locator:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1

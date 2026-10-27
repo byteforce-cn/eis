@@ -1,0 +1,54 @@
+# manifest.yaml — 业务对账域扩展（ADR-0012 §4.2 / ADR-0022）
+extension:
+  id: "reconciliation"
+  name: "业务对账域扩展（运行 / 差异 / 只读报告）"
+  version: "1.0.0"
+  core_version: "1.0.0"
+
+  dependencies: []
+  conflicts: []
+
+  objects:
+    - name: "Run"
+      schema: "objects/reconciliation-run.schema.json"
+    - name: "Difference"
+      schema: "objects/difference-record.schema.json"
+
+  operations:
+    - name: "runStart"
+      contract: "operations/run.openapi.yaml"
+    - name: "runFinish"
+      contract: "operations/run-finish.openapi.yaml"
+    - name: "differenceResolve"
+      contract: "operations/difference-resolve.openapi.yaml"
+    - name: "reportRead"
+      contract: "operations/report.openapi.yaml"
+
+  rules:
+    - name: "reconciliation"
+      file: "rules/reconciliation.rules.yaml"
+
+  # 权限目录（ADR-0006 / extensions/README.md §7）
+  permissions:
+    - id: "reconciliation.run.start"
+      kind: "command"
+      description: "发起一次对账运行"
+    - id: "reconciliation.run.finish"
+      kind: "command"
+      description: "结束对账运行（成功/失败）"
+    - id: "reconciliation.difference.resolve"
+      kind: "command"
+      description: "处理对账差异（调整/核销/人工匹配/接受）"
+    - id: "reconciliation.report.read"
+      kind: "read"
+      description: "读取只读对账报告（运行 + 差异投影）"
+
+  invariants:
+    - name: "run_key 在当前运行中唯一"
+      expression: "unique(run.run_key)"
+    - name: "差异分类受控"
+      expression: "difference.category in (matched, amount_mismatch, missing_source, missing_target, resolved, written_off)"
+    - name: "已处理差异必须有处理方式与处理人"
+      expression: "difference.category in (resolved, written_off) implies difference.resolution_code is not null and difference.resolved_by is not null"
+    - name: "运行终态必须有完成时间"
+      expression: "run.status in (succeeded, failed, skipped) implies run.finished_at is not null"

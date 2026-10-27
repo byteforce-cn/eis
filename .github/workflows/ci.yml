@@ -69,6 +69,10 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f extensions/scheduler/scheduler.ddl
       - name: Scheduler 冒烟断言（run_key 幂等/scope 互斥/状态机/租约）
         run: psql -v ON_ERROR_STOP=1 -f tools/ci/scheduler-smoke.sql
+      - name: 执行 Reconciliation 增量迁移（run_key 当前行唯一索引）
+        run: psql -v ON_ERROR_STOP=1 -f extensions/reconciliation/migrations/V301__reconciliation_initial.sql
+      - name: Reconciliation 冒烟断言（run_key 唯一/分类受控）
+        run: psql -v ON_ERROR_STOP=1 -f tools/ci/reconciliation-smoke.sql
       - name: 执行查询模板（展开示例依赖扩展表）
         run: psql -v ON_ERROR_STOP=1 -f 03-time-contract/query-templates.sql
       - name: 冒烟断言（时点 / 半开区间 / append-only / 扩展函数）

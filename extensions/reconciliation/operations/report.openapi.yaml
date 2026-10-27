@@ -1,0 +1,111 @@
+# operations/report.openapi.yaml — 只读对账报告（reconciliation v1.0.0，ADR-0022）
+# 报告是读模型投影：不参与写路径；支持 as_of / recorded_as_of（02 查询契约）。
+openapi: 3.1.0
+info:
+  title: 对账域 — 只读报告
+  version: 1.0.0
+  description: |
+    读取面 reconciliation.report.read（fail-closed）。
+    - 报告由运行对象与差异对象投影得到，不落独立报告表
+    - 时点参数：as_of（业务时间）/ recorded_as_of（记录时间），语义同 02 查询契约
+    - 差异按受控分类计数；resolved / written_off 单独计数
+
+paths:
+  /reconciliation/runs/{runId}/report:
+    get:
+      operationId: readReconciliationReport
+      summary: 读取对账报告（只读投影）
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: 业务时点（valid time），返回该时点有效的运行/差异版本
+        - name: recorded_as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: 记录时点（system time），用于重建历史视图
+      responses:
+        '200':
+          description: 报告投影
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationReport'
+        '404':
+          description: EIS-404-001 运行不存在
+
+components:
+  schemas:
+    ReconciliationReport:
+      type: object
+      required: [run, differences]
+      properties:
+        run:
+          type: object
+          required: [id, run_key, domain, period, sequence, status]
+          properties:
+            id:
+              type: string
+              format: uuid
+            run_key:
+              type: string
+            domain:
+              type: string
+            period:
+              type: string
+            sequence:
+              type: integer
+            status:
+              type: string
+              enum: [running, succeeded, failed, skipped]
+            difference_count:
+              type: integer
+            started_at:
+              type: string
+              format: date-time
+            finished_at:
+              type: string
+              format: date-time
+              nullable: true
+        differences:
+          type: array
+          items:
+            type: object
+            required: [id, category, source_ref]
+            properties:
+              id:
+                type: string
+                format: uuid
+              category:
+                type: string
+                enum: [matched, amount_mismatch, missing_source, missing_target, resolved, written_off]
+              source_ref:
+                type: string
+              target_ref:
+                type: string
+                nullable: true
+              amount_delta:
+                type: string
+                nullable: true
+              quantity_delta:
+                type: string
+                nullable: true
+              resolution_code:
+                type: string
+                nullable: true
+        summary:
+          type: object
+          additionalProperties:
+            type: integer

@@ -1,0 +1,116 @@
+# reconciliation.rules.yaml — 业务对账扩展规则（ADR-0022）
+# 归属：extensions/reconciliation（领域扩展）；不改核心六类契约。
+version: "1.0.0"
+
+reconciliation_rules:
+  - id: "REC-001"
+    name: "运行幂等身份"
+    level: "MUST"
+    statement: >
+      run_key = domain:period:sequence；同一 run_key 只允许一个当前运行对象
+      （命令前置校验 + 迁移的部分唯一索引兜底）。重复发起 → REC-409-001。
+    enforced_by: ["reconciliation.run.start", "V301__reconciliation_initial.sql"]
+    error_code: "REC-409-001"
+
+  - id: "REC-002"
+    name: "显式重跑"
+    level: "MUST"
+    statement: >
+      同一 (domain, period) 的重跑必须改变 sequence（并由调用方记录原因）；
+      不得通过重复提交同一 run_key 绕过唯一约束。
+    enforced_by: ["reconciliation.run.start"]
+    error_code: "REC-409-001"
+
+  - id: "REC-003"
+    name: "受控分类与容忍度"
+    level: "MUST"
+    statement: >
+      差异分类只能是 matched / amount_mismatch / missing_source / missing_target /
+      resolved / written_off；新建差异只能使用前四类。金额/数量差异用受控十进制字符串，
+      绝对差 ≤ tolerance_amount / tolerance_quantity 才可判 matched；禁止自由文本分类。
+    enforced_by: ["reconciliation.run.start", "reconciliation.difference.resolve"]
+    error_code: "REC-400-001"
+
+  - id: "REC-004"
+    name: "差异处理走命令"
+    level: "MUST"
+    statement: >
+      调整 / 核销 / 人工匹配 / 接受只能通过 reconciliation.difference.resolve 命令，
+      不得直接改差异记录；处理写审计事件 reconciliation.difference.resolved。
+    enforced_by: ["reconciliation.difference.resolve", "05-audit-contract"]
+    error_code: "REC-409-003"
+
+  - id: "REC-005"
+    name: "报告只读投影"
+    level: "MUST"
+    statement: >
+      对账报告是运行与差异对象的只读投影，不落独立报告表、不参与写路径；
+      读取面按 as_of / recorded_as_of 重建时点视图。
+    enforced_by: ["operations/report.openapi.yaml", "reconciliation.report.read"]
+    error_code: "REC-REPORT-NOT-PROJECTION"
+
+  - id: "REC-006"
+    name: "期间边界复用时间契约"
+    level: "MUST"
+    statement: >
+      对账期间以 YYYY-MM 表示，期间锁定复用 accounting.period.close 的既有语义；
+      本扩展不另建期间对象与锁定机制。
+    enforced_by: ["reconciliation.run.start", "03-time-contract"]
+    error_code: "REC-PERIOD-INVALID"
+
+  - id: "REC-007"
+    name: "终态不可再迁"
+    level: "MUST"
+    statement: >
+      running → succeeded|failed；终态运行不可再次 finish；matched / resolved /
+      written_off 差异不可再次处理。
+    enforced_by: ["reconciliation.run.finish", "reconciliation.difference.resolve"]
+    error_code: "REC-409-002"
+
+  - id: "REC-008"
+    name: "审计"
+    level: "MUST"
+    statement: >
+      运行开始/结束与差异处理各写一条 EIS 审计事件（05-audit-contract 哈希链由宿主维护）；
+      审计事件与状态变更同事务提交。
+    enforced_by: ["reconciliation.run.start", "reconciliation.run.finish",
+                  "reconciliation.difference.resolve"]
+    error_code: "REC-AUDIT-MISSING"
+
+  - id: "REC-009"
+    name: "不绑定对账算法"
+    level: "SHOULD"
+    statement: >
+      匹配算法、外部系统连接器、差错调度与人工处理界面由实现方提供；契约只规定
+      运行、差异与报告的共享语义。
+    enforced_by: ["operations"]
+    error_code: "REC-ALGORITHM-IN-CONTRACT"
+
+  - id: "REC-010"
+    name: "数量与金额精度"
+    level: "MUST"
+    statement: >
+      金额差异保留 2 位小数、数量差异保留 4 位小数；不得用浮点数写入差异字段。
+    enforced_by: ["objects/difference-record.schema.json", "schema-compiler"]
+    error_code: "REC-PRECISION-INVALID"
+
+not_in_contract:
+  - "对账匹配算法（精确匹配 / 模糊匹配 / 规则引擎）"
+  - "外部系统连接器与取数方式（API / 文件 / CDC）"
+  - "差错队列的调度、分派与人工处理界面"
+  - "对账报告的呈现格式与导出模板"
+  - "独立对账服务/作业的部署形态"
+
+tests:
+  - name: "run_key 幂等"
+    expect: "同一 run_key 重复发起 → REC-409-001，不产生第二份运行"
+  - name: "差异分类受控"
+    expect: "非枚举分类 → REC-400-001"
+  - name: "差异处理"
+    expect: "未处理差异可 resolve；write_off → written_off，其余 → resolved；二次处理 → REC-409-003"
+  - name: "运行终态"
+    expect: "running → succeeded|failed；终态再次 finish → REC-409-002"
+  - name: "审计"
+    expect: "开始 / 结束 / 处理均有审计链条目"
+  - name: "报告只读"
+    expect: "报告为投影，支持 as_of / recorded_as_of"
