@@ -119,7 +119,8 @@ def sql_type(name: str, prop: dict):
             return "eis_timestamp", nullable, checks, None
         if fmt == "date":
             return "DATE", nullable, checks, None
-        enum = prop.get("enum")
+        # nullable enum：JSON Schema 的 null 由列的可空性表达，不生成 'None' 字符串
+        enum = [value for value in (prop.get("enum") or []) if value is not None]
         if enum:
             values = ", ".join("'" + str(v).replace("'", "''") + "'" for v in enum)
             checks.append(f"CHECK ({name} IN ({values}))")

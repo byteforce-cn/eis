@@ -48,8 +48,18 @@ from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 
-from eis_common import ROOT, load_yaml
+from eis_common import ROOT, load_yaml, snake
 from eis_conditions import load_declared_conditions
+
+# 扩展对象 Schema 校验（ADR-0016）：可选依赖 jsonschema；缺失时内核拒绝启动（fail-closed）。
+try:
+    from jsonschema import Draft202012Validator
+    from jsonschema.exceptions import SchemaError
+except ImportError:  # pragma: no cover - 部署侧缺依赖时走 fail-closed
+    Draft202012Validator = None
+
+    class SchemaError(Exception):
+        """jsonschema 缺失时的占位异常。"""
 
 VERIFY_TOOL = ROOT / "05-audit-contract" / "verify.tool"
 GENESIS_PREV_HASH = "0" * 64
@@ -120,6 +130,77 @@ class Rejected(Exception):
 # ---------------------------------------------------------------------------
 # 授权（复用 authz-resolver 的语义实现）
 # ---------------------------------------------------------------------------
+def _expand_external_refs(node, base_dir: Path, seen: frozenset[str], depth: int = 0):
+    """把扩展 Schema 的相对文件 $ref 内联（$id 是 eis://，不能作为检索 URI）。"""
+    if depth > 16:
+        raise RuntimeError("扩展对象 Schema 的 $ref 嵌套过深（fail-closed）")
+    if isinstance(node, list):
+        return [_expand_external_refs(item, base_dir, seen, depth + 1) for item in node]
+    if not isinstance(node, dict):
+        return node
+    ref = node.get("$ref")
+    if isinstance(ref, str) and not ref.startswith("#"):
+        target = (base_dir / ref).resolve()
+        key = str(target)
+        if key in seen:
+            raise RuntimeError(f"扩展对象 Schema 的 $ref 出现循环: {key}")
+        if not target.exists():
+            raise RuntimeError(f"扩展对象 Schema 的 $ref 不存在: {ref}（基准 {base_dir}）")
+        resolved = _load_schema_file(target, seen | {key}, depth + 1)
+        rest = {k: v for k, v in node.items() if k != "$ref"}
+        if not rest:
+            return resolved
+        return {"allOf": [resolved, _expand_external_refs(rest, base_dir, seen, depth + 1)]}
+    return {key: _expand_external_refs(value, base_dir, seen, depth + 1)
+            for key, value in node.items()}
+
+
+def _load_schema_file(path: Path, seen: frozenset[str] = frozenset(), depth: int = 0):
+    doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    return _expand_external_refs(doc, Path(path).resolve().parent, seen, depth)
+
+
+def load_extension_object_schemas(root=None) -> dict[str, "Draft202012Validator"]:
+    """按扩展 manifest 载入对象 Schema：{对象类型: validator}（ADR-0016）。
+
+    对象类型同时登记 DDL 表名（`{extension}_{snake(name)}`，如 `hr_employee`）与
+    参考内核既有的短名（`snake(name)`，如 `voucher`）；跨扩展短名冲突即 fail-closed。
+    """
+    if Draft202012Validator is None:
+        raise RuntimeError("扩展对象 Schema 校验需要 jsonschema（pip install jsonschema）；"
+                           "缺失时参考内核按 fail-closed 拒绝启动（ADR-0016）")
+    base = Path(root) if root else ROOT
+    validators: dict[str, Draft202012Validator] = {}
+    origins: dict[str, Path] = {}
+    for manifest_path in sorted((base / "extensions").glob("*/manifest.yaml")):
+        ext = (load_yaml(manifest_path) or {}).get("extension", {}) or {}
+        ext_id = ext.get("id")
+        if not ext_id:
+            continue
+        for obj in ext.get("objects", []) or []:
+            name, rel = obj.get("name"), obj.get("schema")
+            if not name or not rel:
+                raise RuntimeError(f"{manifest_path}: objects 条目必须含 name/schema")
+            schema_path = (manifest_path.parent / rel).resolve()
+            if not schema_path.exists():
+                raise RuntimeError(f"{manifest_path}: 对象 Schema 不存在: {rel}")
+            doc = _load_schema_file(schema_path)
+            try:
+                Draft202012Validator.check_schema(doc)
+            except SchemaError as exc:  # noqa: PERF203 - 初始化期一次性检查
+                raise RuntimeError(f"对象 Schema 非法（{rel}）: {exc.message}") from exc
+            validator = Draft202012Validator(
+                doc, format_checker=Draft202012Validator.FORMAT_CHECKER)
+            for alias in {f"{ext_id}_{snake(name)}", snake(name)}:
+                if alias in validators and origins[alias] != schema_path:
+                    raise RuntimeError(
+                        f"对象类型别名冲突（fail-closed）: {alias} 同时来自 "
+                        f"{origins[alias]} 与 {schema_path}")
+                validators[alias] = validator
+                origins[alias] = schema_path
+    return validators
+
+
 def load_permission_callers() -> dict[str, tuple[str, ...]]:
     """载入扩展 manifest 的调用方约束（ADR-0013）：命令 → 允许的主体类型。
 
@@ -287,8 +368,12 @@ class Kernel:
 
     def __init__(self, clock_start="2026-10-08T09:00:00Z", authz_fixtures: dict | None = None,
                  field_hash_keys: list[str] | None = None,
-                 permission_conditions: dict[str, dict] | None = None):
+                 permission_conditions: dict[str, dict] | None = None,
+                 validate_objects: bool = True):
         self.clock = parse_ts(clock_start)
+        # 扩展对象 Schema（ADR-0016）：载入失败或缺依赖 → 内核拒绝启动；仅供自测可关闭
+        self.validate_objects = validate_objects
+        self.object_validators = load_extension_object_schemas(ROOT) if validate_objects else {}
         self._id_ns = 0x0190F2E3A12C
         self._id_counter = 0
 
@@ -469,10 +554,26 @@ class Kernel:
             "updated_by": None, "updated_at": None,
         }
 
+    def _validate_object(self, obj_type: str, row: dict) -> None:
+        """写入前执行扩展对象 Schema 校验（ADR-0016）：违约以 EIS-400-001 拒绝。"""
+        if not self.validate_objects:
+            return
+        validator = self.object_validators.get(obj_type)
+        if validator is None:
+            raise Rejected("EIS-400-001", f"对象类型未声明 Schema（fail-closed）: {obj_type}")
+        errors = sorted(validator.iter_errors(row),
+                        key=lambda e: (len(e.absolute_path), [str(p) for p in e.absolute_path]))
+        if errors:
+            error = errors[0]
+            path = ".".join(str(part) for part in error.absolute_path) or "$"
+            raise Rejected("EIS-400-001",
+                           f"对象不满足扩展 Schema（{obj_type}.{path}）: {error.message}")
+
     def _create_object(self, obj_type: str, data: dict, actor: str) -> dict:
         now_dt = self.now()
         obj_id = data.get("id") or self.new_id()
         row = {**self._meta(obj_id, 1, actor, now_dt), **data, "id": obj_id}
+        self._validate_object(obj_type, row)
         self.objects.setdefault(obj_type, []).append(row)
         return row
 
@@ -483,10 +584,7 @@ class Kernel:
             raise Rejected("EIS-404-001", f"对象不存在: {obj_type}/{obj_id}")
         now_dt = self.now()
         new_row = copy.deepcopy(current)
-        # 旧行：封口（系统时间轴 append-only；业务区间相交处收口）
-        current["superseded_at"] = ts(now_dt)
-        current["valid_to"] = ts(now_dt)
-        # 新行
+        # 新行：先构造并校验，再封口旧行（校验失败不得留下半更新状态）
         new_row.update(updates)
         if extra:
             new_row.update(extra)
@@ -497,6 +595,10 @@ class Kernel:
         new_row["superseded_at"] = None
         new_row["updated_by"] = actor
         new_row["updated_at"] = ts(now_dt)
+        self._validate_object(obj_type, new_row)
+        # 旧行：封口（系统时间轴 append-only；业务区间相交处收口）
+        current["superseded_at"] = ts(now_dt)
+        current["valid_to"] = ts(now_dt)
         rows.append(new_row)
         return new_row
 
@@ -955,7 +1057,8 @@ def _self_test() -> bool:
             "id": "kernel.credential-idempotency",
             "setup": {"objects": [
                 {"type": "iam_user_account", "id": account_id,
-                 "data": {"username": "member", "status": "active"}},
+                 "data": {"username": "member", "display_name": "成员", "status": "active",
+                          "built_in": False}},
                 {"type": "iam_credential", "id": "01900000-0000-7000-8000-000000000914",
                  "data": {"account_id": account_id, "type": "password",
                           "secret_hash": "$2a$old-hash", "status": "active", "must_change": True}},
@@ -978,7 +1081,8 @@ def _self_test() -> bool:
 
     # 同键同原文 → replay；同键异原文 → conflict（指纹基于原始载荷）
     k2 = Kernel()
-    k2.seed("iam_user_account", account_id, {"username": "member", "status": "active"}, account_id)
+    k2.seed("iam_user_account", account_id, {"username": "member", "display_name": "成员",
+                                             "status": "active", "built_in": False}, account_id)
     k2.seed("iam_credential", "01900000-0000-7000-8000-000000000914",
             {"account_id": account_id, "type": "password", "secret_hash": "$2a$old-hash",
              "status": "active", "must_change": True}, account_id)
@@ -1079,6 +1183,46 @@ def _self_test() -> bool:
     report("事件正文篡改被检出（payload_digest_mismatch）", any(
         x["type"] == "payload_digest_mismatch"
         for x in _VT.verify_payload_digests(kernel.audit, tampered_events)))
+    # 扩展对象 Schema 契约校验（ADR-0016）：违约/未声明类型一律 fail-closed
+    k4 = Kernel()
+    report("对象 Schema 已载入 DDL 表名与短名别名",
+           "hr_employee" in k4.object_validators and "voucher" in k4.object_validators)
+    actor4 = "01900000-0000-7000-8000-000000000901"
+    good_employee = {"employee_no": "EMP-000001", "name": "甲", "status": "pending_onboarding",
+                     "hire_date": "2026-10-08", "employment_type": None, "id_type": None}
+    try:
+        k4.seed("hr_employee", "01900000-0000-7000-8000-000000000951",
+                dict(good_employee), actor4)
+        report("合法对象写入通过 Schema 校验", True)
+    except Rejected as exc:
+        report(f"合法对象写入被误拒: {exc.reason}", False)
+    bad_employee = dict(good_employee, status="bogus", employee_no="X",
+                        hire_date="not-a-date")
+    try:
+        k4.seed("hr_employee", "01900000-0000-7000-8000-000000000952",
+                bad_employee, actor4)
+        report("契约 Schema 拒绝的输入内核也拒绝", False)
+    except Rejected as exc:
+        report("契约 Schema 拒绝的输入内核也拒绝（EIS-400-001）",
+               exc.code == "EIS-400-001" and "Schema" in exc.reason)
+    try:
+        k4.seed("undeclared_object_type", "01900000-0000-7000-8000-000000000953", {}, actor4)
+        report("未声明 Schema 的对象类型 fail-closed", False)
+    except Rejected as exc:
+        report("未声明 Schema 的对象类型 fail-closed（EIS-400-001）",
+               exc.code == "EIS-400-001")
+    # 校验失败不得封口旧行（无半更新状态）
+    current = k4._find_current("hr_employee", lambda r: r["id"] == "01900000-0000-7000-8000-000000000951")
+    try:
+        k4._update_object("hr_employee", current["id"], {"status": "bogus"}, actor4)
+        report("非法更新被拒绝", False)
+    except Rejected:
+        pass
+    after = k4._find_current("hr_employee", lambda r: r["id"] == current["id"])
+    report("非法更新不改变当前版本（无半更新）",
+           after is not None and after["version"] == current["version"]
+           and after["superseded_at"] is None)
+
     return ok
 
 

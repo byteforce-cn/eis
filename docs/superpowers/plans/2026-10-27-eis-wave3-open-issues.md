@@ -45,9 +45,9 @@
 
 ## Task 4：#40② 参考内核执行扩展对象 Schema（P1）
 
-- [ ] ADR：内核允许可选依赖 `jsonschema`；缺失/无法解析 → fail-closed（拒绝写入，不静默跳过）
-- [ ] `tools/lib/kernel.py`：按 `manifest.objects` 加载 `objects/*.schema.json`，写入前校验
-- [ ] 用例：合法写入通过；Schema 违约被拒（新错误码）；既有场景全绿
+- [x] ADR：内核允许可选依赖 `jsonschema`；缺失/无法解析 → fail-closed（拒绝写入，不静默跳过）
+- [x] `tools/lib/kernel.py`：按 `manifest.objects` 加载 `objects/*.schema.json`，写入前校验
+- [x] 用例：合法写入通过；Schema 违约被拒（`EIS-400-001`）；既有场景全绿
 
 ## Task 5：#30 步骤 2 跨扩展前置（P2）
 

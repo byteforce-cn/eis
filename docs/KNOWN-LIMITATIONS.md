@@ -4,7 +4,7 @@
 > （文件:行号或工具行为），并按「现状 / 影响 / 使用者应对」说明。这些不是承诺清单，而是供
 > 采用者评估风险与自行补齐的依据。
 >
-> 计数口径：`python3 tools/e2e-runner --all` 的实际输出为唯一来源（当前 `用例 141/141`）。
+> 计数口径：`python3 tools/e2e-runner --all` 的实际输出为唯一来源（当前 `用例 142/142`）。
 
 ## 1. 时间契约
 
@@ -40,14 +40,21 @@
 
 ## 2. 内核与 Schema
 
-### 2.1 内核不执行扩展对象 Schema
+### 2.1 内核执行扩展对象 Schema（已修复：ADR-0016）
 
-- 【已核实】`tools/lib/kernel.py` 的命令处理器（`Kernel._handle` 及各 `_*` 方法）以手写
-  字段校验实现，不加载 `extensions/**/objects/*.schema.json`，也不运行 JSON Schema 校验。
-- 现状：对象 Schema 是契约文档与工具（`schema-compiler`/`contract-checker`）的校验对象，
-  不是内核运行时的输入约束。
-- 影响：内核可能接受契约 Schema 会拒绝的输入；内核行为不等价于 Schema 语义的完整实现。
-- 使用者应对：实现侧必须自行执行对象 Schema 校验，不以内核接受作为合规依据。
+- 【已修复】`tools/lib/kernel.py` 现按 `manifest.objects` 载入
+  `extensions/**/objects/*.schema.json`，在 `_create_object` / `_update_object`（含 `seed`）
+  写入前用 `jsonschema`（Draft 2020-12）校验**完整行**；缺依赖/缺 Schema/Schema 非法 →
+  拒绝启动，未声明对象类型或 Schema 违约 → `EIS-400-001`（fail-closed）。更新路径先校验
+  新行再封口旧行，校验失败不留下半更新状态。
+- 对象类型同时接受 DDL 表名（`hr_employee`）与内核短名（`voucher`）；跨扩展别名冲突即拒绝启动。
+- 残余 1：`jsonschema` 是可选依赖，未安装时内核拒绝启动（不降级）；`validate_objects=False`
+  仅供隔离自测，关闭后不构成合规基准。
+- 残余 2：只校验 `manifest.objects` 声明的对象类型；未声明类型不再被内核接受（fail-closed）。
+- 残余 3：相对文件 `$ref` 会被内联；不支持远端/网络 `$ref`（参考内核必须离线确定性）。
+- 修正：`extensions/hr/objects/employee.schema.json` 的 `employment_type` / `id_type`
+  原为 `type: ["string","null"]` 但 `enum` 不含 `null`（自相矛盾），已补 `null`。
+- 使用者应对：实现侧仍应以 `contract-checker` + 对象 Schema 为权威；内核放行不等于部署合规。
 
 ### 2.2 审计链不覆盖事件 payload（已修复：v1.1 payload_digest）
 

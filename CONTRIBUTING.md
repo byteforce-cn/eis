@@ -12,7 +12,7 @@ pip install pyyaml jsonschema
 python3 tools/e2e-runner --all
 ```
 
-预期输出：`用例 141/141；场景 1/1；流水线 5/5；总判定：通过`。
+预期输出：`用例 142/142；场景 1/1；流水线 5/5；总判定：通过`。
 
 ## 2. 贡献类型与流程
 

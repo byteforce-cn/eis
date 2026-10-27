@@ -58,3 +58,9 @@ tests:
     check: present
     pattern: 'id: "DRV-00[1-6]"'
     min_matches: 6
+
+  - name: "参考内核执行扩展对象 Schema（违约写入被拒，ADR-0016）"
+    kind: cli
+    args: [tools/lib/kernel.py]
+    expect_exit: 0
+    stdout_contains: ["契约 Schema 拒绝的输入内核也拒绝", "kernel 自测通过"]
