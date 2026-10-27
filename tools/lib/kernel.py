@@ -328,6 +328,12 @@ class ExtensionAPI:
                       extra=None) -> dict:
         return self._kernel._update_object(obj_type, obj_id, updates, actor, extra)
 
+    def apply_late_fact(self, obj_type: str, obj_id: str, updates: dict,
+                        valid_from, actor: str, valid_to=None) -> dict:
+        """迟到事实：新的 recorded_at + 历史有效区间，旧版本以 superseded 留痕（T-R011）。"""
+        return self._kernel.apply_late_fact(obj_type, obj_id, updates, valid_from,
+                                             actor, valid_to)
+
     def find_current(self, obj_type: str, pred) -> dict | None:
         return self._kernel._find_current(obj_type, pred)
 
@@ -672,6 +678,35 @@ class Kernel:
         rows.append(new_row)
         return new_row
 
+    def apply_late_fact(self, obj_type: str, obj_id: str, updates: dict,
+                         valid_from, actor: str, valid_to=None) -> dict:
+        """迟到事实追加（T-R011）：不改已记录的历史业务区间，只以新 recorded_at 追加并封口旧版本。"""
+        rows = self.objects.get(obj_type, [])
+        current = next((r for r in rows if r["id"] == obj_id and r["superseded_at"] is None), None)
+        if current is None:
+            raise Rejected("EIS-404-001", f"对象不存在: {obj_type}/{obj_id}")
+        now_dt = self.now()
+        vf = parse_ts(valid_from)
+        if vf >= now_dt:
+            raise Rejected("EIS-400-003", "迟到事实的 valid_from 必须早于当前系统时间（T-R011）")
+        vt = parse_ts(valid_to) if valid_to is not None else None
+        if vt is not None and vt <= vf:
+            raise Rejected("EIS-400-003", "valid_to 必须晚于 valid_from（半开区间）")
+        new_row = copy.deepcopy(current)
+        new_row.update(updates)
+        new_row["version"] = current["version"] + 1
+        new_row["valid_from"] = ts(vf)
+        new_row["valid_to"] = ts(vt) if vt is not None else None
+        new_row["recorded_at"] = ts(now_dt)
+        new_row["superseded_at"] = None
+        new_row["updated_by"] = actor
+        new_row["updated_at"] = ts(now_dt)
+        self._validate_object(obj_type, new_row)
+        # 只封口系统时间；不得回改已记录历史的业务区间（T-R011）
+        current["superseded_at"] = ts(now_dt)
+        rows.append(new_row)
+        return new_row
+
     def current_objects(self, obj_type: str) -> list[dict]:
         return [r for r in self.objects.get(obj_type, []) if r["superseded_at"] is None]
 
@@ -878,6 +913,25 @@ def run_scenario(scenario, report_lines: list[str] | None = None) -> dict:
     # steps
     for step in spec.get("steps", []):
         sid = step.get("id", f"step{len(step_results) + 1}")
+        if step.get("late_fact"):
+            spec_lf = step["late_fact"]
+            obj_id = resolve_tokens(spec_lf["id"], context)
+            row = kernel.apply_late_fact(
+                spec_lf["type"], obj_id,
+                resolve_tokens(spec_lf.get("data", {}), context),
+                resolve_tokens(spec_lf["valid_from"], context),
+                spec_lf.get("actor") or seed_actor or obj_id,
+                valid_to=(resolve_tokens(spec_lf["valid_to"], context)
+                          if spec_lf.get("valid_to") else None),
+            )
+            step_results.append({"id": sid, "late_fact": row})
+            context["steps"][sid] = {
+                "at": ts(kernel.now()),
+                "result": {"created": {"id": obj_id, "type": spec_lf["type"],
+                                       "version": row["version"]}, "version": row["version"]},
+            }
+            kernel.advance(1)
+            continue
         if step.get("seed"):
             # 场景中置入夹具（非命令路径；用于依赖前置数据的步骤，如跨扩展审批单）
             for obj in step["seed"]:
@@ -1082,15 +1136,19 @@ def _run_assertion(kernel: Kernel, assertion: dict, context: dict):
         expect_n = assertion.get("expect_versions")
         if expect_n is not None and len(rows) != expect_n:
             return False, f"版本数期望 {expect_n}，实际 {len(rows)}"
-        if assertion.get("expect_adjacent", True):
-            for prev_row, next_row in zip(rows, rows[1:]):
-                if prev_row["valid_to"] != next_row["valid_from"]:
-                    return False, (f"v{prev_row['version']}→v{next_row['version']} 业务区间不相接："
-                                   f"{prev_row['valid_to']} != {next_row['valid_from']}")
-                if prev_row["superseded_at"] != next_row["recorded_at"]:
-                    return False, (f"v{prev_row['version']}→v{next_row['version']} 系统区间不相接："
-                                   f"{prev_row['superseded_at']} != {next_row['recorded_at']}")
-        return True, f"版本历史（{len(rows)} 版）区间相接、无重叠"
+        default_adjacent = assertion.get("expect_adjacent", True)
+        expect_recorded = assertion.get("expect_recorded_adjacent", default_adjacent)
+        expect_valid = assertion.get("expect_valid_adjacent", default_adjacent)
+        for prev_row, next_row in zip(rows, rows[1:]):
+            if expect_recorded and prev_row["superseded_at"] != next_row["recorded_at"]:
+                return False, (f"v{prev_row['version']}→v{next_row['version']} 系统区间不相接："
+                               f"{prev_row['superseded_at']} != {next_row['recorded_at']}")
+            if expect_valid and prev_row["valid_to"] != next_row["valid_from"]:
+                return False, (f"v{prev_row['version']}→v{next_row['version']} 业务区间不相接："
+                               f"{prev_row['valid_to']} != {next_row['valid_from']}")
+        return True, (f"版本历史（{len(rows)} 版）"
+                      f"{'系统区间相接、' if expect_recorded else ''}"
+                      f"{'业务区间相接' if expect_valid else '业务区间可覆盖（迟到事实）'}")
     if kind == "idempotency":
         step = context["steps"][assertion["step"]]
         original = kernel.commands[step["result"]["command_id"]]
@@ -1308,6 +1366,35 @@ def _self_test() -> bool:
     report("事件正文篡改被检出（payload_digest_mismatch）", any(
         x["type"] == "payload_digest_mismatch"
         for x in _VT.verify_payload_digests(kernel.audit, tampered_events)))
+    # T-R011 迟到事实（ADR-0020）：新 recorded_at 追加、历史有效区间覆盖、superseded 留痕
+    late = Kernel()
+    late_actor = "01900000-0000-7000-8000-000000000901"
+    late_id = "01900000-0000-7000-8000-000000000f11"
+    late_data = {"number": "记-迟到-自测", "voucher_date": "2026-10-01", "status": "draft",
+                 "summary": "原始", "lines": [
+                     {"account_code": "1405", "debit": "10.00", "currency": "CNY"},
+                     {"account_code": "2202", "credit": "10.00", "currency": "CNY"}]}
+    late.seed("voucher", late_id, dict(late_data), late_actor, at="2026-10-01T00:00:00Z")
+    late_row = late.apply_late_fact("voucher", late_id, {"summary": "迟到的更正"},
+                                    "2026-10-02T00:00:00Z", late_actor)
+    history = late.history("voucher", late_id)
+    report("迟到事实追加为新版本（version 2）", late_row["version"] == 2)
+    report("旧版本只封口系统时间、不回改历史业务区间",
+           history[0]["superseded_at"] == late_row["recorded_at"]
+           and history[0]["valid_to"] is None)
+    report("当前系统视图读到最新记录（as_of 唯一版本）",
+           late.as_of("voucher", late_id, valid_at="2026-10-03T00:00:00Z")["version"] == 2)
+    report("迟到事实记录之前的历史时点仍读到旧版本",
+           late.as_of("voucher", late_id, valid_at="2026-10-03T00:00:00Z",
+                      recorded_at="2026-10-01T12:00:00Z")["version"] == 1)
+    try:
+        late.apply_late_fact("voucher", late_id, {"summary": "未来"},
+                             "2026-10-09T00:00:00Z", late_actor)
+        report("迟到事实的 valid_from 必须早于系统时间", False)
+    except Rejected as exc:
+        report("迟到事实的 valid_from 必须早于系统时间（EIS-400-003）",
+               exc.code == "EIS-400-003")
+
     # 扩展对象 Schema 契约校验（ADR-0016）：违约/未声明类型一律 fail-closed
     k4 = Kernel()
     report("对象 Schema 已载入 DDL 表名与短名别名",
