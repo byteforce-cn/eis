@@ -428,8 +428,17 @@ class Kernel:
         self.events.extend(events)
         self._append_audit(cmd_type, principal, record, events, payload)
         self.advance()
-        return {"status": "accepted", "command_id": command_id,
-                "event_ids": [e["id"] for e in events], "created": created}
+        result = {"status": "accepted", "command_id": command_id,
+                  "event_ids": [e["id"] for e in events], "created": created}
+        # 命令响应定位（ADR-0014）：locator = 写入的聚合根 ID；version = 该对象版本。
+        # 命令响应不携带读模型投影（业务字段由读接口返回）。
+        locator = created.get("id") if isinstance(created, dict) else None
+        if locator:
+            result["locator"] = locator
+            row = self._find_current(created.get("type", ""), lambda r: r["id"] == locator)
+            if row is not None:
+                result["version"] = row["version"]
+        return result
 
     # ------------------------------------------------------------------
     # 命令分发（处理器由 extensions/*/handlers.py 注册）

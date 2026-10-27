@@ -12,6 +12,18 @@ tests:
     check: present
     pattern: "'409':"
 
+  - name: "命令响应必须携带 locator（命令与查询的桥，ADR-0014）"
+    kind: static
+    target: 02-operation-contract/command.openapi.yaml
+    check: present
+    pattern: "locator:"
+
+  - name: "命令响应不得携带读模型投影（ADR-0014）"
+    kind: static
+    target: 02-operation-contract/command.openapi.yaml
+    check: present
+    pattern: "不得携带读模型投影"
+
   - name: "所有查询必须支持时点查询（as_of / recorded_as_of）"
     kind: static
     target: 02-operation-contract/query.openapi.yaml

@@ -30,7 +30,7 @@
 
 ## Task 0：分支基线
 
-- [ ] **Step 1**：`git fetch origin && git switch -c feat/command-caller-constraint origin/main`。
+- [x] **Step 1**：`git fetch origin && git switch -c feat/command-caller-constraint origin/main`。
 
 ## Task 1：ADR-0013 + 错误码
 
@@ -44,8 +44,8 @@
 - operations 契约：`x-eis-callers: ["system"]`（与 manifest 同值）
 - 新错误码：`EIS-403-002` `caller_not_allowed`
 
-- [ ] **Step 1**：写 ADR-0013（原因/影响/兼容性 MINOR/迁移/回滚/工件/验收），在索引登记。
-- [ ] **Step 2**：`error-codes.yaml` 增 `EIS-403-002`（403，`caller_not_allowed`，`emitted_when`: 主体类型不在 `callers` 内）。
+- [x] **Step 1**：写 ADR-0013（原因/影响/兼容性 MINOR/迁移/回滚/工件/验收），在索引登记。
+- [x] **Step 2**：`error-codes.yaml` 增 `EIS-403-002`（403，`caller_not_allowed`，`emitted_when`: 主体类型不在 `callers` 内）。
 
 ## Task 2：contract-checker 双向校验
 
@@ -56,9 +56,9 @@
 - `CALLER_TYPES = {"person", "system"}`
 - `check_operation_callers(report, manifests)`：遍历 `extensions/*/operations/*.openapi.yaml`，按 `/commands/<type>` 取 `x-eis-callers`，与 `manifests[ext]["permissions"]` 中同 id 的 `callers` 比对。
 
-- [ ] **Step 1（RED）**：自测新增三条断言（投影缺声明 / 值不一致 / 非法枚举）→ `contract-checker --self-test` 失败。
-- [ ] **Step 2（GREEN）**：实现 manifest `callers` 校验 + `x-eis-callers` 校验 + 双向一致性；接入 `main()`。
-- [ ] **Step 3**：`python3 tools/contract-checker` 全过。
+- [x] **Step 1（RED）**：自测新增三条断言（投影缺声明 / 值不一致 / 非法枚举）→ `contract-checker --self-test` 失败。
+- [x] **Step 2（GREEN）**：实现 manifest `callers` 校验 + `x-eis-callers` 校验 + 双向一致性；接入 `main()`。
+- [x] **Step 3**：`python3 tools/contract-checker` 全过。
 
 ## Task 3：hr 声明调用方约束
 
@@ -67,8 +67,8 @@
 - Modify: `extensions/hr/operations/employee-activate.openapi.yaml`、`employee-cancel.openapi.yaml`（`x-eis-callers`）
 - Modify: `extensions/README.md` §7、`extensions/hr/README.md`
 
-- [ ] **Step 1**：manifest + 两份 operations 契约声明。
-- [ ] **Step 2**：`python3 tools/contract-checker` 通过（双向一致）。
+- [x] **Step 1**：manifest + 两份 operations 契约声明。
+- [x] **Step 2**：`python3 tools/contract-checker` 通过（双向一致）。
 
 ## Task 4：内核命令级预检
 
@@ -79,23 +79,23 @@
 - `Kernel.permission_callers: dict[str, tuple[str, ...]]`（命令 → 允许主体类型），来自 `extensions/*/manifest.yaml`
 - 拒绝：`Rejected("EIS-403-002", "<命令> 仅限主体类型 <...>，实际 <...>")`
 
-- [ ] **Step 1（RED）**：hr 用例改造（服务主体 + 用户主体反例）→ `e2e-runner extensions/hr/tests/hr.test.yaml` 失败。
-- [ ] **Step 2（GREEN）**：内核实现；未装载授权夹具时不判定（与既有行为一致）；`Authz.principal()` 查不到主体时 fail-closed。
-- [ ] **Step 3**：`e2e-runner extensions/hr/tests/hr.test.yaml` 全绿。
+- [x] **Step 1（RED）**：hr 用例改造（服务主体 + 用户主体反例）→ `e2e-runner extensions/hr/tests/hr.test.yaml` 失败。
+- [x] **Step 2（GREEN）**：内核实现；未装载授权夹具时不判定（与既有行为一致）；`Authz.principal()` 查不到主体时 fail-closed。
+- [x] **Step 3**：`e2e-runner extensions/hr/tests/hr.test.yaml` 全绿。
 
 ## Task 5：文档与变更记录
 
 **Files:**
 - Modify: `CHANGELOG.md`、`extensions/README.md`（§7 表格 + 纪律）、`docs/KNOWN-LIMITATIONS.md`（如涉及）
 
-- [ ] **Step 1**：写清「声明位置/权威/投影校验/错误码/fail-closed」四条口径。
-- [ ] **Step 2**：记录 #30 步骤 2（审批前置）未做，需扩展跨引用机制。
+- [x] **Step 1**：写清「声明位置/权威/投影校验/错误码/fail-closed」四条口径。
+- [x] **Step 2**：记录 #30 步骤 2（审批前置）未做，需扩展跨引用机制。
 
 ## Task 6：校验与 PR
 
-- [ ] **Step 1**：`e2e-runner --all`、`contract-checker`、`compatibility-checker --standalone`（新错误码/可选字段 → MINOR）。
-- [ ] **Step 2**：push + `gh pr create`；PR 正文含 `Closes #30`（步骤 1）口径与汇总行。
-- [ ] **Step 3**：CI 全绿 → squash 合并 → 删分支。
+- [x] **Step 1**：`e2e-runner --all`、`contract-checker`、`compatibility-checker --standalone`（新错误码/可选字段 → MINOR）。
+- [x] **Step 2**：push + `gh pr create`；PR 正文含 `Closes #30`（步骤 1）口径与汇总行。
+- [x] **Step 3**：CI 全绿 → squash 合并 → 删分支。
 
 ## Task 7：命令响应 locator/version（#32①，独立分支）
 
@@ -105,11 +105,23 @@
 - Modify: `tools/lib/kernel.py`（命令结果返回 `locator`/`version`；`submit` 透出）
 - Modify: `02-operation-contract/tests/*` 或 `cases/procurement/scenarios/*`（scenario 断言）
 
-- [ ] **Step 1**：ADR-0014（MINOR：可选字段新增 + 语义明确）+ 兼容性判定。
-- [ ] **Step 2**：契约与内核；scenario 断言「activate 返回的 version == 读取到的对象 version」。
-- [ ] **Step 3**：e2e 全绿 → PR → CI → 合并。
+- [x] **Step 1**：ADR-0014（MINOR：可选字段新增 + 语义明确）+ 兼容性判定。
+- [x] **Step 2**：契约与内核；scenario 断言「activate 返回的 version == 读取到的对象 version」。
+- [x] **Step 3**：e2e 全绿 → PR → CI → 合并。
 
 ## Task 8：验收与台账
 
-- [ ] **Step 1**：`git log --oneline origin/main -4`、`gh pr list --state merged` 确认两条合并。
-- [ ] **Step 2**：#30 回帖（步骤 1 已落地、步骤 2 待跨引用 ADR）；#32 回帖（① 已落地、② 待排期）。
+- [x] **Step 1**：`git log --oneline origin/main -4`、`gh pr list --state merged` 确认两条合并。
+- [x] **Step 2**：#30 回帖（步骤 1 已落地、步骤 2 待跨引用 ADR）；#32 回帖（① 已落地、② 待排期）。
+
+---
+
+## 执行结果（2026-10-27）
+
+- **Task 0–6（#30 步骤 1 调用方约束）**：PR [#46](https://github.com/byteforce-cn/eis/pull/46)（squash `28c3538`）。CI 三项全绿；
+  `e2e-runner --all` = 用例 135/135；`contract-checker` 176 通过 / `--self-test` 15 通过。
+  负例：删掉 manifest 的 `callers` 后 hr 套件 30/31（新场景失败），证明断言非空转。
+- **Task 7（#32① locator/version）**：本 PR。`CommandAccepted` 增可选 `locator`/`version` + MUST 口径；内核受理结果输出两者；
+  新增 2 条静态用例（契约声明 + 不携带读模型投影）与 3 条 hr 场景断言（locator 命中同一对象、version 与回读一致）；
+  `e2e-runner --all` = 用例 137/137。
+- **Task 8（台账）**：#30 回帖「步骤 1 已落地、步骤 2 待跨引用 ADR」；#32 回帖「① 已落地、② `min_version` 待排期」。
