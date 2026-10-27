@@ -128,6 +128,85 @@ INSERT INTO view (id, view_type, data, as_of, recorded_as_of, computed_at)
 VALUES ('01900000-0000-7000-8000-0000000c0008', 'smoke.view', '{}',
         '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z');
 
+-- 9. 有效区间不重叠（T-R009 / ADR-0011）：四维排他约束（id + 系统区间 + 业务区间）
+-- 9.1 同一系统时间视图内业务区间相交 → 必须被排他约束拒绝（23P01，而非唯一索引 23505）
+DO $$
+BEGIN
+  INSERT INTO business_object (id, version, valid_from, valid_to, recorded_at, superseded_at, created_by, created_at)
+  VALUES ('01900000-0000-7000-8000-0000000d0001', 1,
+          '2026-10-01T00:00:00Z', '2026-10-20T00:00:00Z',
+          '2026-10-01T00:00:00Z', '2026-10-20T00:00:00Z',
+          '01900000-0000-7000-8000-0000000c00ff', '2026-10-01T00:00:00Z');
+  BEGIN
+    INSERT INTO business_object (id, version, valid_from, valid_to, recorded_at, superseded_at, created_by, created_at)
+    VALUES ('01900000-0000-7000-8000-0000000d0001', 2,
+            '2026-10-05T00:00:00Z', NULL,
+            '2026-10-05T00:00:00Z', NULL,
+            '01900000-0000-7000-8000-0000000c00ff', '2026-10-05T00:00:00Z');
+    RAISE EXCEPTION '重叠有效区间未被排他约束拦截';
+  EXCEPTION
+    WHEN exclusion_violation THEN NULL;  -- 预期：T-R009 生效
+    WHEN unique_violation THEN
+      RAISE EXCEPTION '被唯一索引拦截而非排他约束（T-R009 约束未生效）';
+  END;
+END $$;
+
+-- 9.2 正常封口链（superseded_at == 新记录 recorded_at）允许业务区间重叠（T-R011 修正形态）
+DO $$
+BEGIN
+  INSERT INTO business_object (id, version, valid_from, valid_to, recorded_at, superseded_at, created_by, created_at)
+  VALUES ('01900000-0000-7000-8000-0000000d0002', 1,
+          '2026-10-01T00:00:00Z', '2026-10-20T00:00:00Z',
+          '2026-10-01T00:00:00Z', '2026-10-05T00:00:00Z',
+          '01900000-0000-7000-8000-0000000c00ff', '2026-10-01T00:00:00Z');
+  INSERT INTO business_object (id, version, valid_from, valid_to, recorded_at, superseded_at, created_by, created_at)
+  VALUES ('01900000-0000-7000-8000-0000000d0002', 2,
+          '2026-10-01T00:00:00Z', '2026-10-20T00:00:00Z',
+          '2026-10-05T00:00:00Z', NULL,
+          '01900000-0000-7000-8000-0000000c00ff', '2026-10-05T00:00:00Z');
+END $$;
+
+-- 9.3 相邻业务区间（prev.valid_to == next.valid_from）即使系统区间相交也必须允许（半开区间）
+DO $$
+BEGIN
+  INSERT INTO business_object (id, version, valid_from, valid_to, recorded_at, superseded_at, created_by, created_at)
+  VALUES ('01900000-0000-7000-8000-0000000d0003', 1,
+          '2026-10-01T00:00:00Z', '2026-10-05T00:00:00Z',
+          '2026-10-01T00:00:00Z', '2026-10-20T00:00:00Z',
+          '01900000-0000-7000-8000-0000000c00ff', '2026-10-01T00:00:00Z');
+  INSERT INTO business_object (id, version, valid_from, valid_to, recorded_at, superseded_at, created_by, created_at)
+  VALUES ('01900000-0000-7000-8000-0000000d0003', 2,
+          '2026-10-05T00:00:00Z', NULL,
+          '2026-10-05T00:00:00Z', NULL,
+          '01900000-0000-7000-8000-0000000c00ff', '2026-10-05T00:00:00Z');
+END $$;
+
+-- 9.4 扩展表（schema-compiler 生成物）同样声明排他约束
+DO $$
+BEGIN
+  INSERT INTO accounting_balance (id, version, valid_from, valid_to, recorded_at, superseded_at, created_by, created_at,
+                                  account_code, period, opening_balance, debit_total, credit_total, balance, currency)
+  VALUES ('01900000-0000-7000-8000-0000000d0004', 1,
+          '2026-10-01T00:00:00Z', '2026-10-20T00:00:00Z',
+          '2026-10-01T00:00:00Z', '2026-10-20T00:00:00Z',
+          '01900000-0000-7000-8000-0000000c00ff', '2026-10-01T00:00:00Z',
+          '1405', '2026-10', 0, 100.00, 0.00, 100.00, 'CNY');
+  BEGIN
+    INSERT INTO accounting_balance (id, version, valid_from, valid_to, recorded_at, superseded_at, created_by, created_at,
+                                    account_code, period, opening_balance, debit_total, credit_total, balance, currency)
+    VALUES ('01900000-0000-7000-8000-0000000d0004', 2,
+            '2026-10-05T00:00:00Z', NULL,
+            '2026-10-05T00:00:00Z', NULL,
+            '01900000-0000-7000-8000-0000000c00ff', '2026-10-05T00:00:00Z',
+            '1405', '2026-10', 0, 100.00, 0.00, 100.00, 'CNY');
+    RAISE EXCEPTION '扩展表重叠有效区间未被排他约束拦截';
+  EXCEPTION
+    WHEN exclusion_violation THEN NULL;  -- 预期
+    WHEN unique_violation THEN
+      RAISE EXCEPTION '扩展表被唯一索引拦截而非排他约束（生成物缺 T-R009 约束）';
+  END;
+END $$;
+
 ROLLBACK;  -- 冒烟数据全部回滚
 
 SELECT 'ddl-smoke: all assertions passed' AS result;

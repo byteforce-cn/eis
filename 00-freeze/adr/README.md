@@ -39,3 +39,4 @@ EIS 的核心契约已冻结。任何修改（解冻请求）必须走以下流�
 | [0008](0008-standalone-compatibility-checker.md) | compatibility-checker 独立模式（技术中立采纳） | Accepted |
 | [0009](0009-hr-employment-work-location.md) | HR 扩展 Employee 增加雇佣类型/工作地点（加法演进） | Accepted |
 | [0010](0010-approval-section-order.md) | 审批区块顺序语义（ApprovalSection.step_order） | Accepted |
+| [0011](0011-tr009-valid-overlap-constraint.md) | T-R009 有效区间不重叠落地为四维排他约束 | Accepted |

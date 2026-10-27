@@ -2,6 +2,12 @@
 
 本项目版本语义遵循 [00-freeze/version-policy.md](00-freeze/version-policy.md)（SemVer）。
 
+## [Unreleased] — 2026-10-27（T-R009 排他约束）
+
+### 修复
+
+- T-R009「有效区间不重叠」落地为 DDL 排他约束（ADR-0011）：`schema-compiler` 随每张对象表输出 `ex_<table>_valid_overlap`（`id` + 系统时间区间 + 业务时间区间四维 `EXCLUDE USING gist`），`business_object` 同步声明；`tools/ci/ddl-smoke.sql` §9 断言重叠拒绝（`exclusion_violation`）、封口链与相邻区间允许；`docs/KNOWN-LIMITATIONS.md` §1.1/§1.3 同步收窄（issue #40①）。
+
 ## [Unreleased] — 2026-10-17（开放 issue 修复）
 
 ### 修复

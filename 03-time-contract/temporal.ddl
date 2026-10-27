@@ -28,14 +28,18 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;   -- 排他约束（防有效区间�
 --     CREATE INDEX idx_<table>_bitemporal    ON <table> (valid_from, valid_to, recorded_at, superseded_at);
 
 -- ----------------------------------------------------------------------------
--- D. 可选（推荐）：单当前记录 + 有效区间不重叠（对应 T-R005 / T-R009）
+-- D. 已强制：单当前记录 + 有效区间不重叠（对应 T-R005 / T-R009）
+--    两者由 schema-compiler 随每张对象表生成，core.ddl 的 business_object 同步声明。
+--    T-R009 采用四维形式（系统时间区间 + 业务时间区间双 &&）：只限定当前记录的
+--    写法在 T-R005 下恒不触发，详见 ADR-0011。
 -- ----------------------------------------------------------------------------
 --     CREATE UNIQUE INDEX uq_<table>_current ON <table> (id) WHERE superseded_at IS NULL;
 --     ALTER TABLE <table> ADD CONSTRAINT ex_<table>_valid_overlap
 --         EXCLUDE USING gist (
---             entity_id WITH =,
+--             id WITH =,
+--             tstzrange(recorded_at, superseded_at, '[)') WITH &&,
 --             tstzrange(valid_from, valid_to, '[)') WITH &&
---         ) WHERE (superseded_at IS NULL);
+--         );
 
 -- ----------------------------------------------------------------------------
 -- E. 生成示例
@@ -52,6 +56,12 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;   -- 排他约束（防有效区间�
 --     CONSTRAINT recorded_range CHECK (superseded_at IS NULL OR superseded_at > recorded_at)
 -- );
 -- CREATE UNIQUE INDEX uq_{table}_current ON {table} (id) WHERE superseded_at IS NULL;
+-- ALTER TABLE {table} ADD CONSTRAINT ex_{table}_valid_overlap
+--     EXCLUDE USING gist (
+--         id WITH =,
+--         tstzrange(recorded_at, superseded_at, '[)') WITH &&,
+--         tstzrange(valid_from, valid_to, '[)') WITH &&
+--     );
 -- CREATE INDEX idx_{table}_valid_time    ON {table} (valid_from, valid_to);
 -- CREATE INDEX idx_{table}_recorded_time ON {table} (recorded_at, superseded_at);
 -- CREATE INDEX idx_{table}_bitemporal    ON {table} (valid_from, valid_to, recorded_at, superseded_at);
