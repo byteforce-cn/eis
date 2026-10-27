@@ -126,6 +126,7 @@ def handle_action(api, payload, actor, command_id):
 | `scope` | 可选：行级范围语义标识（如 `same_department`），以属性快照 ABAC 条件求值（ADR-0004） |
 | `scope_description` | 可选：`scope` 的语义说明（人读） |
 | `callers` | 可选：允许的调用方**主体类型**（数组，取值 `person` / `system`）；缺省不限制（ADR-0013） |
+| `condition` | 可选：授权条件声明（受限 DSL，`all`/`any` + `attribute`/`op`/`values`）；由判定方按声明求值，快照缺失/过期/路径缺失 fail-closed（ADR-0015） |
 
 纪律：
 
@@ -137,4 +138,7 @@ def handle_action(api, payload, actor, command_id):
 - `kind: service` 的权限不得授予用户会话或经 BFF/SPA 暴露；
 - 声明 `callers` 的命令：参考内核在 `/check` 放行后、处理器之前做主体类型预检，越权以 `EIS-403-002` 拒绝；**fail-closed**（主体不存在/类型缺失同样拒绝）；
 - `callers` 的权威**只在 manifest**；operations 契约用 `x-eis-callers: [system]` 做同值投影供 API 消费方阅读，`contract-checker` 双向校验（缺投影 / 缺声明 / 值不一致 / 非法枚举均失败）；
-- 核心通用查询 API 由部署边界保护，不要求域级权限（ADR-0006）。
+- 核心通用查询 API 由部署边界保护，不要求域级权限（ADR-0006）；
+- `condition` 的路径必须落在 `04-authz-contract/attributes.api.yaml` 的 `AttributeSet` 内（段可带 `[*]`，终值必须为标量）；`op` 只允许 `eq` / `neq` / `in` / `not_in` / `exists`，逻辑只允许单层 `all` / `any`（`contract-checker` 校验）；
+- **权限条件只能由声明侧提供**：`/check` 只接收 `permission`，调用方不得传入条件；条件只收窄、不授予，拒绝原因只含属性路径与状态（ATR-009）；
+- 需要「业务阈值/参数可调」时，建成**领域对象 + 受审计命令**（如 `approval.threshold.set`），不引入运行期策略表达式编辑面（ADR-0015）。

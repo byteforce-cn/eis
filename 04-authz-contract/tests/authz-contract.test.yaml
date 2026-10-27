@@ -89,38 +89,49 @@ tests:
     expect_attribute_state: missing
     expect_reason_code: ATTRIBUTE_MISSING
 
-  - name: "属性条件匹配则允许（主岗语义）"
+  - name: "声明条件匹配则允许（主岗语义，ATR-003）"
     kind: authz
     fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    conditions: 04-authz-contract/tests/conditions.yaml
     op: check
     principal: worker
     permission: purchase.request.approve
-    as_of: "2026-10-15T12:00:00Z"
-    require_attributes: {primary_position.grade: M2}
+    as_of: "2026-09-01T12:00:00Z"
     expect_allowed: true
     expect_attribute_state: fresh
 
-  - name: "属性条件不匹配必须拒绝（ATTRIBUTE_MISMATCH）"
+  - name: "声明条件不匹配必须拒绝（ATTRIBUTE_MISMATCH）"
     kind: authz
     fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    conditions: 04-authz-contract/tests/conditions.yaml
     op: check
     principal: worker
     permission: purchase.request.approve
     as_of: "2026-10-15T12:00:00Z"
-    require_attributes: {primary_position.grade: P5}
     expect_allowed: false
     expect_code: ATTRIBUTE_MISMATCH
 
-  - name: "依赖属性的条件在快照过期时 fail-closed"
+  - name: "声明条件在快照过期时 fail-closed（ATTRIBUTE_STALE）"
     kind: authz
     fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    conditions: 04-authz-contract/tests/conditions.yaml
     op: check
     principal: worker
     permission: purchase.request.approve
     as_of: "2026-10-25T12:00:00Z"
-    require_attributes: {primary_position.grade: M2}
     expect_allowed: false
     expect_code: ATTRIBUTE_STALE
+
+  - name: "声明条件在无快照时 fail-closed（ATTRIBUTE_MISSING）"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    conditions: 04-authz-contract/tests/conditions.yaml
+    op: check
+    principal: worker
+    permission: purchase.request.approve
+    as_of: "2026-08-01T00:00:00Z"
+    expect_allowed: false
+    expect_code: ATTRIBUTE_MISSING
 
   - name: "属主不可达（source_unavailable，ATR-006）"
     kind: authz
@@ -131,22 +142,71 @@ tests:
     expect_attribute_state: source_unavailable
     expect_reason_code: ATTRIBUTE_SOURCE_UNAVAILABLE
 
-  - name: "依赖属性的条件在属主不可达时 fail-closed"
+  - name: "声明条件在属主不可达时 fail-closed（ATTRIBUTE_SOURCE_UNAVAILABLE）"
     kind: authz
     fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    conditions: 04-authz-contract/tests/conditions.yaml
     op: check
     principal: outage
     permission: purchase.request.approve
     as_of: "2026-10-15T12:00:00Z"
-    require_attributes: {employment_type: full_time}
     expect_allowed: false
     expect_code: ATTRIBUTE_SOURCE_UNAVAILABLE
 
-  - name: "不依赖属性的判定不受属性缺失影响"
+  - name: "any + positions[*] 任一岗位命中（ATR-003）"
     kind: authz
     fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    conditions: 04-authz-contract/tests/conditions.yaml
     op: check
     principal: worker
-    permission: purchase.request.approve
+    permission: purchase.request.approve.senior
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: true
+
+  - name: "any 全部子句不满足则拒绝"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    conditions: 04-authz-contract/tests/conditions.yaml
+    op: check
+    principal: worker
+    permission: purchase.request.approve.senior
+    as_of: "2026-09-01T12:00:00Z"
+    expect_allowed: false
+    expect_code: ATTRIBUTE_MISMATCH
+
+  - name: "not_in 全称语义：存在任一命中即不满足"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    conditions: 04-authz-contract/tests/conditions.yaml
+    op: check
+    principal: worker
+    permission: purchase.request.approve.lead
+    as_of: "2026-10-15T12:00:00Z"
+    expect_allowed: false
+    expect_code: ATTRIBUTE_MISMATCH
+
+  - name: "not_in 全称语义：全部候选不命中则允许"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    conditions: 04-authz-contract/tests/conditions.yaml
+    op: check
+    principal: worker
+    permission: purchase.request.approve.lead
+    as_of: "2026-09-01T12:00:00Z"
+    expect_allowed: true
+
+  - name: "未声明条件的权限不受属性缺失影响"
+    kind: authz
+    fixture: 04-authz-contract/tests/fixtures-attributes.yaml
+    conditions: 04-authz-contract/tests/conditions.yaml
+    op: check
+    principal: requester
+    permission: purchase.request.create
     as_of: "2026-08-01T00:00:00Z"
     expect_allowed: true
+
+  - name: "参考内核自测（含命令级授权条件与 fail-closed）"
+    kind: cli
+    args: ["tools/lib/kernel.py"]
+    expect_exit: 0
+    stdout_contains: ["kernel 自测通过"]

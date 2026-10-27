@@ -52,6 +52,41 @@ attribute_rules:
     statement: "GET /principals/{id}/attributes 是判定链路内部协议：调用方必须是受信后端服务（授权引擎、审批条件求值、域服务），以服务身份（system principal）认证并持有属主为该属性集声明的 service 权限（如 hr.attributes.read）；不得经 BFF/SPA 暴露给浏览器会话；无权限/身份不符必须 fail-closed（401/403），不得降级为匿名或用户可读。"
     error_code: "ATTRIBUTE_CALLER_VIOLATION"
 
+  - id: "ATR-009"
+    name: "授权条件声明化（不提供任意策略编辑面）"
+    level: "MUST"
+    statement: "授权条件只在扩展清单（manifest.permissions[].condition）声明，由判定方按声明求值；/check 只接收 permission，不得接收调用方传入的条件。条件结构（all/any 单层 + attribute/op/values）只能随契约版本演进：运行期只能调整契约声明的参数对象（领域对象 + 受审计命令），不提供 Rego 等任意策略表达式编辑面。条件只收窄、不授予；快照缺失/过期/属主不可达/路径缺失一律 fail-closed（ATR-006），原因只含路径与状态、不含属性值全文（ATR-007）。"
+    error_code: "ATTRIBUTE_CONDITION_VIOLATION"
+
+# 授权条件 DSL（ATR-009 / ADR-0015）：声明位置与可机械校验的子集。
+condition_language:
+  version: "1.0.0"
+  declaration: "extensions/{extension.id}/manifest.yaml → permissions[].condition"
+  evaluated_by: "04-authz-contract/resolution.api.yaml POST /check（判定方按声明求值）"
+  caller_supplied: "forbidden"   # /check 请求不得携带条件；条件不能由被判定方提供
+  logic: ["all", "any"]          # 二选一、非空、单层；嵌套或混合即拒绝
+  ops: ["eq", "neq", "in", "not_in", "exists"]
+  attribute_path: >
+    04-authz-contract/attributes.api.yaml 的 AttributeSet 内点分路径；段可带 [*]（任一岗位）；
+    终值必须是标量（标量数组以 [*] 引用）；不得引用整个对象/数组。
+  values: "非空标量数组；exists 只接受 [true] / [false]"
+  precedence: "先判权限是否持有，再求值条件；条件只收窄、不授予"
+  semantics:
+    - "eq / in 对候选集为存在语义（任一候选命中即满足）"
+    - "neq / not_in 为全称语义（全部候选都不命中才满足）"
+    - "[*] 表示任一岗位（ATR-003 的显式语义声明），禁止在未声明主岗/任一语义时静默择一"
+  failure:
+    missing: "ATTRIBUTE_MISSING"
+    stale: "ATTRIBUTE_STALE"
+    source_unavailable: "ATTRIBUTE_SOURCE_UNAVAILABLE"
+    mismatch: "ATTRIBUTE_MISMATCH"
+  not_allowed:
+    - "caller_supplied_condition"
+    - "nested_all_any_or_not"
+    - "regex_or_expression_operator"
+    - "deny_condition_or_condition_grant"
+    - "runtime_edit_policy_expression"
+
 snapshot_lifecycle:
   states:
     - { state: "fresh", meaning: "快照在有效期内，可用于条件求值" }

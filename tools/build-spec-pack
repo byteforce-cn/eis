@@ -52,6 +52,7 @@ TOOL_FILES = (
     "tools/audit-verifier",
     "tools/lib/eis_common.py",
     "tools/lib/eis_compat.py",
+    "tools/lib/eis_conditions.py",
 )
 VECTOR_DIRS = (
     ("05-audit-contract/tests/fixtures", "vectors/audit"),
@@ -472,6 +473,7 @@ def cmd_self_test(args) -> int:
             "tools/audit-verifier",
             "tools/lib/eis_common.py",
             "tools/lib/eis_compat.py",
+            "tools/lib/eis_conditions.py",
             "README.md",
             "MANIFEST.json",
         ]

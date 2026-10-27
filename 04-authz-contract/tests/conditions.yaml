@@ -1,0 +1,15 @@
+# 授权条件声明（ADR-0015）— 参考实现的声明输入。
+# 权威位置：extensions/*/manifest.yaml 的 permissions[].condition；
+# 本文件仅用于 04 契约用例：证明「条件由声明侧提供、调用方不得传入」。
+# 结构：{conditions: {<permission>: {all|any: [{attribute, op, values}]}}}
+conditions:
+  purchase.request.approve:
+    all:
+      - {attribute: "primary_position.grade", op: "in", values: ["P5"]}
+  purchase.request.approve.senior:
+    any:
+      - {attribute: "positions[*].grade", op: "in", values: ["P6"]}
+      - {attribute: "employment_type", op: "eq", values: ["contractor"]}
+  purchase.request.approve.lead:
+    all:
+      - {attribute: "positions[*].grade", op: "not_in", values: ["P6"]}

@@ -237,8 +237,9 @@ def kind_authz(item) -> tuple[bool, str]:
             "--principal", item["principal"], "--as-of", item["as_of"]]
     if op == "check":
         base += ["--permission", item["permission"]]
-        for key, value in (item.get("require_attributes") or {}).items():
-            base += ["--require-attribute", f"{key}={value}"]
+        # 条件声明（ADR-0015）：调用方不得传条件，只能指定被求值的声明文件
+        if item.get("conditions"):
+            base += ["--conditions", str(ROOT / item["conditions"])]
     proc = run_cli(base)
     if proc.returncode != 0:
         return False, f"authz-resolver 退出码 {proc.returncode}: {proc.stderr[:200]}"

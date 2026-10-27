@@ -28,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from eis_common import ROOT, Report, load_json, load_yaml, rel  # noqa: E402
+from eis_conditions import scalar_paths, validate_condition  # noqa: E402
 
 try:
     from jsonschema import Draft202012Validator
@@ -371,14 +372,17 @@ def collect_permission_refs(node, refs: set) -> None:
             collect_permission_refs(item, refs)
 
 
-def check_manifest_permissions(path: Path, ext_id: str, ext: dict) -> list[str]:
-    """校验扩展权限目录（若声明）：命名空间/唯一性/kind/描述，以及测试引用不得自造。"""
+def check_manifest_permissions(path: Path, ext_id: str, ext: dict,
+                               allowed_paths: dict | None = None) -> list[str]:
+    """校验扩展权限目录（若声明）：命名空间/唯一性/kind/描述/条件，以及测试引用不得自造。"""
     problems: list[str] = []
     perms = ext.get("permissions")
     if perms is None:
         return problems
     if not isinstance(perms, list):
         return ["permissions 必须为数组"]
+    if allowed_paths is None:
+        allowed_paths = scalar_paths()
     ids: set[str] = set()
     for entry in perms:
         if not isinstance(entry, dict):
@@ -409,6 +413,10 @@ def check_manifest_permissions(path: Path, ext_id: str, ext: dict) -> list[str]:
                     problems.append(f"权限 {pid} 的 callers 含非法主体类型（person/system）: {unknown}")
                 if len(set(callers)) != len(callers):
                     problems.append(f"权限 {pid} 的 callers 有重复项")
+        condition = entry.get("condition")
+        if condition is not None:
+            # 授权条件声明（ADR-0015）：受限 DSL；路径必须落在 04 属性快照内
+            problems.extend(f"权限 {pid} 的 {p}" for p in validate_condition(condition, allowed_paths))
     used: set[str] = set()
     tests_dir = path.parent / "tests"
     if tests_dir.is_dir():
@@ -470,6 +478,7 @@ def check_operation_callers(report: Report, manifests: dict, root: Path = ROOT) 
 
 def check_manifests(report: Report, root: Path = ROOT) -> dict:
     manifests: dict[str, dict] = {}
+    allowed_paths = scalar_paths()
     for path in sorted((root / "extensions").glob("*/manifest.yaml")):
         doc = load_yaml(path)
         ext = doc.get("extension", {})
@@ -489,7 +498,7 @@ def check_manifests(report: Report, root: Path = ROOT) -> dict:
                 if ref_file and not (path.parent / ref_file).exists():
                     problems.append(f"{section} 引用不存在: {ref_file}")
         if ext_id:
-            problems.extend(check_manifest_permissions(path, ext_id, ext))
+            problems.extend(check_manifest_permissions(path, ext_id, ext, allowed_paths))
         if problems:
             report.fail(f"{rel(path)}: 扩展清单检查", "\n".join(problems))
         else:
@@ -765,6 +774,54 @@ def cmd_self_test(args) -> int:
                 report.fail(f"自测：调用方约束漂移未被检出（{label}）")
             else:
                 report.ok(f"自测：调用方约束漂移被检出（{label}）")
+
+    # 授权条件声明（ADR-0015）：路径必须落在 04 属性快照内；op/结构白名单；不得嵌套
+    with _tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        ext_dir = root / "extensions" / "demo"
+        ext_dir.mkdir(parents=True)
+
+        def condition_report(condition) -> Report:
+            (ext_dir / "manifest.yaml").write_text(
+                _yaml.safe_dump({"extension": {
+                    "id": "demo", "version": "1.0.0", "core_version": "1.0.0",
+                    "permissions": [{
+                        "id": "demo.thing.read", "kind": "read", "description": "读事物",
+                        "condition": condition,
+                    }],
+                }}, allow_unicode=True, sort_keys=False), encoding="utf-8")
+            r = Report("tmp")
+            check_manifests(r, root=root)
+            return r
+
+        good = {"all": [
+            {"attribute": "primary_position.grade", "op": "in", "values": ["M2", "P1"]},
+            {"attribute": "positions[*].grade", "op": "not_in", "values": ["P9"]},
+        ]}
+        if condition_report(good).success:
+            report.ok("自测：合法授权条件声明通过（主岗/任一岗位路径）")
+        else:
+            report.fail("自测：合法授权条件声明被误拒")
+        for bad, label, expected in (
+            ({"all": [{"attribute": "primary_position.rank", "op": "eq", "values": ["x"]}]},
+             "未知属性路径", "不在 04 属性快照"),
+            ({"all": [{"attribute": "primary_position.grade", "op": "regex", "values": ["P.*"]}]},
+             "op 越界", "op 不在白名单"),
+            ({"all": [{"attribute": "primary_position.grade", "op": "eq", "values": []}]},
+             "空 values", "非空数组"),
+            ({"all": [{"attribute": "primary_position.grade", "op": "eq", "values": ["M2"]}],
+              "any": []}, "all/any 混合", "只能包含"),
+            ({"all": [{"attribute": "positions[*]", "op": "eq", "values": ["P6"]}]},
+             "整体对象/数组路径", "不在 04 属性快照"),
+            ({"all": [{"attribute": "primary_position.grade", "op": "exists",
+                       "values": ["yes"]}]}, "exists 非布尔", "[true] 或 [false]"),
+        ):
+            r = condition_report(bad)
+            detail = "\n".join(str(d) for _, _, d in r.failures)
+            if r.success or expected not in detail:
+                report.fail(f"自测：非法授权条件未被检出（{label}）", detail)
+            else:
+                report.ok(f"自测：非法授权条件被检出（{label}）")
     report.print()
     return 0 if report.success else 1
 
