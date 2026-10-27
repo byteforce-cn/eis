@@ -646,6 +646,27 @@ class Kernel:
         excluded = self.write_only_fields.get(obj_type, ())
         return {k: v for k, v in row.items() if k not in excluded}
 
+    def read_object(self, obj_type: str, obj_id: str, min_version=None,
+                    valid_at=None, recorded_at=None) -> dict:
+        """读接口（ADR-0017）：带 min_version 时，未追平返回 409 + Retry-After。
+
+        语义：min_version 是**对象版本**（每次写 +1），不是投影水位；返回的状态必须
+        包含版本 >= min_version，绝不返回旧版本冒充当前状态。
+        """
+        row = self.as_of(obj_type, obj_id, valid_at, recorded_at)
+        if row is None:
+            return {"status": 404, "reason_code": "EIS-404-001"}
+        if min_version is not None:
+            if not isinstance(min_version, int) or min_version < 1:
+                return {"status": 400, "reason_code": "EIS-400-001"}
+            if row["version"] < min_version:
+                return {"status": 409, "reason_code": "EIS-409-003",
+                        "retry_after": 1, "version": row["version"],
+                        "min_version": min_version}
+        excluded = self.write_only_fields.get(obj_type, ())
+        projection = {k: v for k, v in row.items() if k not in excluded}
+        return {"status": 200, "version": row["version"], "object": projection}
+
     def history(self, obj_type: str, obj_id: str) -> list[dict]:
         rows = [r for r in self.objects.get(obj_type, []) if r["id"] == obj_id]
         return sorted(rows, key=lambda r: r["version"])
@@ -895,6 +916,28 @@ def _run_assertion(kernel: Kernel, assertion: dict, context: dict):
         if leaked:
             return False, f"读投影泄漏写入专用字段: {leaked}"
         return True, f"读投影不含字段 {fields}"
+    if kind == "read-min-version":
+        obj_id = resolve_tokens(assertion["id"], context)
+        outcome = kernel.read_object(
+            assertion["type"], obj_id,
+            min_version=assertion.get("min_version"),
+            valid_at=assertion.get("valid_at"),
+            recorded_at=assertion.get("recorded_at"),
+        )
+        expected = assertion.get("expect_status", 200)
+        if outcome["status"] != expected:
+            return False, f"读接口期望 {expected}，实际 {outcome['status']}（{outcome}）"
+        if expected == 409:
+            if outcome.get("reason_code") != "EIS-409-003":
+                return False, f"未就绪原因码期望 EIS-409-003，实际 {outcome.get('reason_code')}"
+            if not isinstance(outcome.get("retry_after"), int) or outcome["retry_after"] < 1:
+                return False, "409 未携带有效的 Retry-After（秒）"
+            if outcome["version"] >= outcome["min_version"]:
+                return False, "409 响应不得返回已追平的数据"
+            return True, f"409 + Retry-After={outcome['retry_after']}（可读版本 {outcome['version']} < {outcome['min_version']}）"
+        if outcome["version"] < assertion.get("min_version", 1):
+            return False, f"200 版本 {outcome['version']} < min_version {assertion.get('min_version')}"
+        return True, f"200 version={outcome['version']} >= min_version={assertion.get('min_version')}"
     if kind == "object-count":
         where = {key: resolve_tokens(value, context)
                  for key, value in (assertion.get("where") or {}).items()}

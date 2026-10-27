@@ -85,6 +85,14 @@ codes:
     emitted_when:
       - "并发更新同一业务对象"
 
+  - code: EIS-409-003
+    http_status: 409
+    name: read_model_not_ready
+    description: 读模型未追平请求的 min_version（响应必须带 Retry-After；不得返回旧版本冒充当前状态）
+    retryable: true
+    emitted_when:
+      - "GET /objects/{objectType}/{id} 带 min_version=N，且当前可读版本 < N"
+
   - code: EIS-500-001
     http_status: 500
     name: internal_error

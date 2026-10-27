@@ -10,6 +10,11 @@ info:
     - as_of：返回业务时间切点处的版本
     - recorded_as_of：返回系统记录时间切点处的版本
     - 组合使用：双时间轴联合查询
+    - 写后读一致性（ADR-0017）：GET /objects/{objectType}/{id} 支持 min_version=N，
+      表示「返回包含版本 N 的状态」。投影未追平时必须返回 409 + Retry-After
+      （reason_code=EIS-409-003），不得返回旧版本冒充当前状态。
+      min_version 是**对象版本**（每次写 +1），不是投影水位；与 as_of/recorded_as_of
+      组合时同样比较返回版本（历史时点天然可能低于 N，调用方不应组合使用）。
 
     读面授权口径（ADR-0006）：
     - 本通用查询 API 是内部/服务面，由资源服务器认证 + 部署网络策略保护，不设域级 permission；
@@ -46,15 +51,36 @@ paths:
             type: string
             format: date-time
           description: 时点查询（系统时间）
+        - name: min_version
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: >-
+            最小对象版本（写后读一致性）。返回状态必须包含版本 >= min_version；
+            当前可读版本低于该值时返回 409 + Retry-After（EIS-409-003），
+            不得返回旧版本数据冒充当前状态。
       responses:
         '200':
-          description: 查询成功
+          description: 查询成功（若带 min_version，返回对象的 version >= min_version）
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ObjectResponse'
         '404':
           description: 对象不存在
+        '409':
+          description: >-
+            读模型未追平 min_version（reason_code=EIS-409-003）；
+            响应必须带 Retry-After（秒），调用方按其退避重试；
+            不得以 200 返回低版本数据。
+          headers:
+            Retry-After:
+              description: 建议重试间隔（秒）
+              schema:
+                type: integer
+                minimum: 1
 
   /balances/{balanceType}:
     get:

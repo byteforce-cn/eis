@@ -6,6 +6,10 @@
 
 ### 新增
 
+- 读接口 `min_version`（ADR-0017 / issue #32②）：`GET /objects/{objectType}/{id}?min_version=N`
+  表示「返回包含版本 N 的状态」；未追平统一 `409 + Retry-After`（新错误码 `EIS-409-003`
+  `read_model_not_ready`），不得以 200 返回旧版本；`min_version` 是对象版本而非投影水位；
+  参考内核新增 `read_object` 与 `read-min-version` 场景断言，覆盖未追平 409 / 追平 200；
 - 参考内核执行扩展对象 Schema（ADR-0016 / issue #40②）：按 `manifest.objects` 载入
   `objects/*.schema.json`（`jsonschema` 可选依赖，缺失即拒绝启动），创建/更新/夹具装载写入前
   校验完整行；违约与未声明类型以 `EIS-400-001` fail-closed，更新路径先校验新行再封口旧行；
@@ -22,7 +26,7 @@
 
 ### 变更
 
-- 用例 142/142（新增授权条件声明/求值/fail-closed 用例、内核对象 Schema 自测与 CLI 用例；移除调用方传条件的反模式用例），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
+- 用例 144/144（新增授权条件声明/求值/fail-closed 用例、内核对象 Schema 自测与 CLI 用例、读接口 min_version 用例；移除调用方传条件的反模式用例），同步 `README.md` / `CONTRIBUTING.md` / `docs/CONFORMANCE.md` / `docs/KNOWN-LIMITATIONS.md` 计数口径。
 
 ## [Unreleased] — 2026-10-17（开放 issue 修复）
 
