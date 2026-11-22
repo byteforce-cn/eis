@@ -13,6 +13,11 @@
 
 ### 新增
 
+- 数据范围契约 `schemas/scope-primitive/`（ADR-0024 / issue #59）：`scope-primitive-v1` 纳入 EIS
+  作为权威来源——21 个原语、25 个 `$defs`，JSON Schema 2020-12，`$id` 固定为
+  `https://byteforce-cn.github.io/eis/schemas/scope-primitive/v1.json`；`v1` 冻结，结构/默认值/
+  折叠规则/fail-closed 边界变更必须新增 `v2.json`；README 给出常量折叠真值表与 fail-closed 约定；
+  仅把 `$comment` 由提案态更新为采纳态，Schema 主体与业务侧冻结版本逐字一致；核心六类契约不变；
 - 扩展跨引用与命令前置（ADR-0019 / issue #30 步骤 2）：`manifest.dependencies`（精确版本、无环）+
   `rules.requires_objects`（存在性精确匹配，`$payload.<路径>` 右值）；`contract-checker` 校验依赖/
   `applies_to`/引用对象/`where`/错误码命名空间；参考内核在权限与 `callers` 预检后、处理器前
