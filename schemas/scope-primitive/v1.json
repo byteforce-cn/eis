@@ -1,0 +1,748 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://byteforce-cn.github.io/eis/schemas/scope-primitive/v1.json",
+  "$comment": "ADOPTED by EIS (ADR-0024). Body frozen as v1; changes to structure, defaults, folding rules or fail-closed boundaries require v2.json. See README.md and CHANGELOG.md in this directory for governance. Schema is for contract documentation and startup validation only; runtime deserialization must use @JsonTypeInfo(use=NAME, property='op') with a PrimitiveRegistry, never per-request oneOf validation.",
+  "title": "Scope Primitive v1",
+  "description": "Composable JSON expression tree for data-scope conditions. v1 is frozen: new primitives require v2. Role checks are NOT part of this schema; role decisions belong to functional-authorization Rego (permit/deny), and Rego should emit different scopes based on roles. Boolean primitives (isMember, all, none) evaluate to all/none and do NOT produce row-level filters; row-level primitives produce WHERE conditions. The Java side must evaluate boolean primitives and constant-fold BEFORE translating row-level primitives. Constant-folding truth table (must be shared by Rego and Java, and covered by CI on both sides): and[all,x]=x, and[none,x]=none, and[all,all]=all, or[none,x]=x, or[all,x]=all, or[none,none]=none, not(all)=none, not(none)=all, not(not(x))=x, isMember(r)=all when true and none when false. This schema is for contract documentation and startup validation only; runtime deserialization must use @JsonTypeInfo(use=NAME, property='op') with a PrimitiveRegistry, never per-request oneOf validation.",
+  "examples": [
+    {
+      "op": "all"
+    },
+    {
+      "op": "or",
+      "children": [
+        {
+          "op": "memberOf",
+          "relation": "project_member",
+          "resourceField": "project_id"
+        },
+        {
+          "op": "ownerIsSubject"
+        }
+      ]
+    },
+    {
+      "op": "and",
+      "children": [
+        {
+          "op": "subjectAttrCmp",
+          "field": "classification",
+          "subjectAttr": "clearance_level",
+          "cmp": "lte"
+        },
+        {
+          "op": "nullCheck",
+          "field": "archived_at",
+          "isNull": true
+        }
+      ]
+    }
+  ],
+  "$ref": "#/$defs/expr",
+  "$defs": {
+    "fieldRef": {
+      "type": "string",
+      "description": "Single-table logical resource field name. Dotted paths, table aliases and raw column names are intentionally NOT supported; JOIN cases must be handled by an explicit mapper.",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "attrRef": {
+      "type": "string",
+      "description": "Subject attribute name as declared by SubjectAttributesProvider. Schema only performs basic constraints; final validity (including dotted-segment rules, registered names, provider-specific naming) is enforced by the SubjectAttributesProvider registry, not by this pattern.",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.]{0,127}$"
+    },
+    "scalar": {
+      "type": [
+        "string",
+        "number",
+        "boolean"
+      ]
+    },
+    "expr": {
+      "description": "Unified entry point for all scope primitives. Discriminated by the 'op' property. Runtime validation should use @JsonTypeInfo on 'op', not this oneOf.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/all"
+        },
+        {
+          "$ref": "#/$defs/none"
+        },
+        {
+          "$ref": "#/$defs/and"
+        },
+        {
+          "$ref": "#/$defs/or"
+        },
+        {
+          "$ref": "#/$defs/not"
+        },
+        {
+          "$ref": "#/$defs/eq"
+        },
+        {
+          "$ref": "#/$defs/ne"
+        },
+        {
+          "$ref": "#/$defs/in"
+        },
+        {
+          "$ref": "#/$defs/notIn"
+        },
+        {
+          "$ref": "#/$defs/lt"
+        },
+        {
+          "$ref": "#/$defs/lte"
+        },
+        {
+          "$ref": "#/$defs/gt"
+        },
+        {
+          "$ref": "#/$defs/gte"
+        },
+        {
+          "$ref": "#/$defs/between"
+        },
+        {
+          "$ref": "#/$defs/nullCheck"
+        },
+        {
+          "$ref": "#/$defs/startsWith"
+        },
+        {
+          "$ref": "#/$defs/memberOf"
+        },
+        {
+          "$ref": "#/$defs/isMember"
+        },
+        {
+          "$ref": "#/$defs/ownerIsSubject"
+        },
+        {
+          "$ref": "#/$defs/deptScope"
+        },
+        {
+          "$ref": "#/$defs/subjectAttrCmp"
+        }
+      ]
+    },
+    "all": {
+      "type": "object",
+      "description": "Constant true. Matches all resources. Boolean primitive; constant-folds to true.",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "const": "all"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "none": {
+      "type": "object",
+      "description": "Constant false. Matches no resources. Boolean primitive; constant-folds to false.",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "const": "none"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "and": {
+      "type": "object",
+      "description": "Logical AND over 2-64 child expressions. Java side must constant-fold boolean children before translating row-level children. Folding rules: and[all,x]=x, and[none,x]=none, and[all,all]=all. Nesting depth limit (recommended 8) is enforced by the Java validator, not by this schema.",
+      "required": [
+        "op",
+        "children"
+      ],
+      "properties": {
+        "op": {
+          "const": "and"
+        },
+        "children": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/expr"
+          }
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "or": {
+      "type": "object",
+      "description": "Logical OR over 2-64 child expressions. Java side must constant-fold boolean children before translating row-level children. Folding rules: or[none,x]=x, or[all,x]=all, or[none,none]=none.",
+      "required": [
+        "op",
+        "children"
+      ],
+      "properties": {
+        "op": {
+          "const": "or"
+        },
+        "children": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/expr"
+          }
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "not": {
+      "type": "object",
+      "description": "Logical NOT over a single child expression. Folding rules: not(all)=none, not(none)=all, not(not(x))=x. Double negation should be simplified by Rego or the Java side.",
+      "required": [
+        "op",
+        "child"
+      ],
+      "properties": {
+        "op": {
+          "const": "not"
+        },
+        "child": {
+          "$ref": "#/$defs/expr"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "eq": {
+      "type": "object",
+      "description": "Field equals a scalar value.",
+      "required": [
+        "op",
+        "field",
+        "value"
+      ],
+      "properties": {
+        "op": {
+          "const": "eq"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "value": {
+          "$ref": "#/$defs/scalar"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "ne": {
+      "type": "object",
+      "description": "Field does not equal a scalar value. SQL three-valued logic applies: NULL is not returned unless explicitly handled by Rego as or(isNull, ne).",
+      "required": [
+        "op",
+        "field",
+        "value"
+      ],
+      "properties": {
+        "op": {
+          "const": "ne"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "value": {
+          "$ref": "#/$defs/scalar"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "in": {
+      "type": "object",
+      "description": "Field value is one of the given scalar values. Java PrimitiveValidator must enforce type-homogeneous values and compatibility with the FieldRegistry-declared field type; mixed types are rejected with 400, never degraded to allow. Translators must enforce a GLOBAL SQL parameter budget across the folded AST (not just this node's maxItems); when the dialect threshold is exceeded, switch to temp-table JOIN or batching, keeping semantics unchanged.",
+      "required": [
+        "op",
+        "field",
+        "values"
+      ],
+      "properties": {
+        "op": {
+          "const": "in"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/scalar"
+          }
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "notIn": {
+      "type": "object",
+      "description": "Field value is none of the given scalar values. SQL three-valued logic applies. Type-homogeneity is enforced by the Java side. Global SQL parameter budget applies as with 'in'.",
+      "required": [
+        "op",
+        "field",
+        "values"
+      ],
+      "properties": {
+        "op": {
+          "const": "notIn"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/scalar"
+          }
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "lt": {
+      "type": "object",
+      "description": "Field is less than a scalar value.",
+      "required": [
+        "op",
+        "field",
+        "value"
+      ],
+      "properties": {
+        "op": {
+          "const": "lt"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "value": {
+          "$ref": "#/$defs/scalar"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "lte": {
+      "type": "object",
+      "description": "Field is less than or equal to a scalar value.",
+      "required": [
+        "op",
+        "field",
+        "value"
+      ],
+      "properties": {
+        "op": {
+          "const": "lte"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "value": {
+          "$ref": "#/$defs/scalar"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "gt": {
+      "type": "object",
+      "description": "Field is greater than a scalar value.",
+      "required": [
+        "op",
+        "field",
+        "value"
+      ],
+      "properties": {
+        "op": {
+          "const": "gt"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "value": {
+          "$ref": "#/$defs/scalar"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "gte": {
+      "type": "object",
+      "description": "Field is greater than or equal to a scalar value.",
+      "required": [
+        "op",
+        "field",
+        "value"
+      ],
+      "properties": {
+        "op": {
+          "const": "gte"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "value": {
+          "$ref": "#/$defs/scalar"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "between": {
+      "type": "object",
+      "description": "Field is within a range. At least one of lower/upper must be non-null; a null bound means an open-ended range on that side. Boolean bounds are intentionally not allowed; use eq for booleans. Translators MUST honor includeLower/includeUpper: when either is false, BETWEEN must not be used; translate to strict comparisons instead (lower-only: field > lower or field >= lower; upper-only: field < upper or field <= upper; both bounded: combine accordingly). The anyOf sub-branches rely on the parent additionalProperties:false; do not relax the parent constraint when reusing fragments. FieldRegistry must declare whether a field is range-comparable.",
+      "required": [
+        "op",
+        "field"
+      ],
+      "properties": {
+        "op": {
+          "const": "between"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "lower": {
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
+        },
+        "upper": {
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
+        },
+        "includeLower": {
+          "type": "boolean",
+          "default": true
+        },
+        "includeUpper": {
+          "type": "boolean",
+          "default": true
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "lower"
+          ],
+          "properties": {
+            "lower": {
+              "type": [
+                "string",
+                "number"
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "upper"
+          ],
+          "properties": {
+            "upper": {
+              "type": [
+                "string",
+                "number"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullCheck": {
+      "type": "object",
+      "description": "Checks whether a field is null or not null.",
+      "required": [
+        "op",
+        "field",
+        "isNull"
+      ],
+      "properties": {
+        "op": {
+          "const": "nullCheck"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "isNull": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "startsWith": {
+      "type": "object",
+      "description": "Field string value starts with the given prefix. Empty prefix is rejected. LIKE escaping and case sensitivity are handled by the translator; FieldRegistry must declare caseInsensitive per string field so the same policy behaves consistently across DB collations.",
+      "required": [
+        "op",
+        "field",
+        "prefix"
+      ],
+      "properties": {
+        "op": {
+          "const": "startsWith"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "prefix": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "memberOf": {
+      "type": "object",
+      "description": "Row-level membership filter: resourceField IN (subject's related IDs for relation). relation must be registered in RelationRegistry (table, subjectField, resourceField, pre-expansion strategy and limit). subjectField is optional in JSON; when omitted, the Java side must fill it with the default 'user_id'. Translators decide between IN pre-expansion and EXISTS. Pre-expansion and isMember evaluation MUST share the same RelationRegistry source of truth.",
+      "required": [
+        "op",
+        "relation",
+        "resourceField"
+      ],
+      "properties": {
+        "op": {
+          "const": "memberOf"
+        },
+        "relation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "resourceField": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "subjectField": {
+          "$ref": "#/$defs/fieldRef",
+          "default": "user_id"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false,
+      "examples": [
+        {
+          "op": "memberOf",
+          "relation": "project_member",
+          "resourceField": "project_id",
+          "subjectField": "user_id"
+        }
+      ]
+    },
+    "isMember": {
+      "type": "object",
+      "description": "Boolean membership check. Evaluates to all (true) or none (false) and does NOT produce a row-level filter. Evaluation MUST go through RelationRegistry's MembershipChecker; translators must NOT query the relation table directly, otherwise memberOf pre-expansion and isMember evaluation would diverge. relation must be registered in RelationRegistry. Fail-closed: if MembershipChecker cannot evaluate (unregistered relation, provider failure, timeout), the request MUST be rejected; it must never degrade to all, and the condition must never be silently omitted.",
+      "required": [
+        "op",
+        "relation"
+      ],
+      "properties": {
+        "op": {
+          "const": "isMember"
+        },
+        "relation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "ownerIsSubject": {
+      "type": "object",
+      "description": "Resource owner field equals the current subject. field is optional in JSON; when omitted, the Java side must fill it with the default 'owner_id'.",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "const": "ownerIsSubject"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef",
+          "default": "owner_id"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "deptScope": {
+      "type": "object",
+      "description": "Resource belongs to the current subject's department scope. field is optional in JSON; when omitted, the Java side must fill it with the default 'dept_id'. deptSource is optional in JSON; when omitted, the Java side must fill it with the default 'PRIMARY'. When deptSource is SPECIFIED, rootDeptId is required. With includeChildren=true, the Java side pre-expands department IDs and switches to temp-table JOIN or batching above the registry threshold; recursive CTEs must NOT be generated.",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "const": "deptScope"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef",
+          "default": "dept_id"
+        },
+        "includeChildren": {
+          "type": "boolean",
+          "default": true
+        },
+        "deptSource": {
+          "type": "string",
+          "enum": [
+            "PRIMARY",
+            "ALL",
+            "SPECIFIED"
+          ],
+          "default": "PRIMARY"
+        },
+        "rootDeptId": {
+          "type": [
+            "string",
+            "number"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "deptSource"
+            ],
+            "properties": {
+              "deptSource": {
+                "const": "SPECIFIED"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "rootDeptId"
+            ]
+          }
+        }
+      ]
+    },
+    "subjectAttrCmp": {
+      "type": "object",
+      "description": "Compares a resource field with a current-subject attribute. subjectAttr is registered by SubjectAttributesProvider and uses attrRef naming (not fieldRef). Values are injected by the Java side into input.subject.attrs before calling OPA, and the translator binds parameters from the same provider, so the two sides never diverge. Single-provider rule: one attribute must have exactly one access path.",
+      "required": [
+        "op",
+        "field",
+        "subjectAttr",
+        "cmp"
+      ],
+      "properties": {
+        "op": {
+          "const": "subjectAttrCmp"
+        },
+        "field": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "subjectAttr": {
+          "$ref": "#/$defs/attrRef"
+        },
+        "cmp": {
+          "type": "string",
+          "enum": [
+            "eq",
+            "ne",
+            "lt",
+            "lte",
+            "gt",
+            "gte"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

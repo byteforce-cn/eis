@@ -137,6 +137,8 @@ eis/
 │   ├── migration.template.sql       #   迁移脚本模板
 │   ├── rollback.template.sql        #   回滚脚本模板
 │   └── tests/
+├── schemas/                         # 组织级数据契约（按 $id 引用）
+│   └── scope-primitive/             #   数据范围表达式树 v1（ADR-0024）
 ├── extensions/                      # 领域扩展（独立版本化）
 │   ├── accounting/                  #   会计域 v1.0.0
 │   ├── inventory/                   #   库存域 v1.0.0
