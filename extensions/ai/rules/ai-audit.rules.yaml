@@ -1,0 +1,52 @@
+# ai-audit.rules.yaml — Agent 审计规则（ADR-0025 / issue #60，EXPERIMENTAL v0.1.0）
+#
+# 审计事件是 OTel GenAI span 在 EIS 契约面上的投影，不是自定义事件孤岛。
+version: "0.1.0"
+
+ai_audit_rules:
+  - id: "AI-201"
+    name: "事件类型"
+    level: "MUST"
+    statement: >
+      新增审计事件类型 AI_TOOL_CALL / AI_TOOL_RESULT / AI_HUMAN_APPROVAL；
+      记录形状由 AiInteractionRecord 承载（01 核心元结构 + 扩展字段）。
+    enforced_by: ["ai-interaction-record.schema.json"]
+    error_code: "AI-422-001"
+
+  - id: "AI-202"
+    name: "GenAI 语义可映射"
+    level: "MUST"
+    statement: >
+      三类事件的字段必须与 OpenTelemetry GenAI 语义约定中的工具调用 span 属性保持可映射
+      关系：至少覆盖工具名（gen_ai.tool.name）、结果状态、模型标识
+      （gen_ai.request.model / gen_ai.response.model）与 on_behalf_of 引用。EIS 不重新定义
+      trace 格式；映射表见 extensions/ai/README.md §3。
+    enforced_by: ["audit-verifier", "ai-interaction-record.schema.json"]
+    error_code: "AI-422-002"
+
+  - id: "AI-203"
+    name: "span 引用不可缺失"
+    level: "MUST"
+    statement: >
+      AI_TOOL_CALL 记录必须携带 otel_span_ref（trace_id/span_id），使 EIS 审计链可跳转到
+      企业既有 OTel 后端；缺失即审计事件结构非法。
+    enforced_by: ["ai-interaction-record.schema.json"]
+    error_code: "AI-422-003"
+
+  - id: "AI-204"
+    name: "推理摘要不替代 span"
+    level: "MUST"
+    statement: >
+      结构化推理摘要（reasoning_summary_sha256）与 GenAI span 在审计链中并列存在、
+      不可互相替代；只存储摘要哈希，不存储完整 CoT。
+    enforced_by: ["audit-verifier"]
+    error_code: "AI-422-004"
+
+  - id: "AI-205"
+    name: "审计链闭合"
+    level: "MUST"
+    statement: >
+      每条 Agent 命令的审计记录必须能关联到至少一个 AI_TOOL_CALL 事件与一个
+      on_behalf_of 委托链引用；任一缺失时审计验证失败。
+    enforced_by: ["audit-verifier"]
+    error_code: "AI-422-005"

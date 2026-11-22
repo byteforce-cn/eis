@@ -1,0 +1,42 @@
+# ai-evolution.rules.yaml — Agent 演进规则（ADR-0025 / issue #60，EXPERIMENTAL v0.1.0）
+#
+# BEHAVIOR_CHANGING 判定不得仅依赖静态 Schema diff，必须由行为基线回归门禁驱动。
+version: "0.1.0"
+
+ai_evolution_rules:
+  - id: "AI-301"
+    name: "行为变更需回归评估"
+    level: "MUST"
+    statement: >
+      模型版本、提示词模板、工具集 Schema 及其组合的变更，必须在版本化黄金数据集上运行
+      回归评估并与当前基线比较；未运行评估的变更不得合并。
+    enforced_by: ["behavior-regression-gate"]
+    error_code: "AI-409-003"
+
+  - id: "AI-302"
+    name: "BEHAVIOR_COMPATIBLE 判定"
+    level: "MUST"
+    statement: >
+      判定 BEHAVIOR_COMPATIBLE 必须同时满足：(a) 黄金数据集通过率不低于声明基线；
+      (b) 工具调用序列层面无新增不变量违规；(c) 工具集 Schema 无 breaking change。
+    enforced_by: ["behavior-regression-gate"]
+    error_code: "AI-409-004"
+
+  - id: "AI-303"
+    name: "轨迹不变量"
+    level: "MUST"
+    statement: >
+      不变量集合必须声明为版本化工件（extensions/ai/artifacts/invariants.yaml），
+      至少覆盖：白名单外调用为零、缺失 origin 为零、委托链过期调用为零、
+      高风险命令的 AI_HUMAN_APPROVAL 均先于执行。
+    enforced_by: ["behavior-regression-gate"]
+    error_code: "AI-409-005"
+
+  - id: "AI-304"
+    name: "工具集 breaking change 强制升级"
+    level: "MUST"
+    statement: >
+      工具集 Schema 发生 breaking change 时，即使行为回归通过，仍必须标记
+      BEHAVIOR_CHANGING；下游消费者兼容性风险不由 Agent 自身行为回归覆盖。
+    enforced_by: ["compatibility-checker"]
+    error_code: "AI-409-006"

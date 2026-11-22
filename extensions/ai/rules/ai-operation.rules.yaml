@@ -1,0 +1,49 @@
+# ai-operation.rules.yaml — Agent 操作规则（ADR-0025 / issue #60，EXPERIMENTAL v0.1.0）
+#
+# 静态白名单是目录级约束，运行时策略检查是执行闸门，二者不可互相替代。
+version: "0.1.0"
+
+ai_operation_rules:
+  - id: "AI-001"
+    name: "命令白名单"
+    level: "MUST"
+    statement: >
+      Agent 对业务状态的任何变更必须通过白名单中声明的命令进行；白名单外的命令
+      一律拒绝（fail-closed），不得按「未知即允许」处理。
+    enforced_by: ["policy-enforcement-point"]
+    error_code: "AI-403-001"
+
+  - id: "AI-002"
+    name: "来源标记"
+    level: "MUST"
+    statement: >
+      每条 Agent 命令的审计元数据必须包含 origin: AI_AGENT。缺失 origin 时策略检查点
+      必须拒绝执行并产生审计不完整事件（执行时拦截，而非事后判定）。
+    enforced_by: ["policy-enforcement-point", "audit-verifier"]
+    error_code: "AI-403-002"
+
+  - id: "AI-003"
+    name: "运行时策略检查点"
+    level: "MUST"
+    statement: >
+      每次白名单调用必须在执行前经过策略检查点。检查点输入至少包含：命令标识、参数、
+      origin、on_behalf_of 委托链、当前任务上下文（或任务标识）。
+    enforced_by: ["policy-enforcement-point"]
+    error_code: "AI-403-003"
+
+  - id: "AI-004"
+    name: "高风险命令人工批准"
+    level: "MUST"
+    statement: >
+      白名单中标记为高风险或不可逆的命令，策略检查点默认结果为「需要人工批准」；
+      AI_HUMAN_APPROVAL 事件必须在执行前记录，不得事后补记。
+    enforced_by: ["policy-enforcement-point", "audit-verifier"]
+    error_code: "AI-403-004"
+
+  - id: "AI-005"
+    name: "白名单声明可审计"
+    level: "MUST"
+    statement: >
+      白名单与其高风险标记必须作为版本化工件维护；运行时拒绝必须可归因到具体规则 id。
+    enforced_by: ["contract-checker"]
+    error_code: "AI-403-005"

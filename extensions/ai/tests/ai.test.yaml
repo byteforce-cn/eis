@@ -1,0 +1,121 @@
+# AI 参与者交互契约验证用例（ADR-0025 / issue #60，EXPERIMENTAL v0.1.0）
+# 运行：tools/e2e-runner extensions/ai/tests/ai.test.yaml
+suite: ai
+tests:
+  - name: "操作规则：命令白名单与来源标记必须存在"
+    kind: static
+    target: extensions/ai/rules/ai-operation.rules.yaml
+    check: present
+    pattern: 'id: "AI-00[12]"'
+    min_matches: 2
+
+  - name: "操作规则：缺失 origin 必须拒绝执行（AI-403-002）"
+    kind: static
+    target: extensions/ai/rules/ai-operation.rules.yaml
+    check: present
+    pattern: "AI-403-002"
+
+  - name: "操作规则：高风险命令需执行前人工批准"
+    kind: static
+    target: extensions/ai/rules/ai-operation.rules.yaml
+    check: present
+    pattern: "AI_HUMAN_APPROVAL 事件必须在执行前记录|AI_HUMAN_APPROVAL 事件必须在执行前"
+
+  - name: "授权规则：委托链完整性 / 最小范围 / SoD / 无平行 RBAC"
+    kind: static
+    target: extensions/ai/rules/ai-authz.rules.yaml
+    check: present
+    pattern: 'id: "AI-10[1-4]"'
+    min_matches: 4
+
+  - name: "授权规则：不采信 Agent 自报权限"
+    kind: static
+    target: extensions/ai/rules/ai-authz.rules.yaml
+    check: present
+    pattern: "不得采信 Agent 自报的"
+
+  - name: "审计规则：三类事件与 GenAI 映射"
+    kind: static
+    target: extensions/ai/rules/ai-audit.rules.yaml
+    check: present
+    pattern: "AI_TOOL_CALL / AI_TOOL_RESULT / AI_HUMAN_APPROVAL"
+
+  - name: "审计规则：推理摘要不替代 span"
+    kind: static
+    target: extensions/ai/rules/ai-audit.rules.yaml
+    check: present
+    pattern: "不可互相替代"
+
+  - name: "审计规则：审计链闭合"
+    kind: static
+    target: extensions/ai/rules/ai-audit.rules.yaml
+    check: present
+    pattern: "AI-422-005"
+
+  - name: "演进规则：工具集 breaking change 强制 BEHAVIOR_CHANGING"
+    kind: static
+    target: extensions/ai/rules/ai-evolution.rules.yaml
+    check: present
+    pattern: "BEHAVIOR_CHANGING"
+
+  - name: "不变量集：五条轨迹不变量"
+    kind: static
+    target: extensions/ai/artifacts/invariants.yaml
+    check: present
+    pattern: 'id: "INV-AI-0[1-5]"'
+    min_matches: 5
+
+  - name: "审计记录：合法 AI_TOOL_CALL 通过 Schema"
+    kind: schema-doc
+    schema: extensions/ai/objects/ai-interaction-record.schema.json
+    doc:
+      id: "01900000-0000-7000-8000-00000000a001"
+      version: 1
+      valid_from: "2026-11-22T09:00:00.000000Z"
+      recorded_at: "2026-11-22T09:00:00.000000Z"
+      created_by: "01900000-0000-7000-8000-00000000a002"
+      created_at: "2026-11-22T09:00:00.000000Z"
+      record_kind: "AI_TOOL_CALL"
+      command_type: "pm.workitem.read"
+      origin: "AI_AGENT"
+      on_behalf_of:
+        subject: "01900000-0000-7000-8000-00000000a003"
+        delegation_ref: "spiffe://example.test/agent/assistant"
+        scope: ["pm.workitem.read"]
+        expires_at: "2026-11-22T10:00:00.000000Z"
+      tool:
+        name: "pm.workitem.read"
+        sequence: 0
+        args_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      outcome: "ok"
+      occurred_at: "2026-11-22T09:00:00.000000Z"
+      otel_span_ref:
+        trace_id: "0123456789abcdef0123456789abcdef"
+        span_id: "0123456789abcdef"
+
+  - name: "审计记录：缺失 origin 必须被 Schema 拒绝"
+    kind: schema-doc
+    schema: extensions/ai/objects/ai-interaction-record.schema.json
+    expect: invalid
+    doc:
+      id: "01900000-0000-7000-8000-00000000a011"
+      version: 1
+      valid_from: "2026-11-22T09:00:00.000000Z"
+      recorded_at: "2026-11-22T09:00:00.000000Z"
+      created_by: "01900000-0000-7000-8000-00000000a012"
+      created_at: "2026-11-22T09:00:00.000000Z"
+      record_kind: "AI_TOOL_CALL"
+      on_behalf_of:
+        subject: "01900000-0000-7000-8000-00000000a013"
+        delegation_ref: "spiffe://example.test/agent/assistant"
+      tool:
+        name: "pm.workitem.read"
+        sequence: 0
+      outcome: "ok"
+      occurred_at: "2026-11-22T09:00:00.000000Z"
+
+  - name: "审计记录：未收窄委托链（空 scope）不满足 AI-102 的可审计形状"
+    kind: static
+    target: extensions/ai/objects/ai-interaction-record.schema.json
+    check: present
+    pattern: "AI-102 要求必须收窄"
