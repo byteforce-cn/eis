@@ -1,0 +1,41 @@
+# ai-authz.rules.yaml — Agent 授权规则（ADR-0025 / issue #60，EXPERIMENTAL v0.1.0）
+#
+# on_behalf_of 不是审计元数据，而是策略检查点必须验证的运行时约束。
+version: "0.1.0"
+
+ai_authz_rules:
+  - id: "AI-101"
+    name: "委托链完整性"
+    level: "MUST"
+    statement: >
+      Agent 的每次命令调用必须携带可验证的 on_behalf_of 委托链；策略检查点必须校验
+      其存在性与时效性（是否过期）。缺失或过期一律拒绝执行。
+    enforced_by: ["policy-enforcement-point"]
+    error_code: "AI-401-001"
+
+  - id: "AI-102"
+    name: "委托链最小范围"
+    level: "MUST"
+    statement: >
+      委托链必须收窄到当前命令所需的最小范围；以委托链为准，不得采信 Agent 自报的
+      权限声明。委托范围不足即拒绝，即使 Agent 声称拥有更多权限。
+    enforced_by: ["policy-enforcement-point"]
+    error_code: "AI-403-006"
+
+  - id: "AI-103"
+    name: "SoD 在委托链解析后判定"
+    level: "MUST"
+    statement: >
+      发起用户受 SoD 约束时，其 Agent 不得绕过 SoD 执行组合动作；SoD 判定必须在
+      委托链解析后、命令执行前进行，不得依赖 Agent 自报的权限或角色。
+    enforced_by: ["policy-enforcement-point", "authz-resolver"]
+    error_code: "AI-409-001"
+
+  - id: "AI-104"
+    name: "不建立平行 Agent RBAC"
+    level: "MUST"
+    statement: >
+      不得为 Agent 单独建立角色/权限体系；委托链可映射到外部身份标准
+      （OAuth 2.1 token exchange / SPIFFE/SPIRE），权限结论始终来自发起用户的授权面。
+    enforced_by: ["contract-checker"]
+    error_code: "AI-409-002"

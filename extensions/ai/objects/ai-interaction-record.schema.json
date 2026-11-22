@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eis://extensions/ai/object/ai-interaction-record/v1",
+  "title": "AiInteractionRecord",
+  "description": "Agent 与 EIS 命令交互的审计记录（EXPERIMENTAL v0.1.0）。记录来源标记、委托链引用、工具调用与 OTel GenAI span 引用；不存储完整 CoT，只存储结构化摘要的哈希。",
+  "allOf": [
+    {
+      "$ref": "../../../01-data-contract/object.schema.json"
+    },
+    {
+      "type": "object",
+      "required": [
+        "record_kind",
+        "origin",
+        "on_behalf_of",
+        "tool",
+        "outcome",
+        "occurred_at"
+      ],
+      "properties": {
+        "record_kind": {
+          "type": "string",
+          "enum": ["AI_TOOL_CALL", "AI_TOOL_RESULT", "AI_HUMAN_APPROVAL"],
+          "description": "审计事件类型（ai-audit.rules.yaml AI-201）"
+        },
+        "command_type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.]*$",
+          "description": "被调用的 EIS 命令类型（空白表示该记录不是命令调用，如纯工具结果）"
+        },
+        "origin": {
+          "const": "AI_AGENT",
+          "description": "来源标记，缺失即拒绝执行（ai-operation.rules.yaml AI-002）"
+        },
+        "on_behalf_of": {
+          "type": "object",
+          "required": ["subject", "delegation_ref"],
+          "properties": {
+            "subject": {
+              "type": "string",
+              "format": "uuid",
+              "description": "发起用户（人类）的 subject id"
+            },
+            "delegation_ref": {
+              "type": "string",
+              "description": "委托链引用（OAuth token exchange / SPIFFE ID 等外部标准的标识）"
+            },
+            "scope": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "委托链收窄后的范围；空数组表示未收窄（AI-102 要求必须收窄到当前命令所需最小范围）"
+            },
+            "expires_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "委托链过期时间（AI-101 运行时校验）"
+            }
+          },
+          "additionalProperties": false
+        },
+        "model": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string" },
+            "version": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "tool": {
+          "type": "object",
+          "required": ["name", "sequence"],
+          "properties": {
+            "name": { "type": "string" },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "同一任务内的调用序号（用于轨迹不变量检查，AI-303）"
+            },
+            "args_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$",
+              "description": "参数摘要哈希（不存储原始参数，避免敏感数据进入审计）"
+            }
+          },
+          "additionalProperties": false
+        },
+        "outcome": {
+          "type": "string",
+          "enum": ["ok", "denied", "error", "pending_approval"]
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "otel_span_ref": {
+          "type": "object",
+          "description": "OpenTelemetry GenAI span 引用（trace_id/span_id）；EIS 不重新定义 trace 格式（AI-203）",
+          "properties": {
+            "trace_id": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
+            "span_id": { "type": "string", "pattern": "^[a-f0-9]{16}$" }
+          },
+          "additionalProperties": false
+        },
+        "reasoning_summary_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "结构化推理摘要的哈希（不替代 GenAI span，AI-204）"
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

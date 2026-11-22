@@ -1,0 +1,34 @@
+# manifest.yaml — AI 参与者交互契约扩展（领域扩展；ADR-0025 / issue #60）
+#
+# v0.1.0 = EXPERIMENTAL：只收窄契约面（来源标记 / 委托链 / 审计映射 / 行为回归门禁），
+# 不修改核心六类契约，不建立平行的 Agent RBAC，不定义推理算法。
+extension:
+  id: "ai"
+  kind: "domain"
+  name: "AI 参与者交互契约（Agent 作为受约束参与者）"
+  version: "0.1.0"
+  core_version: "1.0.0"
+  status: "experimental"   # v0.1.0 起至少一个 minor 周期保持 experimental（RFC 建议）
+
+  dependencies: []
+  conflicts: []
+
+  objects:
+    - name: "AiInteractionRecord"
+      schema: "objects/ai-interaction-record.schema.json"
+
+  # 不新增业务命令：Agent 通过既有命令白名单行动，本扩展只约束调用时的行为规则。
+  operations: []
+
+  rules:
+    - name: "ai-operation"
+      file: "rules/ai-operation.rules.yaml"
+    - name: "ai-authz"
+      file: "rules/ai-authz.rules.yaml"
+    - name: "ai-audit"
+      file: "rules/ai-audit.rules.yaml"
+    - name: "ai-evolution"
+      file: "rules/ai-evolution.rules.yaml"
+
+  # 不建立平行的 Agent RBAC：权限仍来自发起用户的委托链。
+  permissions: []
